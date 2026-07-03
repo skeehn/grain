@@ -392,9 +392,14 @@ export class SkillManager {
     // comparison: pattern.keywords + metadata.tags.
     for (const [id, match] of bestPerSkill) {
       const skill = match.skill;
+      // Guard against non-array keywords/tags: a matched skill can pass
+      // load-time validation (which only checks metadata is an object) yet
+      // still carry a malformed `keywords`/`tags`, which would throw here.
+      const kw = Array.isArray(skill.pattern?.keywords) ? skill.pattern!.keywords : [];
+      const tg = Array.isArray(skill.metadata?.tags) ? skill.metadata!.tags : [];
       const skillTokens = new Set([
-        ...(skill.pattern?.keywords ?? []).map(k => String(k).toLowerCase()),
-        ...(skill.metadata?.tags ?? []).map(t => String(t).toLowerCase()),
+        ...kw.map(k => String(k).toLowerCase()),
+        ...tg.map(t => String(t).toLowerCase()),
       ]);
       const hasCwdOverlap = [...skillTokens].some(t => cwdTags.has(t));
       if (hasCwdOverlap) {

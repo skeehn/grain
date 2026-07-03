@@ -104,11 +104,19 @@ export async function addMessage(
         return false;
       }
     };
+    // Bound the cleanup: a long tool-only stretch could otherwise strip the
+    // whole slice and wipe persisted --resume history. If no clean user
+    // boundary exists within a few messages, keep the 100 as-is — a rare
+    // imperfect resume beats deleting the session.
+    const MAX_STRIP = 10;
+    let stripped = 0;
     while (
-      session.messages.length > 0 &&
+      session.messages.length > 1 &&
+      stripped < MAX_STRIP &&
       (session.messages[0].role === 'assistant' || carriesToolResult(session.messages[0]))
     ) {
       session.messages.shift();
+      stripped++;
     }
   }
 

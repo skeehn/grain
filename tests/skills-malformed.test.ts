@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeEach } from 'bun:test';
-import { mkdtempSync, writeFileSync } from 'fs';
+import { mkdtempSync, writeFileSync, readFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { SkillManager } from '../src/skills/manager.js';
@@ -72,6 +72,33 @@ describe('SkillManager — malformed JSON skill resilience', () => {
     const matches = await mgr.matchSkills('please fix the lint errors');
     expect(matches.length).toBeGreaterThan(0);
     expect(matches[0].skill.id).toBe('valid-1');
+  });
+
+  test('a matching skill with non-array keywords/tags does not crash matchSkills', async () => {
+    // This skill DOES match (valid keywords used for matching would come from
+    // a valid array) — but we give it garbage keywords/tags that still pass
+    // load validation, then confirm the CWD-bonus loop tolerates it.
+    writeFileSync(
+      join(dir, 'matcher.json'),
+      JSON.stringify({
+        id: 'matcher-1',
+        name: 'lint-fixer',
+        description: 'fix lint errors',
+        pattern: { semantic: 'fix the lint errors in this repo' },
+        approach: 'run linter',
+        examples: [],
+        metadata: { times_used: 0, success_rate: 1, created_at: 'x', updated_at: 'x' },
+      })
+    );
+    // Now corrupt keywords/tags post-hoc to non-arrays and re-load.
+    const raw = JSON.parse(readFileSync(join(dir, 'matcher.json'), 'utf-8'));
+    raw.pattern.keywords = 'lint';
+    raw.metadata.tags = 'typescript';
+    writeFileSync(join(dir, 'matcher.json'), JSON.stringify(raw));
+
+    const fresh = new SkillManager(dir);
+    const matches = await fresh.matchSkills('fix the lint errors in this repo');
+    expect(matches.some(m => m.skill.id === 'matcher-1')).toBe(true);
   });
 
   test('markdown frontmatter without trailing newline after closing --- parses', async () => {

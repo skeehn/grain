@@ -45,4 +45,16 @@ describe('session store', () => {
     expect(msgs).toHaveLength(100);
     expect((msgs[0].content[0] as any).text).toBe('m5'); // oldest 5 dropped
   });
+
+  test('a long tool-only run is not stripped to nothing by truncation cleanup', async () => {
+    const id = await createSession('tool-only');
+    // 130 alternating tool_use / tool_result messages — the 100-message slice
+    // is entirely assistant/tool_result, so unbounded cleanup would wipe it.
+    for (let i = 0; i < 65; i++) {
+      await addMessage(id, 'assistant', [{ type: 'tool_use', id: `t${i}`, name: 'bash', input: { command: 'ls' } }]);
+      await addMessage(id, 'user', [{ type: 'tool_result', tool_use_id: `t${i}`, content: 'ok' }]);
+    }
+    const msgs = await getMessages(id);
+    expect(msgs.length).toBeGreaterThan(80); // history preserved, not emptied
+  });
 });

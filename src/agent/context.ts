@@ -33,18 +33,24 @@ export function compact(messages: Message[]): Message[] {
   // message whose tool_result references a summarized-away tool_use makes the
   // API reject the whole history, so convert those orphaned blocks to text
   // (they get merged into the summary message below to keep roles alternating).
-  let orphanText = '';
-  if (toKeep.length > 0 && toKeep[0].role === 'user' && toKeep[0].content.some(b => b.type === 'tool_result')) {
+  // Strip every leading orphaned tool_result turn, not just the first —
+  // consecutive tool-result turns would otherwise leave a second orphan at
+  // the head of kept history and still trip the 400.
+  const orphanChunks: string[] = [];
+  while (toKeep.length > 0 && toKeep[0].role === 'user' && toKeep[0].content.some(b => b.type === 'tool_result')) {
     const orphan = toKeep.shift()!;
-    orphanText = orphan.content
-      .map(b => {
-        if (b.type === 'tool_result') return `[earlier tool result]: ${String(b.content).slice(0, 500)}`;
-        if (b.type === 'text') return b.text;
-        return '';
-      })
-      .filter(Boolean)
-      .join('\n');
+    orphanChunks.push(
+      orphan.content
+        .map(b => {
+          if (b.type === 'tool_result') return `[earlier tool result]: ${String(b.content).slice(0, 500)}`;
+          if (b.type === 'text') return b.text;
+          return '';
+        })
+        .filter(Boolean)
+        .join('\n'),
+    );
   }
+  const orphanText = orphanChunks.filter(Boolean).join('\n');
 
   // Extract structured facts from summarized messages
   const filesWritten: string[] = [];

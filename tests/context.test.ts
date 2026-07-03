@@ -35,13 +35,20 @@ describe('compact', () => {
   });
 
   test('never leaves an orphaned tool_result as the first kept message', () => {
-    // Build a history of alternating tool_use / tool_result pairs so any
-    // fixed-size cut lands between a pair.
+    // A leading prompt + N tool pairs makes the cut land on an assistant
+    // (tool_use) boundary; the trailing assistant message shifts parity so
+    // slice(-20) lands on a user (tool_result) boundary — the orphan case.
     const msgs: Message[] = [user('start the task')];
     for (let i = 0; i < 25; i++) {
       msgs.push(...toolTurn(`tu_${i}`));
     }
+    msgs.push(assistant('all done'));
     const out = compact(msgs);
+
+    // The seam is genuinely exercised: the orphaned tool_result content is
+    // folded into the summary, and roles alternate across it.
+    expect((out[0].content[0] as any).text).toContain('[earlier tool result]');
+    expect(out[1].role).toBe('assistant');
 
     // First message must be the summary (plain user text, no tool_result)
     expect(out[0].role).toBe('user');

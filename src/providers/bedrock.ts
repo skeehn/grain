@@ -76,6 +76,7 @@ export class BedrockProvider implements Provider {
           } else if (event.type === 'message_delta') {
             const delta = (event as any).delta;
             if (delta.stop_reason) {
+              yieldedAny = true;
               yield { type: 'message_end', stop_reason: delta.stop_reason };
             }
           }

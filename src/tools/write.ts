@@ -29,15 +29,23 @@ function syntaxCheck(filePath: string): string | null {
         execFileSync('python3', ['-c', 'import ast,sys; ast.parse(open(sys.argv[1]).read())', filePath], { timeout: 5000 });
         return null;
       case '.ts':
-      case '.tsx':
-        // Check if tsc is available
+      case '.tsx': {
+        // A single-file tsc ignores the project's tsconfig, so type errors,
+        // JSX-factory settings (TS17xxx), and path-alias resolution (TS2307)
+        // would produce false positives. Only surface genuine *syntax* errors
+        // — TS parser codes are in the 1000–1999 range — which is all this
+        // "syntax check" claims to catch and which don't depend on config.
         try {
           execFileSync('npx', ['tsc', '--noEmit', '--skipLibCheck', filePath], { timeout: 10000, stdio: 'pipe' });
         } catch (e: any) {
           const output = e.stdout?.toString() || e.stderr?.toString() || e.message || '';
-          if (output.includes('error TS')) return output.slice(0, 500);
+          const syntaxErrors = output
+            .split('\n')
+            .filter((l: string) => /error TS1\d{3}:/.test(l));
+          if (syntaxErrors.length > 0) return syntaxErrors.join('\n').slice(0, 500);
         }
         return null;
+      }
       case '.js':
       case '.jsx':
       case '.mjs':
