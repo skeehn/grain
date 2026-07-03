@@ -1,4 +1,6 @@
-import type { Tool, ToolResult } from '../providers/types.js';
+import { join } from 'path';
+import { homedir } from 'os';
+import type { ExecutableTool, Tool, ToolResult } from '../providers/types.js';
 import { bashTool, executeBash, destroyShell } from './bash.js';
 import { readTool, executeRead } from './read.js';
 import { writeTool, executeWrite } from './write.js';
@@ -27,7 +29,7 @@ export { destroyShell };
 
 // Plugin system initialization
 let _pluginRegistry: PluginRegistry | null = null;
-let _spawnAgentTool: Tool | null = null;
+let _spawnAgentTool: ExecutableTool | null = null;
 
 function getPluginRegistry(): PluginRegistry {
   if (!_pluginRegistry) {
@@ -38,15 +40,20 @@ function getPluginRegistry(): PluginRegistry {
     };
     
     _pluginRegistry = new PluginRegistry(pluginsConfig);
-    
-    // Register available plugins
-    _pluginRegistry.register(new ClaudeCodePlugin());
-    _pluginRegistry.register(new CodexPlugin());
+
+    // Register available plugins, honoring per-plugin config overrides.
+    // Expand a leading ~ ourselves: spawn() without shell:true doesn't.
+    const expandTilde = (p: string) =>
+      p.startsWith('~/') || p === '~' ? join(homedir(), p.slice(1)) : p;
+    const claudeCfg = pluginsConfig.plugins?.['claude-code'];
+    const codexCfg = pluginsConfig.plugins?.['codex'];
+    _pluginRegistry.register(new ClaudeCodePlugin(expandTilde(claudeCfg?.binaryPath ?? 'claude'), claudeCfg?.defaultModel));
+    _pluginRegistry.register(new CodexPlugin(expandTilde(codexCfg?.binaryPath ?? 'codex')));
   }
   return _pluginRegistry;
 }
 
-function getSpawnAgentTool(): Tool {
+function getSpawnAgentTool(): ExecutableTool {
   if (!_spawnAgentTool) {
     const registry = getPluginRegistry();
     _spawnAgentTool = createSpawnAgentTool(registry);

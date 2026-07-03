@@ -76,10 +76,17 @@ export class PluginRegistry {
       throw new Error("No agent plugins installed");
     }
 
-    // 1. Check custom routing rules
+    // 1. Check custom routing rules (sort a copy — never mutate shared config)
     if (routing.rules) {
-      for (const rule of routing.rules.sort((a, b) => (b.priority || 0) - (a.priority || 0))) {
-        if (new RegExp(rule.pattern, "i").test(task.prompt)) {
+      const sortedRules = [...routing.rules].sort((a, b) => (b.priority || 0) - (a.priority || 0));
+      for (const rule of sortedRules) {
+        let matches = false;
+        try {
+          matches = new RegExp(rule.pattern, "i").test(task.prompt);
+        } catch {
+          continue; // skip rules with invalid regex patterns
+        }
+        if (matches) {
           const plugin = this.plugins.get(rule.agent);
           if (plugin && installed.includes(plugin)) {
             return { plugin, reason: `matched rule: ${rule.pattern}` };

@@ -1,4 +1,4 @@
-import { execSync } from 'child_process';
+import { execSync, execFileSync } from 'child_process';
 import type { ToolResult } from '../providers/types.js';
 
 export const gitTool = {
@@ -50,7 +50,7 @@ export async function executeGit(input: { action: string; message?: string; ref?
 
       // Stage all changes and commit
       execSync('git add -A', { stdio: 'pipe' });
-      const commitOutput = execSync(`git commit -m "${message.replace(/"/g, '\\"')}"`, {
+      const commitOutput = execFileSync('git', ['commit', '-m', message], {
         encoding: 'utf-8',
         stdio: 'pipe',
       });
@@ -69,7 +69,7 @@ export async function executeGit(input: { action: string; message?: string; ref?
       }
 
       // Hard reset to ref
-      const resetOutput = execSync(`git reset --hard ${ref}`, {
+      const resetOutput = execFileSync('git', ['reset', '--hard', ref], {
         encoding: 'utf-8',
         stdio: 'pipe',
       });

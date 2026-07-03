@@ -63,44 +63,53 @@ export async function executeWorkspaceScan(input: { path?: string; max_depth?: n
   function scanDir(dirPath: string, depth: number) {
     if (depth > maxDepth) return;
 
+    let entries: string[];
     try {
-      const entries = readdirSync(dirPath);
+      entries = readdirSync(dirPath);
+    } catch (err) {
+      // Ignore permission errors on the directory itself
+      return;
+    }
 
-      for (const entry of entries) {
-        if (ignorePatterns.includes(entry)) continue;
+    for (const entry of entries) {
+      if (ignorePatterns.includes(entry)) continue;
 
-        const fullPath = join(dirPath, entry);
-        const relativePath = relative(rootPath, fullPath);
-        const stat = statSync(fullPath);
+      const fullPath = join(dirPath, entry);
+      const relativePath = relative(rootPath, fullPath);
 
-        if (stat.isDirectory()) {
-          result.stats.totalDirs++;
-          result.structure.push(`${'  '.repeat(depth)}📁 ${entry}/`);
-          scanDir(fullPath, depth + 1);
-        } else {
-          result.stats.totalFiles++;
-          result.structure.push(`${'  '.repeat(depth)}📄 ${entry}`);
+      let stat;
+      try {
+        stat = statSync(fullPath);
+      } catch (err) {
+        // Skip unreadable entries (broken symlinks, permission errors) but keep scanning
+        continue;
+      }
 
-          // Track extensions
-          const ext = entry.split('.').pop() || '';
-          result.stats.filesByExt[ext] = (result.stats.filesByExt[ext] || 0) + 1;
+      if (stat.isDirectory()) {
+        result.stats.totalDirs++;
+        result.structure.push(`${'  '.repeat(depth)}📁 ${entry}/`);
+        scanDir(fullPath, depth + 1);
+      } else {
+        result.stats.totalFiles++;
+        result.structure.push(`${'  '.repeat(depth)}📄 ${entry}`);
 
-          // Detect key files
-          const lower = entry.toLowerCase();
-          if (lower === 'package.json') result.keyFiles.package = relativePath;
-          if (lower.startsWith('readme')) result.keyFiles.readme = relativePath;
-          if (lower.includes('config') || lower.includes('.json') || lower.includes('.yaml')) {
-            result.keyFiles.config = result.keyFiles.config || [];
-            result.keyFiles.config.push(relativePath);
-          }
-          if (lower.includes('test') || lower.includes('spec')) {
-            result.keyFiles.tests = result.keyFiles.tests || [];
-            result.keyFiles.tests.push(relativePath);
-          }
+        // Track extensions
+        const ext = entry.split('.').pop() || '';
+        result.stats.filesByExt[ext] = (result.stats.filesByExt[ext] || 0) + 1;
+
+        // Detect key files
+        const lower = entry.toLowerCase();
+        if (lower === 'package.json') result.keyFiles.package = relativePath;
+        if (lower.startsWith('readme')) result.keyFiles.readme = relativePath;
+        if (lower.includes('config') || lower.includes('.json') || lower.includes('.yaml')) {
+          result.keyFiles.config = result.keyFiles.config || [];
+          result.keyFiles.config.push(relativePath);
+        }
+        if (lower.includes('test') || lower.includes('spec')) {
+          result.keyFiles.tests = result.keyFiles.tests || [];
+          result.keyFiles.tests.push(relativePath);
         }
       }
-    } catch (err) {
-      // Ignore permission errors
     }
   }
 

@@ -5,11 +5,11 @@
  * Claude Code, Codex, Aider, etc.
  */
 
-import type { Tool, ToolResult } from "../providers/types.js";
+import type { ExecutableTool, ToolResult } from "../providers/types.js";
 import type { PluginRegistry } from "../plugins/registry.js";
 import type { AgentTask } from "../plugins/types.js";
 
-export function createSpawnAgentTool(registry: PluginRegistry): Tool {
+export function createSpawnAgentTool(registry: PluginRegistry): ExecutableTool {
   return {
     name: "spawn_agent",
     description: `Spawn a specialized coding agent to handle a subtask.

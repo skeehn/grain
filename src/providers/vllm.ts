@@ -107,6 +107,11 @@ export class VLLMProvider implements Provider {
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
       let buffer = '';
+      // Track the currently-open tool call so tool_use_end fires exactly once
+      // per call (when the next call starts or the stream finishes) — the old
+      // `!toolCall.index` check ended index-0 after every chunk and never
+      // ended index >= 1.
+      let openToolId: string | null = null;
 
       while (true) {
         const { done, value } = await reader.read();
@@ -136,6 +141,11 @@ export class VLLMProvider implements Provider {
             if (delta.tool_calls && delta.tool_calls.length > 0) {
               for (const toolCall of delta.tool_calls) {
                 if (toolCall.id && toolCall.function?.name) {
+                  // A new call starting closes the previous one
+                  if (openToolId && openToolId !== toolCall.id) {
+                    yield { type: 'tool_use_end', id: openToolId };
+                  }
+                  openToolId = toolCall.id;
                   yield {
                     type: 'tool_use_start',
                     id: toolCall.id,
@@ -146,24 +156,20 @@ export class VLLMProvider implements Provider {
                 if (toolCall.function?.arguments) {
                   yield {
                     type: 'tool_use_delta',
-                    id: toolCall.id || 'unknown',
+                    id: toolCall.id || openToolId || 'unknown',
                     input_json: toolCall.function.arguments,
-                  };
-                }
-
-                // OpenAI doesn't send explicit tool_use_end, we signal it when complete
-                if (toolCall.function?.arguments && !toolCall.index) {
-                  yield {
-                    type: 'tool_use_end',
-                    id: toolCall.id || 'unknown',
                   };
                 }
               }
             }
 
-            // Stream end
+            // Stream end — close any open tool call first
             const finishReason = chunk.choices?.[0]?.finish_reason;
             if (finishReason) {
+              if (openToolId) {
+                yield { type: 'tool_use_end', id: openToolId };
+                openToolId = null;
+              }
               yield {
                 type: 'message_end',
                 stop_reason: finishReason === 'tool_calls' ? 'tool_use' : finishReason,

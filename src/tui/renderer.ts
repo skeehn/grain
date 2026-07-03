@@ -107,7 +107,8 @@ export function stopSpinner(): void {
   }
 }
 
-export function userPrompt(promptText?: string): Promise<string> {
+/** Resolves the user's input, or null when stdin closed without input (EOF/Ctrl+D). */
+export function userPrompt(promptText?: string): Promise<string | null> {
   return new Promise((resolve, reject) => {
     // Force stdin to stay open
     if (process.stdin.isTTY) {
@@ -135,10 +136,11 @@ export function userPrompt(promptText?: string): Promise<string> {
       reject(new Error('SIGINT'));
     });
 
-    // Don't resolve empty on close unless we got an answer
+    // Closed without an answer = stdin EOF (Ctrl+D) — callers must stop
+    // re-prompting, otherwise they busy-loop on instantly-closing readlines.
     rl.on('close', () => {
       if (!answered) {
-        resolve('');
+        resolve(null);
       }
     });
   });

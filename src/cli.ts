@@ -53,68 +53,74 @@ interface ParsedArgs {
   maxTurns?: number;
   tbBridge: boolean;  // TerminalBench bridge mode
   reflect: boolean;   // post-task self-reflection + engram store
+  unknownFlags?: string[]; // dash-tokens before any prompt text that match no known flag
 }
 
-function parseArgs(argv: string[]): ParsedArgs {
+export function parseArgs(argv: string[]): ParsedArgs {
   const args = argv.slice(2);
   const result: ParsedArgs = { autoApprove: false, concise: false, tbBridge: false, reflect: false };
+  const promptParts: string[] = [];
 
   let i = 0;
   while (i < args.length) {
     const arg = args[i];
 
-    if (arg === 'init')                                   { result.command = 'init'; break; }
-    if (arg === 'update')                                 { result.command = 'update'; break; }
-    if (arg === 'status')                                 { result.command = 'status'; break; }
-    if (arg === 'serve')                                  { result.command = 'serve'; break; }
-    if (arg === '--help' || arg === '-h' || arg === 'help') { result.command = 'help'; break; }
-    if (arg === '--version' || arg === '-v' || arg === 'version') { result.command = 'version'; break; }
+    // Commands are only recognized before any positional prompt text —
+    // once prompt words start, bare words like "config" belong to the prompt.
+    if (promptParts.length === 0 && !result.prompt) {
+      if (arg === 'init')                                   { result.command = 'init'; break; }
+      if (arg === 'update')                                 { result.command = 'update'; break; }
+      if (arg === 'status')                                 { result.command = 'status'; break; }
+      if (arg === 'serve')                                  { result.command = 'serve'; break; }
+      if (arg === '--help' || arg === '-h' || arg === 'help') { result.command = 'help'; break; }
+      if (arg === '--version' || arg === '-v' || arg === 'version') { result.command = 'version'; break; }
 
-    if (arg === 'config') {
-      result.command = 'config';
-      const sub = args[i + 1];
-      if (sub === 'set') {
-        result.configSubcmd = 'set';
-        result.configKey    = args[i + 2];
-        result.configValue  = args[i + 3];
-      } else if (sub === 'reset') {
-        result.configSubcmd = 'reset';
-      } else {
-        result.configSubcmd = 'show';
+      if (arg === 'config') {
+        result.command = 'config';
+        const sub = args[i + 1];
+        if (sub === 'set') {
+          result.configSubcmd = 'set';
+          result.configKey    = args[i + 2];
+          result.configValue  = args[i + 3];
+        } else if (sub === 'reset') {
+          result.configSubcmd = 'reset';
+        } else {
+          result.configSubcmd = 'show';
+        }
+        break;
       }
-      break;
-    }
 
-    if (arg === 'skills') {
-      result.command = 'skills';
-      const sub = args[i + 1];
-      if (sub === 'view' || sub === 'delete') {
-        result.skillsSubcmd = sub;
-        result.skillsName = args[i + 2];
-      } else if (sub === 'add') {
-        result.skillsSubcmd = 'add';
-        result.skillsName = args[i + 2];
-      } else {
-        result.skillsSubcmd = 'list';
+      if (arg === 'skills') {
+        result.command = 'skills';
+        const sub = args[i + 1];
+        if (sub === 'view' || sub === 'delete') {
+          result.skillsSubcmd = sub;
+          result.skillsName = args[i + 2];
+        } else if (sub === 'add') {
+          result.skillsSubcmd = 'add';
+          result.skillsName = args[i + 2];
+        } else {
+          result.skillsSubcmd = 'list';
+        }
+        break;
       }
-      break;
-    }
 
-    if (arg === 'engram') {
-      result.command = 'engram';
-      const sub = args[i + 1];
-      if (sub === 'search') {
-        result.engramSubcmd = 'search';
-        result.engramArg = args[i + 2];
-      } else if (sub === 'list') {
-        result.engramSubcmd = 'list';
-      } else if (sub === 'add') {
-        result.engramSubcmd = 'add';
-        result.engramArg = args.slice(i + 2).join(' ');
-      } else {
-        result.engramSubcmd = 'stats';
+      if (arg === 'engram') {
+        result.command = 'engram';
+        const sub = args[i + 1];
+        if (sub === 'search') {
+          result.engramSubcmd = 'search';
+          result.engramArg = args[i + 2];
+        } else if (sub === 'list') {
+          result.engramSubcmd = 'list';
+        } else if (sub === 'add') {
+          result.engramSubcmd = 'add';
+          result.engramArg = args.slice(i + 2).join(' ');
+        } else {
+          result.engramSubcmd = 'stats';
+        }
+        break;
       }
-      break;
     }
 
     if (arg === '-p' || arg === '--prompt')         { result.prompt = args[++i]; }
@@ -125,11 +131,30 @@ function parseArgs(argv: string[]): ParsedArgs {
     else if (arg === '--max-turns')                  { result.maxTurns = parseInt(args[++i], 10); }
     else if (arg === '--tb-bridge')                  { result.tbBridge = true; }
     else if (arg === '--reflect')                    { result.reflect = true; }
-    else if (!arg.startsWith('-') && !result.prompt) {
-      result.prompt = args.slice(i).join(' ');
+    else if (arg === '--') {
+      // Explicit terminator: everything after it is prompt text verbatim.
+      promptParts.push(...args.slice(i + 1));
       break;
     }
+    else if (!arg.startsWith('-')) {
+      // Positional prompt word. Keep parsing: later flags are still honored.
+      if (!result.prompt) promptParts.push(arg);
+    }
+    else if (promptParts.length > 0) {
+      // Dash-token after prompt text began is a prompt word, not a flag
+      // ("fix the --dry-run handling", "what is 5 - 3") — never drop it.
+      promptParts.push(arg);
+    }
+    else {
+      // Unknown flag before any prompt text — record it so main() can reject
+      // loudly instead of silently ignoring a typo like --ys.
+      (result.unknownFlags ??= []).push(arg);
+    }
     i++;
+  }
+
+  if (!result.prompt && promptParts.length > 0) {
+    result.prompt = promptParts.join(' ');
   }
   return result;
 }
@@ -364,7 +389,7 @@ async function handleStatus(): Promise<void> {
   // Sessions
   try {
     const { statSync } = await import('fs');
-    const dbPath = join(homedir(), '.grain', 'sessions.db');
+    const dbPath = join(process.env.GRAIN_HOME || join(homedir(), '.grain'), 'sessions.json');
     if (existsSync(dbPath)) {
       const sz = statSync(dbPath).size;
       console.log(`  ${bold('Sessions')}  ${dim(`${(sz / 1024).toFixed(0)} KB stored`)}`);
@@ -660,6 +685,7 @@ async function handleEngram(subcmd?: string, arg?: string): Promise<void> {
   } catch {
     console.error(`${err} engram server not running at ${ENGRAM_API}`);
     console.log(dim('  Run: grain init  (auto-starts engram)'));
+    process.exitCode = 1;
     return;
   }
 
@@ -784,7 +810,7 @@ async function handleSkills(subcmd?: string, name?: string): Promise<void> {
   if (subcmd === 'view') {
     if (!name) { console.error(`${err} Usage: grain skills view <name>`); return; }
     const skill = await mgr.getMarkdownSkill(name);
-    if (!skill) { console.error(`${err} Skill not found: ${name}`); return; }
+    if (!skill) { console.error(`${err} Skill not found: ${name}`); process.exitCode = 1; return; }
     console.log(`\n${bold(skill.name)}`);
     if (skill.description) console.log(dim(skill.description));
     if (skill.tags.length > 0) console.log(dim(`tags: ${skill.tags.join(', ')}`));
@@ -798,16 +824,20 @@ async function handleSkills(subcmd?: string, name?: string): Promise<void> {
     const ask = (q: string): Promise<string> => new Promise(r => iface.question(q, r));
 
     try {
+      // Ask all single-line questions BEFORE consuming the multiline body:
+      // breaking out of `for await (const line of iface)` closes the
+      // interface, so no questions may follow it.
       const description = await ask(`Description (one line): `);
+      const tagsRaw = await ask(`Tags (comma-separated, optional): `);
+      const tags = tagsRaw.split(',').map(t => t.trim()).filter(Boolean);
+
       console.log(`Enter skill content (markdown). Type ${c.cyan}EOF${c.reset} on a line by itself to finish:`);
       const lines: string[] = [];
       for await (const line of iface) {
         if (line.trim() === 'EOF') break;
         lines.push(line);
       }
-      iface.close();
-      const tagsRaw = await ask(`Tags (comma-separated, optional): `).catch(() => '');
-      const tags = tagsRaw.split(',').map(t => t.trim()).filter(Boolean);
+
       const content = lines.join('\n');
       const skill = await mgr.createMarkdownSkill(name, description, content, tags);
       console.log(`\n${ok} Created skill: ${c.cyan}${skill.name}${c.reset}`);
@@ -837,6 +867,13 @@ async function handleSkills(subcmd?: string, name?: string): Promise<void> {
 
 async function main(): Promise<void> {
   const parsed = parseArgs(process.argv);
+
+  if (parsed.unknownFlags?.length) {
+    console.error(`Unknown flag${parsed.unknownFlags.length > 1 ? 's' : ''}: ${parsed.unknownFlags.join(', ')}`);
+    console.error('Run "grain --help" for usage, or use -- to pass literal dashes in a prompt.');
+    process.exitCode = 1;
+    return;
+  }
 
   // Commands that don't need engram or the agent
   if (parsed.command === 'help')    { showHelp(); return; }

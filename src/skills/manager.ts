@@ -11,6 +11,13 @@ import { existsSync, readFileSync, writeFileSync } from 'fs';
 import path from 'path';
 import os from 'os';
 import { randomUUID } from 'crypto';
+import type {
+  Skill,
+  MarkdownSkill,
+  SkillMatch,
+  SkillExample,
+  CreateSkillConfig,
+} from './types.js';
 
 // ─── CWD language detection ────────────────────────────────────────────────────
 
@@ -94,7 +101,8 @@ async function detectCwdLanguages(cwd = process.cwd()): Promise<Set<string>> {
 // ─── YAML frontmatter parser (no deps) ────────────────────────────────────────
 
 function parseFrontmatter(raw: string): { meta: Record<string, any>; body: string } {
-  const fmMatch = raw.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n([\s\S]*)$/);
+  // Trailing newline after the closing `---` is optional
+  const fmMatch = raw.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n([\s\S]*))?$/);
   if (!fmMatch) return { meta: {}, body: raw };
 
   const meta: Record<string, any> = {};
@@ -115,7 +123,7 @@ function parseFrontmatter(raw: string): { meta: Record<string, any>; body: strin
     }
     meta[key] = val;
   }
-  return { meta, body: fmMatch[2] };
+  return { meta, body: fmMatch[2] ?? '' };
 }
 
 // ─── SkillManager ──────────────────────────────────────────────────────────────
@@ -127,7 +135,8 @@ export class SkillManager {
   private initialized = false;
 
   constructor(skillsDir?: string) {
-    this.skillsDir = skillsDir || path.join(os.homedir(), '.grain', 'skills');
+    this.skillsDir = skillsDir
+      || path.join(process.env.GRAIN_HOME || path.join(os.homedir(), '.grain'), 'skills');
   }
 
   async initialize(): Promise<void> {
@@ -159,8 +168,20 @@ export class SkillManager {
       } else if (file.endsWith('.json')) {
         try {
           const raw = await fs.readFile(fp, 'utf-8');
-          const skill: Skill = JSON.parse(raw);
-          this.jsonSkills.set(skill.id, skill);
+          const skill = JSON.parse(raw) as Skill;
+          // Validate shape before registering — a malformed skill file must
+          // not be able to crash matchSkills later.
+          if (
+            skill &&
+            typeof skill === 'object' &&
+            skill.id &&
+            skill.pattern &&
+            typeof skill.pattern === 'object' &&
+            skill.metadata &&
+            typeof skill.metadata === 'object'
+          ) {
+            this.jsonSkills.set(skill.id, skill);
+          }
         } catch { /* skip bad files */ }
       }
     }
@@ -329,38 +350,41 @@ export class SkillManager {
     };
 
     for (const skill of this.jsonSkills.values()) {
-      // ── 1. Regex ──────────────────────────────────────────────────────────
-      if (skill.pattern.regex) {
-        for (const pattern of skill.pattern.regex) {
-          try {
-            if (new RegExp(pattern, 'i').test(input)) {
-              consider({ skill, confidence: 0.9, trigger: 'regex', matched: pattern });
-              break;
-            }
-          } catch { /* skip bad regex */ }
+      // Guard per-skill: one malformed skill must not reject the whole match.
+      try {
+        // ── 1. Regex ────────────────────────────────────────────────────────
+        if (Array.isArray(skill.pattern?.regex)) {
+          for (const pattern of skill.pattern.regex) {
+            try {
+              if (new RegExp(pattern, 'i').test(input)) {
+                consider({ skill, confidence: 0.9, trigger: 'regex', matched: pattern });
+                break;
+              }
+            } catch { /* skip bad regex */ }
+          }
         }
-      }
 
-      // ── 2. Keyword overlap ────────────────────────────────────────────────
-      if (skill.pattern.keywords) {
-        const kwLower = skill.pattern.keywords.map(k => k.toLowerCase());
-        const matched = kwLower.filter(kw => inputLower.includes(kw));
-        if (matched.length > 0) {
-          const confidence = Math.min(0.95, 0.7 + (matched.length / kwLower.length) * 0.25);
-          consider({ skill, confidence, trigger: 'keyword', matched: matched.join(', ') });
+        // ── 2. Keyword overlap ──────────────────────────────────────────────
+        if (Array.isArray(skill.pattern?.keywords)) {
+          const kwLower = skill.pattern.keywords.map(k => String(k).toLowerCase());
+          const matched = kwLower.filter(kw => inputLower.includes(kw));
+          if (matched.length > 0) {
+            const confidence = Math.min(0.95, 0.7 + (matched.length / kwLower.length) * 0.25);
+            consider({ skill, confidence, trigger: 'keyword', matched: matched.join(', ') });
+          }
         }
-      }
 
-      // ── 3. Semantic word overlap ──────────────────────────────────────────
-      if (skill.pattern.semantic) {
-        const semWords = skill.pattern.semantic.toLowerCase().split(/\s+/);
-        const inWords = inputLower.split(/\s+/);
-        const overlap = semWords.filter(w => inWords.includes(w)).length;
-        if (overlap > 0) {
-          const confidence = Math.min(0.85, 0.5 + (overlap / semWords.length) * 0.35);
-          consider({ skill, confidence, trigger: 'semantic', matched: skill.pattern.semantic });
+        // ── 3. Semantic word overlap ────────────────────────────────────────
+        if (typeof skill.pattern?.semantic === 'string') {
+          const semWords = skill.pattern.semantic.toLowerCase().split(/\s+/);
+          const inWords = inputLower.split(/\s+/);
+          const overlap = semWords.filter(w => inWords.includes(w)).length;
+          if (overlap > 0) {
+            const confidence = Math.min(0.85, 0.5 + (overlap / semWords.length) * 0.35);
+            consider({ skill, confidence, trigger: 'semantic', matched: skill.pattern.semantic });
+          }
         }
-      }
+      } catch { /* skip malformed skill */ }
     }
 
     // ── CWD language bonus ────────────────────────────────────────────────────
@@ -368,9 +392,14 @@ export class SkillManager {
     // comparison: pattern.keywords + metadata.tags.
     for (const [id, match] of bestPerSkill) {
       const skill = match.skill;
+      // Guard against non-array keywords/tags: a matched skill can pass
+      // load-time validation (which only checks metadata is an object) yet
+      // still carry a malformed `keywords`/`tags`, which would throw here.
+      const kw = Array.isArray(skill.pattern?.keywords) ? skill.pattern!.keywords : [];
+      const tg = Array.isArray(skill.metadata?.tags) ? skill.metadata!.tags : [];
       const skillTokens = new Set([
-        ...(skill.pattern.keywords ?? []).map(k => k.toLowerCase()),
-        ...(skill.metadata.tags ?? []).map(t => t.toLowerCase()),
+        ...kw.map(k => String(k).toLowerCase()),
+        ...tg.map(t => String(t).toLowerCase()),
       ]);
       const hasCwdOverlap = [...skillTokens].some(t => cwdTags.has(t));
       if (hasCwdOverlap) {

@@ -32,3 +32,8 @@ export interface ToolResult {
   content: string;
   is_error?: boolean;
 }
+
+/** A tool definition bundled with its own executor (used by spawn_agent). */
+export interface ExecutableTool extends Tool {
+  execute(input: any): Promise<ToolResult>;
+}

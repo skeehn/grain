@@ -146,10 +146,22 @@ export async function executeRepoMap(input: { path?: string; depth?: number; foc
   try {
     let files = walkDir(rootDir, maxDepth);
 
-    // Apply focus filter
+    // Apply focus filter (glob-ish: ** matches across dirs, * within a segment)
     if (input.focus) {
-      const pattern = input.focus.replace('*', '.*');
-      const regex = new RegExp(pattern);
+      let regex: RegExp;
+      try {
+        const escaped = input.focus.replace(/[.+?^${}()|[\]\\]/g, '\\$&');
+        const pattern = escaped
+          .replace(/\*\*/g, '\u0000')   // placeholder so single-* pass doesn't touch it
+          .replace(/\*/g, '[^/]*')
+          .replace(/\u0000/g, '.*');
+        regex = new RegExp(pattern);
+      } catch (err: any) {
+        return {
+          content: `Invalid focus pattern "${input.focus}": ${err.message}`,
+          is_error: true,
+        };
+      }
       files = files.filter(f => regex.test(relative(rootDir, f)));
     }
 
