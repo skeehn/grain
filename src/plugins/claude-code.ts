@@ -41,7 +41,6 @@ export class ClaudeCodePlugin implements AgentPlugin {
     return new Promise((resolve) => {
       const proc = spawn(this.binaryPath, ["--version"], {
         stdio: "ignore",
-        shell: true,
       });
       proc.on("close", (code) => resolve(code === 0));
       proc.on("error", () => resolve(false));
@@ -53,7 +52,6 @@ export class ClaudeCodePlugin implements AgentPlugin {
       let output = "";
       const proc = spawn(this.binaryPath, ["--version"], {
         stdio: ["ignore", "pipe", "ignore"],
-        shell: true,
       });
       
       proc.stdout.on("data", (chunk) => {
@@ -116,7 +114,6 @@ export class ClaudeCodePlugin implements AgentPlugin {
       const proc = spawn(this.binaryPath, args, {
         cwd: task.workdir,
         stdio: ["ignore", "pipe", "pipe"],
-        shell: true,
         timeout: task.constraints?.timeoutSeconds
           ? task.constraints.timeoutSeconds * 1000
           : 180_000, // 3 min default
@@ -130,7 +127,10 @@ export class ClaudeCodePlugin implements AgentPlugin {
         stderr += chunk.toString();
       });
 
-      proc.on("close", (code) => {
+      proc.on("close", (code, signal) => {
+        // code === null + signal means the process was killed (e.g. timeout)
+        const timedOut = code === null && signal !== null;
+
         // Parse JSON output
         try {
           const result = JSON.parse(stdout);
@@ -157,9 +157,10 @@ export class ClaudeCodePlugin implements AgentPlugin {
           resolve({
             success: code === 0,
             output: stdout || stderr || `Exit code: ${code}`,
-            exitReason: code === 0 ? "completed" : "error",
+            exitReason: code === 0 ? "completed" : timedOut ? "timeout" : "error",
             metadata: {
               exitCode: code,
+              signal,
               rawStderr: stderr,
             },
           });

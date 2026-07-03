@@ -26,6 +26,37 @@ export interface AgentOpts {
 
 const MAX_TURNS = 30; // Safety limit to prevent infinite loops
 
+// Wrap a provider stream so a stall between events rejects instead of hanging
+// forever. A plain flag checked inside `for await` never fires on a stalled
+// stream because the loop is blocked on a pending next().
+async function* withInactivityTimeout<T>(source: AsyncIterable<T>, ms: number): AsyncGenerator<T> {
+  const it = source[Symbol.asyncIterator]();
+  try {
+    while (true) {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const timeout = new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error(`LLM stream timed out (${Math.round(ms / 1000)}s of inactivity). Model may be overloaded — try again.`)),
+          ms,
+        );
+      });
+      try {
+        const res = await Promise.race([it.next(), timeout]);
+        if (res.done) return;
+        yield res.value;
+      } finally {
+        clearTimeout(timer);
+      }
+    }
+  } finally {
+    // Never await cleanup: async-generator return() queues behind a pending
+    // next(), so on a stalled stream awaiting it would swallow the timeout
+    // rejection and hang forever — the exact failure this wrapper prevents.
+    try { Promise.resolve(it.return?.()).catch(() => { /* stream already dead */ }); }
+    catch { /* stream already dead */ }
+  }
+}
+
 // ── Reflection ────────────────────────────────────────────────────────────────
 // Called after a successful finish. Makes one focused LLM call to surface
 // 2-3 learnings from this run, stores them in engram, and prints them.
@@ -147,7 +178,7 @@ export async function agentLoop(opts: AgentOpts): Promise<void> {
     }
   }
 
-  if (!opts.model && !opts.provider && opts.prompt) {
+  if (!opts.model && !opts.provider && !config.model && opts.prompt) {
     const complexity = classifyTaskComplexity(opts.prompt);
     const modelConfig = routeModel(complexity);
     providerName = modelConfig.provider;
@@ -186,6 +217,7 @@ export async function agentLoop(opts: AgentOpts): Promise<void> {
     // Non-TTY (subprocess): no prompt = nothing to do, exit cleanly
     if (!process.stdin.isTTY) return;
     const input = await renderer.userPrompt();
+    if (input === null) return; // stdin EOF
     if (!input.trim()) {
       renderer.info('Type a command to get started, or Ctrl+C to exit.');
       return agentLoop(opts);
@@ -272,22 +304,12 @@ export async function agentLoop(opts: AgentOpts): Promise<void> {
     let hasToolUse = false;
     let textBuffer = '';
     let spinnerStopped = false;
+    const malformedToolIds = new Set<string>();
 
     try {
       const STREAM_TIMEOUT = 90000; // 90s inactivity (large files take time)
-      let lastEventTime = Date.now();
-      let timedOut = false;
 
-      const streamTimeout = setInterval(() => {
-        if (Date.now() - lastEventTime > STREAM_TIMEOUT) {
-          clearInterval(streamTimeout);
-          timedOut = true;
-        }
-      }, 5000);
-
-      for await (const event of provider.stream(messages, system, TOOLS)) {
-        if (timedOut) break;
-        lastEventTime = Date.now();
+      for await (const event of withInactivityTimeout(provider.stream(messages, system, TOOLS), STREAM_TIMEOUT)) {
         if (event.type === 'text_delta') {
           if (!spinnerStopped) { spin.stop(); renderer.clearLine(); spinnerStopped = true; }
           textBuffer += event.text;
@@ -308,7 +330,6 @@ export async function agentLoop(opts: AgentOpts): Promise<void> {
         } else if (event.type === 'tool_use_delta') {
           currentToolInputJson += event.input_json;
           toolInputJsonMap.set(currentToolId, currentToolInputJson);
-          lastEventTime = Date.now(); // reset timer during large file writes
         } else if (event.type === 'tool_use_end') {
           const jsonStr = toolInputJsonMap.get(currentToolId) || currentToolInputJson;
           if (jsonStr) {
@@ -330,17 +351,15 @@ export async function agentLoop(opts: AgentOpts): Promise<void> {
               }
             } catch (err) {
               renderer.warn(`Failed to parse tool input: ${err}`);
+              malformedToolIds.add(currentToolId);
             }
           }
+        } else if (event.type === 'error') {
+          throw new Error(event.error);
         }
       }
 
-      if (timedOut) {
-        renderer.warn('LLM stream timed out (90s no activity). Model may be overloaded — try again.');
-      }
-
       if (!spinnerStopped) spin.stop();
-      clearInterval(streamTimeout);
       if (textBuffer) {
         assistantBlocks.unshift({ type: 'text', text: textBuffer });
       }
@@ -348,8 +367,14 @@ export async function agentLoop(opts: AgentOpts): Promise<void> {
 
       // If no tool calls, this is a final text response
       if (!hasToolUse) {
-        messages.push({ role: 'assistant', content: assistantBlocks });
-        addMessage(sessionId, 'assistant', assistantBlocks);
+        // Never push an empty assistant message — it poisons the history
+        // (providers reject messages with empty content on the next call).
+        if (assistantBlocks.length > 0) {
+          messages.push({ role: 'assistant', content: assistantBlocks });
+          addMessage(sessionId, 'assistant', assistantBlocks);
+        } else {
+          renderer.warn('Provider returned an empty response.');
+        }
 
         if (opts.oneShot) return;
 
@@ -358,8 +383,9 @@ export async function agentLoop(opts: AgentOpts): Promise<void> {
         if (!process.stdin.isTTY) return;
 
         renderer.newLine();
-        const nextInput = await renderer.userPrompt();
-        if (!nextInput.trim()) continue;
+        let nextInput = await renderer.userPrompt();
+        while (nextInput !== null && !nextInput.trim()) nextInput = await renderer.userPrompt();
+        if (nextInput === null) return; // stdin EOF
         messages.push({ role: 'user', content: [{ type: 'text', text: nextInput }] });
         addMessage(sessionId, 'user', [{ type: 'text', text: nextInput }]);
         turnCount = 0; // Reset turn counter for new user request
@@ -372,6 +398,20 @@ export async function agentLoop(opts: AgentOpts): Promise<void> {
 
       for (const block of assistantBlocks) {
         if (block.type !== 'tool_use') continue;
+
+        // Never act on a tool whose input JSON failed to parse — its input is
+        // a placeholder {}. This must precede the finish branch: a malformed
+        // finish would otherwise silently end the task.
+        if (malformedToolIds.has(block.id)) {
+          renderer.warn(`Skipping ${block.name}: malformed tool input`);
+          toolResults.push({
+            type: 'tool_result',
+            tool_use_id: block.id,
+            content: 'Tool input was malformed JSON and could not be parsed. Re-issue the tool call.',
+            is_error: true,
+          });
+          continue;
+        }
 
         if (block.name === 'finish') {
           const msg = block.input?.message || 'Task complete.';
@@ -464,6 +504,23 @@ export async function agentLoop(opts: AgentOpts): Promise<void> {
         });
       }
 
+      // Every tool_use block must have a matching tool_result in history —
+      // an unanswered block (e.g. tools after an early `finish`) makes the
+      // next API call (or a --resume) fail with a 400.
+      const answeredIds = new Set(
+        toolResults.filter(r => r.type === 'tool_result').map(r => (r as any).tool_use_id),
+      );
+      for (const block of assistantBlocks) {
+        if (block.type === 'tool_use' && !answeredIds.has(block.id)) {
+          toolResults.push({
+            type: 'tool_result',
+            tool_use_id: block.id,
+            content: 'Skipped — task already finished.',
+            is_error: false,
+          });
+        }
+      }
+
       // Push messages
       messages.push({ role: 'assistant', content: assistantBlocks });
       addMessage(sessionId, 'assistant', assistantBlocks);
@@ -474,7 +531,6 @@ export async function agentLoop(opts: AgentOpts): Promise<void> {
       }
 
       // Implicit finish: pure-text response with no tool calls = task done
-      process.stderr.write(`[dbg2] turn=${turnCount} finishCalled=${finishCalled} toolResults=${toolResults.length} assistantBlocks=${assistantBlocks.length}\n`);
       if (!finishCalled && toolResults.length === 0) {
         // Treat a bare text response as an implicit finish so --reflect fires
         // and loops don't spin on pure-text completions
@@ -486,7 +542,6 @@ export async function agentLoop(opts: AgentOpts): Promise<void> {
         destroyShell(); // clean up persistent bash session
 
         // ── Reflection step ───────────────────────────────────────────────────
-        process.stderr.write(`[dbg] reflect=${opts.reflect} tools=${allToolsUsed.length} files=${allFilesChanged.length}\n`);
         if (opts.reflect) {
           const finishBlock = assistantBlocks.find((b: any) => b.type === 'tool_use' && b.name === 'finish') as any;
           await runReflection(provider, {
@@ -505,8 +560,9 @@ export async function agentLoop(opts: AgentOpts): Promise<void> {
         if (!process.stdin.isTTY) return;
 
         renderer.newLine();
-        const nextInput = await renderer.userPrompt();
-        if (!nextInput.trim()) continue;
+        let nextInput = await renderer.userPrompt();
+        while (nextInput !== null && !nextInput.trim()) nextInput = await renderer.userPrompt();
+        if (nextInput === null) return; // stdin EOF
         messages = []; // Fresh context for new task
         messages.push({ role: 'user', content: [{ type: 'text', text: nextInput }] });
         addMessage(sessionId, 'user', [{ type: 'text', text: nextInput }]);
@@ -540,7 +596,7 @@ export async function agentLoop(opts: AgentOpts): Promise<void> {
       renderer.newLine();
       if (!process.stdin.isTTY) break; // non-TTY: don't wait for retry
       const retry = await renderer.userPrompt('Try again? ');
-      if (!retry.trim() || retry.toLowerCase() === 'n') break;
+      if (retry === null || !retry.trim() || retry.toLowerCase() === 'n') break;
       turnCount = 0;
     }
   }

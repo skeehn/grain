@@ -56,14 +56,16 @@ function detectFramework(cwd: string): string | null {
   return null;
 }
 
-function buildCommand(framework: string, failFast: boolean, testPath?: string): string {
+export function buildCommand(framework: string, failFast: boolean, testPath?: string): string {
   const target = testPath ? ` ${testPath}` : '';
   switch (framework) {
     case 'vitest': return `npx vitest run${failFast ? ' --bail 1' : ''}${target} 2>&1`;
     case 'jest':   return `npx jest${failFast ? ' --bail' : ''}${target} --no-coverage 2>&1`;
     case 'bun':    return `bun test${failFast ? ' --bail' : ''}${target} 2>&1`;
     case 'npm':    return `npm test -- ${failFast ? '--bail' : ''} 2>&1`;
-    case 'cargo':  return `cargo test${failFast ? ' --no-fail-fast' : ''}${target ? ` ${target}` : ''} 2>&1`;
+    // cargo test stops at the first failure by default; --no-fail-fast makes it
+    // continue past failures, so it belongs on the failFast=false path.
+    case 'cargo':  return `cargo test${failFast ? '' : ' --no-fail-fast'}${target ? ` ${target}` : ''} 2>&1`;
     case 'pytest': return `python3 -m pytest${failFast ? ' -x' : ''}${target} --tb=short -q 2>&1`;
     case 'go':     return `go test${failFast ? ' -failfast' : ''} ./...${target} 2>&1`;
     default:       return `npm test 2>&1`;
@@ -78,7 +80,7 @@ interface ParsedResults {
   raw: string;
 }
 
-function parseResults(output: string, framework: string): ParsedResults {
+export function parseResults(output: string, framework: string): ParsedResults {
   const failures: ParsedResults['failures'] = [];
   let passed = 0, failed = 0;
 
@@ -100,9 +102,39 @@ function parseResults(output: string, framework: string): ParsedResults {
     const failLines = output.match(/^FAILED .+$/gm) || [];
     for (const line of failLines) failures.push({ test: line.replace('FAILED ', '').trim(), message: 'test failed' });
   } else {
-    // jest/vitest/bun pattern
-    const m = output.match(/Tests?:.*?(\d+) passed/); if (m) passed = parseInt(m[1]);
-    const f = output.match(/Tests?:.*?(\d+) failed/); if (f) failed = parseInt(f[1]);
+    // Per-framework summary formats:
+    //   jest:   "Tests:       2 failed, 3 passed, 5 total"
+    //   vitest: "Tests  2 failed | 3 passed (5)"
+    //   bun:    " 3 pass\n 2 fail"
+    const jestPass   = output.match(/Tests:[^\n]*?(\d+) passed/);
+    const jestFail   = output.match(/Tests:[^\n]*?(\d+) failed/);
+    const vitestPass = output.match(/Tests\s+[^\n:]*?(\d+) passed/);
+    const vitestFail = output.match(/Tests\s+[^\n:|]*?(\d+) failed/);
+    const bunPass    = output.match(/(?:^|\n)\s*(\d+) pass\b/);
+    const bunFail    = output.match(/(?:^|\n)\s*(\d+) fail\b/);
+
+    if (framework === 'jest') {
+      if (jestPass) passed = parseInt(jestPass[1]);
+      if (jestFail) failed = parseInt(jestFail[1]);
+    } else if (framework === 'vitest') {
+      if (vitestPass) passed = parseInt(vitestPass[1]);
+      if (vitestFail) failed = parseInt(vitestFail[1]);
+    } else if (framework === 'bun') {
+      if (bunPass) passed = parseInt(bunPass[1]);
+      if (bunFail) failed = parseInt(bunFail[1]);
+    } else {
+      // Unknown wrapper (npm test etc.) — try each format in turn
+      if (jestPass || jestFail) {
+        if (jestPass) passed = parseInt(jestPass[1]);
+        if (jestFail) failed = parseInt(jestFail[1]);
+      } else if (vitestPass || vitestFail) {
+        if (vitestPass) passed = parseInt(vitestPass[1]);
+        if (vitestFail) failed = parseInt(vitestFail[1]);
+      } else if (bunPass || bunFail) {
+        if (bunPass) passed = parseInt(bunPass[1]);
+        if (bunFail) failed = parseInt(bunFail[1]);
+      }
+    }
     // ● test name
     const failBlocks = output.match(/● .+[\s\S]*?(?=●|$)/g) || [];
     for (const block of failBlocks.slice(0, 5)) {
@@ -133,6 +165,23 @@ export async function executeTestFixLoop(
   const cmd = buildCommand(framework, failFast, input.test_path);
   const result = await executeBash({ command: cmd, timeout: 120 }, workdir);
   const parsed = parseResults(result.content, framework);
+
+  // Exit code is nonzero when executeBash flagged the run (it appends
+  // "[exit code: N]" and sets is_error for failing commands).
+  const exitNonzero = result.is_error === true || /\[exit code: \d+\]/.test(result.content);
+
+  // Unparseable output + failing exit code: never report success — surface raw output.
+  if (parsed.total === 0 && exitNonzero) {
+    return {
+      content: [
+        `Test run (${framework}, fail_fast=${failFast}) exited with a nonzero status,`,
+        'but the output could not be parsed into pass/fail counts. Raw output:',
+        '',
+        result.content.slice(0, 4000),
+      ].join('\n'),
+      is_error: true,
+    };
+  }
 
   const lines: string[] = [
     `Test run (${framework}, fail_fast=${failFast}):`,

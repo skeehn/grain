@@ -131,9 +131,8 @@ function runInShell(
         resolve({ output: output.trim(), exitCode: parseInt(exitCodeStr, 10) || 0 });
         return;
       }
-      if (line === '') return; // skip blank lines
-      output += line + '\n';
-      if (output.length > MAX_OUTPUT && !output.includes('[truncated]')) {
+      output += line + '\n'; // preserve blank lines (sentinel already handled above)
+      if (output.length > MAX_OUTPUT && !output.includes('[output truncated')) {
         output = output.slice(0, MAX_OUTPUT) + '\n... [output truncated at 50KB]';
       }
       if (output.length < MAX_OUTPUT) onLine(line);
@@ -155,6 +154,9 @@ function runInShell(
       if (done) return;
       const text = chunk.toString();
       output += text;
+      if (output.length > MAX_OUTPUT && !output.includes('[output truncated')) {
+        output = output.slice(0, MAX_OUTPUT) + '\n... [output truncated at 50KB]';
+      }
       if (/error|Error|ERR|warn|WARN/i.test(text)) {
         const line = text.trim().split('\n').pop() || '';
         if (line) onLine(`⚠ ${line.slice(0, 120)}`);
@@ -217,8 +219,8 @@ export async function executeBash(
 
   if (exitCode !== 0 && exitCode !== 124) {
     return {
-      content: output || `Command failed with exit code ${exitCode}`,
-      is_error: false, // Don't mark as error — let the LLM decide how to handle it
+      content: `${output || '(no output)'}\n[exit code: ${exitCode}]`,
+      is_error: true,
     };
   }
 

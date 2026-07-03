@@ -1,6 +1,6 @@
 import { writeFileSync, mkdirSync } from 'fs';
 import { dirname, resolve, extname } from 'path';
-import { execSync } from 'child_process';
+import { execSync, execFileSync } from 'child_process';
 import type { ToolResult } from '../providers/types.js';
 import { getContextTracker } from '../agent/context-tracker.js';
 
@@ -26,15 +26,15 @@ function syntaxCheck(filePath: string): string | null {
         JSON.parse(require('fs').readFileSync(filePath, 'utf-8'));
         return null;
       case '.py':
-        execSync(`python3 -c "import ast; ast.parse(open('${filePath}').read())"`, { timeout: 5000 });
+        execFileSync('python3', ['-c', 'import ast,sys; ast.parse(open(sys.argv[1]).read())', filePath], { timeout: 5000 });
         return null;
       case '.ts':
       case '.tsx':
         // Check if tsc is available
         try {
-          execSync(`npx tsc --noEmit --skipLibCheck "${filePath}" 2>&1 | head -5`, { timeout: 10000 });
+          execFileSync('npx', ['tsc', '--noEmit', '--skipLibCheck', filePath], { timeout: 10000, stdio: 'pipe' });
         } catch (e: any) {
-          const output = e.stdout?.toString() || e.message;
+          const output = e.stdout?.toString() || e.stderr?.toString() || e.message || '';
           if (output.includes('error TS')) return output.slice(0, 500);
         }
         return null;

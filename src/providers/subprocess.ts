@@ -8,33 +8,39 @@ export interface SubprocessResult {
 
 export async function delegateToClaudeCode(prompt: string): Promise<SubprocessResult> {
   return new Promise((resolve, reject) => {
-    const proc = spawn('claude', ['-p', prompt, '--output-format', 'stream-json'], {
+    // stream-json in print mode requires --verbose or the CLI errors out
+    const proc = spawn('claude', ['-p', prompt, '--output-format', 'stream-json', '--verbose'], {
       stdio: ['pipe', 'pipe', 'pipe'],
     });
 
     let output = '';
     let stderr = '';
+    let buffer = '';
+
+    const parseLine = (line: string) => {
+      if (!line.trim()) return;
+      try {
+        const parsed = JSON.parse(line);
+        if (parsed.type === 'assistant' && parsed.message?.content) {
+          for (const block of parsed.message.content) {
+            if (block.type === 'text') {
+              output += block.text;
+            }
+          }
+        } else if (parsed.type === 'result') {
+          output += parsed.result || '';
+        }
+      } catch {
+        output += line;
+      }
+    };
 
     proc.stdout.on('data', (data: Buffer) => {
-      const text = data.toString();
-      // Parse stream-json format - each line is a JSON object
-      const lines = text.split('\n').filter(l => l.trim());
-      for (const line of lines) {
-        try {
-          const parsed = JSON.parse(line);
-          if (parsed.type === 'assistant' && parsed.message?.content) {
-            for (const block of parsed.message.content) {
-              if (block.type === 'text') {
-                output += block.text;
-              }
-            }
-          } else if (parsed.type === 'result') {
-            output += parsed.result || '';
-          }
-        } catch {
-          output += line;
-        }
-      }
+      // Buffer across chunk boundaries — a JSON object routinely spans chunks
+      buffer += data.toString();
+      const lines = buffer.split('\n');
+      buffer = lines.pop() ?? ''; // keep the trailing partial line
+      for (const line of lines) parseLine(line);
     });
 
     proc.stderr.on('data', (data: Buffer) => {
@@ -42,6 +48,7 @@ export async function delegateToClaudeCode(prompt: string): Promise<SubprocessRe
     });
 
     proc.on('close', (code) => {
+      parseLine(buffer);
       resolve({ output: output || stderr, exitCode: code || 0 });
     });
 

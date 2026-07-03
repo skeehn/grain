@@ -51,6 +51,10 @@ export class OpenRouterProvider implements Provider {
         for (const tr of toolResults) {
           result.push(tr);
         }
+        // Don't drop text blocks that share the message with tool results
+        if (textParts.length > 0) {
+          result.push({ role: m.role, content: textParts.join('') });
+        }
       } else {
         // Plain text message
         result.push({ role: m.role, content: textParts.join('') || '' });

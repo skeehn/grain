@@ -88,15 +88,17 @@ const KEYWORD_PATTERNS = {
     /add\slog|console\.log|debug/i,
   ],
   critical: [
-    /security|auth|password|token|secret|key|encrypt|decrypt/i,
-    /payment|billing|transaction|money|credit\scard|stripe/i,
-    /deploy|production|release|publish|ship/i,
+    // word-bounded: bare "key" matched "keyboard"/"monkey", "token" matched "tokenize"
+    /\bsecurity\b|\bauth(?!or)\w*|\bpasswords?\b|\btokens?\b|\bsecrets?\b|\b(?:api|ssh|access|private|secret)[ _-]?keys?\b|\bencrypt|\bdecrypt/i,
+    /payment|billing|transaction|\bmoney\b|credit\s?card|stripe/i,
+    /\bdeploy|production|release|publish|\bship\b/i,
     /delete.*database|drop.*table|truncate/i,
   ],
   complex: [
     /architecture|design|pattern|refactor\s(entire|whole|all)/i,
     /algorithm|optimization|performance/i,
-    /database\sschema|migration|model/i,
+    // bare "model" matched any prompt mentioning a model ("which model are you")
+    /database\s+schema|\bmigrations?\b|\bdata\s+model\b/i,
     /api\sdesign|rest\sapi|graphql/i,
     /website|landing|web\sapp|frontend/i,
     /implement.*from\sscratch|rewrite/i,

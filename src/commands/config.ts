@@ -207,9 +207,9 @@ export async function handleConfigShow(): Promise<void> {
   console.log(sectionHeader('Paths'));
   
   const configDir = getConfigDir();
-  const engramDb = config.engram_db.replace('~', homedir());
-  const sessionsPath = join(homedir(), '.grain', 'sessions.db');
-  const skillsPath = join(homedir(), '.grain', 'skills');
+  const engramDb = config.engram_db.replace(/^~(?=\/|$)/, homedir());
+  const sessionsPath = join(process.env.GRAIN_HOME || join(homedir(), '.grain'), 'sessions.json');
+  const skillsPath = join(process.env.GRAIN_HOME || join(homedir(), '.grain'), 'skills');
   
   console.log(row('Config', dim(configDir)));
   

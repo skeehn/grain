@@ -29,6 +29,23 @@ export function compact(messages: Message[]): Message[] {
   const toSummarize = messages.slice(0, -KEEP_RECENT);
   const toKeep = messages.slice(-KEEP_RECENT);
 
+  // The cut can land between a tool_use and its tool_result. A kept user
+  // message whose tool_result references a summarized-away tool_use makes the
+  // API reject the whole history, so convert those orphaned blocks to text
+  // (they get merged into the summary message below to keep roles alternating).
+  let orphanText = '';
+  if (toKeep.length > 0 && toKeep[0].role === 'user' && toKeep[0].content.some(b => b.type === 'tool_result')) {
+    const orphan = toKeep.shift()!;
+    orphanText = orphan.content
+      .map(b => {
+        if (b.type === 'tool_result') return `[earlier tool result]: ${String(b.content).slice(0, 500)}`;
+        if (b.type === 'text') return b.text;
+        return '';
+      })
+      .filter(Boolean)
+      .join('\n');
+  }
+
   // Extract structured facts from summarized messages
   const filesWritten: string[] = [];
   const commandsRun: string[] = [];
@@ -65,6 +82,7 @@ export function compact(messages: Message[]): Message[] {
   if (commandsRun.length) parts.push(`Commands run: ${[...new Set(commandsRun)].slice(0, 10).join(' | ')}`);
   if (errors.length) parts.push(`Errors: ${[...new Set(errors)].slice(0, 5).join(' | ')}`);
   if (keyDecisions.length) parts.push(`Key outcomes:\n${keyDecisions.slice(0, 5).map(d => `  • ${d}`).join('\n')}`);
+  if (orphanText) parts.push(orphanText);
   parts.push('[Continue from the recent messages below]');
 
   const summaryMessage: Message = {

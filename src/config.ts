@@ -18,7 +18,7 @@ export interface GrainConfig {
   };
 }
 
-const CONFIG_DIR  = join(homedir(), '.grain');
+const CONFIG_DIR  = process.env.GRAIN_HOME || join(homedir(), '.grain');
 const CONFIG_PATH = join(CONFIG_DIR, 'config.json');
 const ENV_PATH    = join(CONFIG_DIR, '.env');
 
@@ -114,7 +114,15 @@ export function loadConfig(): GrainConfig {
   if (!existsSync(CONFIG_PATH)) return { ...DEFAULTS };
   try {
     const parsed = JSON.parse(readFileSync(CONFIG_PATH, 'utf-8'));
-    return { ...DEFAULTS, ...parsed };
+    // Deep-merge `plugins` — a partial user value (e.g. only `routing`) must
+    // not clobber the default plugin map, which PluginRegistry requires.
+    const plugins = parsed.plugins
+      ? {
+          plugins: { ...DEFAULTS.plugins!.plugins, ...(parsed.plugins.plugins || {}) },
+          routing: { ...DEFAULTS.plugins!.routing, ...(parsed.plugins.routing || {}) },
+        }
+      : DEFAULTS.plugins;
+    return { ...DEFAULTS, ...parsed, plugins };
   } catch {
     return { ...DEFAULTS };
   }

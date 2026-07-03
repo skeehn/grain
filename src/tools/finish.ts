@@ -1,4 +1,4 @@
-import { execSync } from 'child_process';
+import { execSync, execFileSync } from 'child_process';
 import { existsSync } from 'fs';
 import { resolve } from 'path';
 import type { ToolResult } from '../providers/types.js';
@@ -48,7 +48,7 @@ export async function executeFinish(
         if (status) {
           execSync('git add -A', { cwd: workdir, stdio: 'pipe' });
           const msg = input.commit_msg || `grain: ${input.result.slice(0, 72)}`;
-          execSync(`git commit -m ${JSON.stringify(msg)}`, { cwd: workdir, stdio: 'pipe' });
+          execFileSync('git', ['commit', '-m', msg], { cwd: workdir, stdio: 'pipe' });
           const hash = execSync('git rev-parse --short HEAD', { cwd: workdir, encoding: 'utf-8' }).trim();
           notes.push(`committed ${hash}`);
         } else {

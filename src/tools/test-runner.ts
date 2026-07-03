@@ -37,8 +37,13 @@ function detectTestFramework(): string | null {
   // Check package.json
   const pkgPath = resolve(cwd, 'package.json');
   if (existsSync(pkgPath)) {
-    const pkg = JSON.parse(readFileSync(pkgPath, 'utf-8'));
-    
+    let pkg: any;
+    try {
+      pkg = JSON.parse(readFileSync(pkgPath, 'utf-8'));
+    } catch (err: any) {
+      throw new Error(`Failed to parse package.json at ${pkgPath}: ${err.message}`);
+    }
+
     if (pkg.devDependencies?.jest || pkg.dependencies?.jest) return 'jest';
     if (pkg.devDependencies?.vitest || pkg.dependencies?.vitest) return 'vitest';
     if (pkg.scripts?.test) return 'npm'; // Fallback to npm test
@@ -125,8 +130,14 @@ export async function executeTestRunner(input: {
   coverage?: boolean;
 }): Promise<ToolResult> {
   const cwd = process.cwd();
-  const framework = input.framework || detectTestFramework();
-  
+
+  let framework: string | null;
+  try {
+    framework = input.framework || detectTestFramework();
+  } catch (err: any) {
+    return { content: err.message, is_error: true };
+  }
+
   if (!framework) {
     return {
       content: 'Could not detect test framework. Specify manually with framework parameter.',

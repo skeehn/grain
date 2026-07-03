@@ -1,5 +1,5 @@
 // Multi-file edit tool - atomic changes across multiple files
-import { readFileSync, writeFileSync, mkdirSync } from 'fs';
+import { readFileSync, writeFileSync, mkdirSync, unlinkSync } from 'fs';
 import { resolve, dirname } from 'path';
 import type { ToolResult } from '../providers/types.js';
 
@@ -164,14 +164,16 @@ export async function executeMultiEdit(input: { edits: Edit[]; preview?: boolean
     
     return { content: output };
   } catch (err: any) {
-    // Rollback on error
+    // Rollback on error — restore modified files, remove newly created ones
     for (const backup of backups) {
       try {
         if (backup.existed) {
           writeFileSync(backup.path, backup.content, 'utf-8');
+        } else {
+          unlinkSync(backup.path);
         }
       } catch {
-        // Best effort rollback
+        // Best effort rollback (unlinkSync throws if the file was never written)
       }
     }
     

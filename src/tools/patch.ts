@@ -36,7 +36,7 @@ export async function executePatch(input: { path: string; old_string: string; ne
       if (count > 1) {
         return { content: `Found ${count} occurrences of old_string. Must be unique. Add more context.`, is_error: true };
       }
-      content = content.replace(input.old_string, input.new_string);
+      content = content.replace(input.old_string, () => input.new_string);
       writeFileSync(filePath, content);
       return { content: `Patched ${filePath}\n- ${input.old_string.split('\n').slice(0, 3).join('\n- ')}\n+ ${input.new_string.split('\n').slice(0, 3).join('\n+ ')}` };
     }
@@ -48,7 +48,7 @@ export async function executePatch(input: { path: string; old_string: string; ne
       if (count > 1) {
         return { content: `Found ${count} trimmed occurrences. Add more context.`, is_error: true };
       }
-      content = content.replace(trimmedOld, input.new_string);
+      content = content.replace(trimmedOld, () => input.new_string);
       writeFileSync(filePath, content);
       return { content: `Patched ${filePath} (trimmed match)` };
     }
@@ -59,8 +59,13 @@ export async function executePatch(input: { path: string; old_string: string; ne
     let matchStart = -1;
     let matchEnd = -1;
 
+    // Only windows near the old_string's own line count can match — an
+    // unbounded scan is O(n^3) and hangs on large files.
+    const oldLineCount = input.old_string.split('\n').length;
+    const maxWindow = oldLineCount * 2 + 5;
+
     for (let i = 0; i < lines.length; i++) {
-      for (let j = i + 1; j <= lines.length; j++) {
+      for (let j = i + 1; j <= Math.min(i + maxWindow, lines.length); j++) {
         const chunk = lines.slice(i, j).join('\n');
         if (normalizeWhitespace(chunk) === normalizedOld) {
           matchStart = i;

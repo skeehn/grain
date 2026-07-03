@@ -41,6 +41,10 @@ export class BedrockProvider implements Provider {
         process.stderr.write(`\n⏳ Rate limited — retrying in ${wait/1000}s (attempt ${attempt+1}/${MAX_RETRIES})...\n`);
         await new Promise(r => setTimeout(r, wait));
       }
+      // Once any event has been yielded, the consumer has already acted on it —
+      // restarting the stream would duplicate text and tool_use blocks. Only
+      // retry failures that happen before the first event.
+      let yieldedAny = false;
       try {
         const stream = this.client.messages.stream({
           model: this.model,
@@ -54,19 +58,21 @@ export class BedrockProvider implements Provider {
           if (event.type === 'content_block_start') {
             const block = (event as any).content_block;
             if (block.type === 'tool_use') {
+              yieldedAny = true;
               yield { type: 'tool_use_start', id: block.id, name: block.name };
             }
           } else if (event.type === 'content_block_delta') {
             const delta = (event as any).delta;
             if (delta.type === 'text_delta') {
+              yieldedAny = true;
               yield { type: 'text_delta', text: delta.text };
             } else if (delta.type === 'input_json_delta') {
+              yieldedAny = true;
               yield { type: 'tool_use_delta', id: '', input_json: delta.partial_json };
             }
           } else if (event.type === 'content_block_stop') {
+            yieldedAny = true;
             yield { type: 'tool_use_end', id: '' };
-          } else if (event.type === 'message_stop') {
-            yield { type: 'message_end', stop_reason: 'end_turn' };
           } else if (event.type === 'message_delta') {
             const delta = (event as any).delta;
             if (delta.stop_reason) {
@@ -78,10 +84,11 @@ export class BedrockProvider implements Provider {
       } catch (err: any) {
         lastError = err;
         const status = err?.status || err?.statusCode;
-        if (status === 429 || /too many|rate.limit|throttl/i.test(err?.message || '')) {
-          continue; // retry
+        const throttled = status === 429 || /too many|rate.limit|throttl/i.test(err?.message || '');
+        if (throttled && !yieldedAny) {
+          continue; // retry — nothing was emitted yet
         }
-        throw err; // non-retryable error
+        throw err; // non-retryable, or a mid-stream failure the consumer must handle
       }
     }
     throw lastError;

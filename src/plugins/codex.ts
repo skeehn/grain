@@ -44,9 +44,8 @@ export class CodexPlugin implements AgentPlugin {
     return new Promise((resolve) => {
       const proc = spawn(this.binaryPath, ["--version"], {
         stdio: "ignore",
-        shell: true,
       });
-      proc.on("close", (code: number) => resolve(code === 0));
+      proc.on("close", (code: number | null) => resolve(code === 0));
       proc.on("error", () => resolve(false));
     });
   }
@@ -56,14 +55,13 @@ export class CodexPlugin implements AgentPlugin {
       let output = "";
       const proc = spawn(this.binaryPath, ["--version"], {
         stdio: ["ignore", "pipe", "ignore"],
-        shell: true,
       });
       
       proc.stdout.on("data", (chunk: Buffer) => {
         output += chunk.toString();
       });
       
-      proc.on("close", (code: number) => {
+      proc.on("close", (code: number | null) => {
         if (code === 0) {
           resolve(output.trim());
         } else {
@@ -100,7 +98,6 @@ export class CodexPlugin implements AgentPlugin {
       const proc = spawn(this.binaryPath, args, {
         cwd: task.workdir,
         stdio: ["ignore", "pipe", "pipe"],
-        shell: true,
         timeout: task.constraints?.timeoutSeconds
           ? task.constraints.timeoutSeconds * 1000
           : 180_000,
@@ -114,19 +111,22 @@ export class CodexPlugin implements AgentPlugin {
         stderr += chunk.toString();
       });
 
-      proc.on("close", (code: number) => {
+      proc.on("close", (code: number | null, signal: NodeJS.Signals | null) => {
         const durationMs = Date.now() - startTime;
-        
+
         // Parse JSONL output
         const parsed = this.parseJSONL(stdout);
-        
+
+        // code === null + signal means the process was killed (e.g. timeout)
+        const timedOut = code === null && signal !== null;
+
         resolve({
           success: code === 0,
           output: parsed.summary,
-          cost: parsed.cost,
+          costUSD: parsed.cost ?? undefined,
           durationMs,
           filesModified: parsed.filesModified,
-          exitReason: code === 0 ? "completed" : "error",
+          exitReason: code === 0 ? "completed" : timedOut ? "timeout" : "error",
           metadata: {
             exitCode: code,
             rawStderr: stderr.slice(0, 1000),
@@ -189,11 +189,22 @@ export class CodexPlugin implements AgentPlugin {
       .map(e => e.item?.text)
       .filter(Boolean);
 
-    // Extract file changes from file_edit items
-    const fileEdits = itemsCompleted
-      .filter(e => e.item?.type === 'file_edit')
-      .map(e => e.item?.path)
-      .filter(Boolean);
+    // Extract file changes.
+    // The codex CLI emits `file_change` items with a `changes: [{path}]` array;
+    // older/legacy shape is `file_edit` items with a flat `path` field.
+    const fileEdits = itemsCompleted.flatMap(e => {
+      const item = e.item;
+      if (!item) return [];
+      if (item.type === 'file_edit') {
+        return item.path ? [item.path] : [];
+      }
+      if (item.type === 'file_change') {
+        return (item.changes ?? [])
+          .map((c: any) => c?.path)
+          .filter(Boolean);
+      }
+      return [];
+    });
 
     // Extract usage
     const usage: CodexUsage | null = turnCompleted?.usage || null;

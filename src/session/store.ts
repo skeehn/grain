@@ -1,11 +1,11 @@
 // Session store - simple JSON file (fast, no native deps, no WASM)
 import { join } from 'path';
-import { mkdirSync, existsSync, readFileSync, writeFileSync } from 'fs';
+import { mkdirSync, existsSync, readFileSync, writeFileSync, renameSync } from 'fs';
 import { homedir } from 'os';
 import { randomUUID } from 'crypto';
 import type { Message } from '../providers/types.js';
 
-const DB_DIR = join(homedir(), '.grain');
+const DB_DIR = process.env.GRAIN_HOME || join(homedir(), '.grain');
 const DB_PATH = join(DB_DIR, 'sessions.json');
 
 interface SessionRecord {
@@ -31,8 +31,12 @@ function getStore(): SessionStore {
 
   if (existsSync(DB_PATH)) {
     try {
-      store = JSON.parse(readFileSync(DB_PATH, 'utf-8'));
-      return store!;
+      const parsed = JSON.parse(readFileSync(DB_PATH, 'utf-8'));
+      // Validate shape — `null` or a foreign schema would break every caller
+      if (parsed && Array.isArray(parsed.sessions)) {
+        store = parsed;
+        return store!;
+      }
     } catch {
       // Corrupted, start fresh
     }
@@ -48,7 +52,11 @@ function saveStore() {
     if (store.sessions.length > 50) {
       store.sessions = store.sessions.slice(-50);
     }
-    writeFileSync(DB_PATH, JSON.stringify(store, null, 2));
+    // Atomic write: a crash mid-write must not leave truncated JSON
+    // (the corruption handler would then silently discard all history).
+    const tmp = DB_PATH + '.tmp';
+    writeFileSync(tmp, JSON.stringify(store, null, 2));
+    renameSync(tmp, DB_PATH);
   }
 }
 
@@ -86,6 +94,22 @@ export async function addMessage(
   // Keep only last 100 messages per session
   if (session.messages.length > 100) {
     session.messages = session.messages.slice(-100);
+    // Truncation must not cut between a tool_use and its tool_result, and the
+    // history must start with a plain user message — otherwise --resume 400s.
+    const carriesToolResult = (m: SessionRecord['messages'][number]): boolean => {
+      try {
+        const blocks = JSON.parse(m.content_json);
+        return Array.isArray(blocks) && blocks.some((b: any) => b?.type === 'tool_result');
+      } catch {
+        return false;
+      }
+    };
+    while (
+      session.messages.length > 0 &&
+      (session.messages[0].role === 'assistant' || carriesToolResult(session.messages[0]))
+    ) {
+      session.messages.shift();
+    }
   }
 
   saveStore();
