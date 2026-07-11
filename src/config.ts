@@ -16,6 +16,15 @@ export interface GrainConfig {
     endpoint?: string;
     apiKey?: string;
   };
+  tui?: {
+    schemaVersion: 1;
+    theme: 'field' | 'light' | 'system';
+    density: 'compact' | 'comfortable';
+    mouse: boolean;
+    alternateScreen: boolean;
+    motion: boolean;
+    defaultPanels: Array<'timeline' | 'workspace' | 'agents' | 'context' | 'diagnostics'>;
+  };
 }
 
 const CONFIG_DIR  = process.env.GRAIN_HOME || join(homedir(), '.grain');
@@ -27,6 +36,8 @@ const DEFAULTS: GrainConfig = {
   model:      null,
   engram_db:  '~/.engram/knowledge',
   max_tokens: 180000,
+  tui: { schemaVersion: 1, theme: 'field', density: 'compact', mouse: true, alternateScreen: true, motion: true,
+    defaultPanels: ['timeline', 'workspace', 'agents'] },
   plugins: {
     plugins: {
       "claude-code": {
@@ -122,7 +133,7 @@ export function loadConfig(): GrainConfig {
           routing: { ...DEFAULTS.plugins!.routing, ...(parsed.plugins.routing || {}) },
         }
       : DEFAULTS.plugins;
-    return { ...DEFAULTS, ...parsed, plugins };
+    return { ...DEFAULTS, ...parsed, plugins, tui: { ...DEFAULTS.tui!, ...(parsed.tui || {}) } };
   } catch {
     return { ...DEFAULTS };
   }
@@ -148,6 +159,10 @@ export function validateConfig(config: GrainConfig): { valid: boolean; error?: s
   const envKey = needs[config.provider];
   if (envKey && !process.env[envKey]) {
     return { valid: false, error: `${config.provider} requires ${envKey}.\n\nRun: grain config set key ${envKey} <your-key>\nor:  grain init` };
+  }
+  if (config.tui && (config.tui.schemaVersion !== 1 || !['field', 'light', 'system'].includes(config.tui.theme)
+    || !['compact', 'comfortable'].includes(config.tui.density))) {
+    return { valid: false, error: 'Invalid TUI configuration. Expected schemaVersion=1 and supported theme/density values.' };
   }
   return { valid: true };
 }

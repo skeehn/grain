@@ -1,6 +1,8 @@
 // Multi-file edit tool - atomic changes across multiple files
 import type { ToolResult } from '../providers/types.js';
 import { getWorkspaceFS } from '../workspace/index.js';
+import { WorkspaceTransactionManager } from '../workspace/index.js';
+import { randomUUID } from 'node:crypto';
 
 export const multiEditTool = {
   name: 'multi_edit',
@@ -141,15 +143,12 @@ export async function executeMultiEdit(input: { edits: Edit[]; preview?: boolean
     return { content: output };
   }
   
-  // Apply all edits
   try {
-    for (let i = 0; i < edits.length; i++) {
-      const edit = edits[i];
-      const backup = backups[i];
-      const filePath = backup.path;
-      
-      workspace.writeAtomic(edit.path, edit.new_content);
-    }
+    const manager = new WorkspaceTransactionManager(workspace);
+    const transaction = manager.begin({ invocationId: randomUUID(),
+      expectedInputs: backups.filter(backup => backup.existed).map(backup => ({ path: edits[backups.indexOf(backup)].path, content_hash: workspace.stat(edits[backups.indexOf(backup)].path).content_hash })),
+      operations: edits.map(edit => ({ type: 'write' as const, path: edit.path, content: edit.new_content })) });
+    manager.approve(transaction.id); manager.apply(transaction.id);
     
     let output = `✓ Applied changes to ${edits.length} file${edits.length > 1 ? 's' : ''}:\n`;
     for (const edit of edits) {
@@ -158,21 +157,8 @@ export async function executeMultiEdit(input: { edits: Edit[]; preview?: boolean
       output += `  ${action}: ${edit.path}\n`;
     }
     
-    return { content: output };
+    return { content: `${output}transaction:${transaction.id}` };
   } catch (err: any) {
-    // Rollback on error — restore modified files, remove newly created ones
-    for (const backup of backups) {
-      try {
-        if (backup.existed) {
-          workspace.writeAtomic(backup.path, backup.content);
-        } else {
-          workspace.remove(backup.path);
-        }
-      } catch {
-        // Best effort rollback (unlinkSync throws if the file was never written)
-      }
-    }
-    
     return {
       content: `Multi-edit failed, rolled back: ${err.message}`,
       is_error: true,

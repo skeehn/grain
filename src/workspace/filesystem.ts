@@ -179,6 +179,19 @@ export class LocalWorkspaceFS implements WorkspaceFS {
     return this.writeAtomic(path, read.content.replace(oldText, newText), read.hash);
   }
 
+  restoreSnapshot(snapshot: FileSnapshot, expectedCurrentHash?: string): FileSnapshot {
+    if (!snapshot.existed || !snapshot.content_hash) throw new Error(`Snapshot is not restorable as a file: ${snapshot.path}`);
+    const full = this.resolve(snapshot.path); const current = this.snapshot(snapshot.path);
+    if (expectedCurrentHash && current.content_hash !== expectedCurrentHash) throw new Error(`File changed before rollback: ${snapshot.path}`);
+    const object = join(grainHome(), 'objects', snapshot.content_hash.slice(0, 2), snapshot.content_hash);
+    if (!existsSync(object)) throw new Error(`Missing snapshot object ${snapshot.content_hash}`);
+    mkdirSync(dirname(full), { recursive: true }); const tmp = join(dirname(full), `.${basename(full)}.grain-restore-${randomUUID()}.tmp`);
+    copyFileSync(object, tmp); const descriptor = openSync(tmp, 'r'); try { fsyncSync(descriptor); } finally { closeSync(descriptor); }
+    renameSync(tmp, full); chmodSync(full, (snapshot.mode || 0o644) & 0o777);
+    const restored = this.stat(snapshot.path); if (restored.content_hash !== snapshot.content_hash) throw new Error(`Rollback verification failed: ${snapshot.path}`);
+    return restored;
+  }
+
   move(from: string, to: string): void { renameSync(this.resolve(from, true), this.resolve(to)); }
   mkdir(path: string): void { mkdirSync(this.resolve(path), { recursive: true }); }
   remove(path: string): void { rmSync(this.resolve(path, true), { recursive: true, force: false }); }

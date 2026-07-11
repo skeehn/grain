@@ -3,6 +3,8 @@ import { execSync, execFileSync } from 'child_process';
 import type { ToolResult } from '../providers/types.js';
 import { getContextTracker } from '../agent/context-tracker.js';
 import { getWorkspaceFS } from '../workspace/index.js';
+import { WorkspaceTransactionManager } from '../workspace/index.js';
+import { randomUUID } from 'node:crypto';
 
 export const writeTool = {
   name: 'write',
@@ -70,7 +72,10 @@ function syntaxCheck(filePath: string): string | null {
 export async function executeWrite(input: { path: string; content: string; expected_hash?: string }): Promise<ToolResult> {
   try {
     const workspace = getWorkspaceFS();
-    const written = workspace.writeAtomic(input.path, input.content, input.expected_hash);
+    const manager = new WorkspaceTransactionManager(workspace);
+    const transaction = manager.begin({ invocationId: randomUUID(), expectedInputs: input.expected_hash ? [{ path: input.path, content_hash: input.expected_hash }] : [],
+      operations: [{ type: 'write', path: input.path, content: input.content }] });
+    manager.approve(transaction.id); const written = manager.apply(transaction.id).changed[0];
     const filePath = workspace.resolve(input.path, true);
     const bytes = Buffer.byteLength(input.content);
 
@@ -87,7 +92,7 @@ export async function executeWrite(input: { path: string; content: string; expec
       };
     }
 
-    return { content: `✓ Wrote ${bytes} bytes to ${filePath}\nsha256:${written.content_hash}` };
+    return { content: `✓ Wrote ${bytes} bytes to ${filePath}\nsha256:${written.content_hash}\ntransaction:${transaction.id}` };
   } catch (err: any) {
     return { content: `Error writing file: ${err.message}`, is_error: true };
   }

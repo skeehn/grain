@@ -64,6 +64,12 @@ describe('config', () => {
     else process.env.ANTHROPIC_API_KEY = saved;
   });
 
+  test('loads versioned field-instrument TUI defaults and rejects invalid values', () => {
+    rmSync(join(grainHome, 'config.json'), { force: true }); const cfg = loadConfig();
+    expect(cfg.tui?.theme).toBe('field'); expect(cfg.tui?.alternateScreen).toBe(true);
+    expect(validateConfig({ ...cfg, tui: { ...cfg.tui!, theme: 'purple' as any } }).valid).toBe(false);
+  });
+
   test('MCP config rejects non-loopback plaintext HTTP', () => {
     require('node:fs').writeFileSync(join(grainHome, 'mcp.json'), JSON.stringify({ servers: { bad: { transport: 'http', url: 'http://example.com/mcp', trust: { enabled: true, allowTools: [] } } } }));
     expect(() => loadMcpConfig()).toThrow('HTTPS or loopback');

@@ -70,6 +70,12 @@ grain runs context <run-id>
 grain agents pair "implement and verify authentication"
 grain agents research "compare migration strategies"
 
+# Inspect the latest replayable run in the differential full-screen TUI
+grain tui
+
+# Inspect a specific run without replacing the current terminal buffer
+grain --no-alt-screen tui --run <run-id>
+
 # Inspect verified learning candidates and evidence
 grain learning list
 ```

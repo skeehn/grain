@@ -10,7 +10,9 @@ Updated: 2026-07-10
 - Hybrid agent contracts use shared read-only isolation for research and worktree isolation for writers.
 - Durable graph templates and CLI inspection exist for pair, research, plan, review-panel, swarm, and repair-loop modes.
 - Evidence-free `finish` calls are rejected and the finish tool has no Git, memory, filesystem, or network side effects.
-- Durable child execution, mailboxes, transactional worktree merging, MCP, and agent-aware TUI controls remain incomplete.
+- Durable child execution, mailboxes, transactional worktree merging, stdio/HTTP MCP, and agent-aware graph controls are implemented.
+- Event schema v2, retained terminal frames, differential patches, responsive run projection, and a full-screen journal viewer are implemented with v1 replay compatibility.
+- Workspace writes, patches, and multi-file edits now use persisted approval-state transactions with content-addressed rollback.
 
 ## Implemented foundation
 
@@ -24,7 +26,7 @@ Updated: 2026-07-10
 
 ## Qualification still requiring sustained runs
 
-- Full 89-task Terminal-Bench 2.1 runs against pinned Grain, Pi, and Hermes versions.
+- Full Terminal-Bench 2.0 runs against pinned Grain, Pi, and Hermes versions.
 - Five-trial release measurement proving under 2% flaky task-model pairs.
 - Measured top-five/70% score and 10% paired-success median cost advantage.
 - Fault injection through every process-kill boundary and reconciliation of unknown external effects.

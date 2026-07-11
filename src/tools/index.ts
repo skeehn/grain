@@ -23,6 +23,9 @@ import { createSpawnAgentTool } from './spawn-agent.js';
 import { loadConfig } from '../config.js';
 import { setWorkspaceRoot } from '../workspace/index.js';
 import { wikiSearchTool, wikiGetTool, wikiProposeTool, executeWikiSearch, executeWikiGet, executeWikiPropose } from './wiki.js';
+import { inspectTool, executeInspect } from './inspect.js';
+import { searchTool, executeSearch } from './search.js';
+export * from './contract.js';
 
 // Tool execution context — set once at agent loop start
 let _toolCwd: string = process.cwd();
@@ -77,6 +80,8 @@ function getLazyTools(): Tool[] {
     testRunnerTool,  // Run tests
     finishTool,      // Signal completion
     repoMapTool,     // Understand codebase structure
+    inspectTool,
+    searchTool,
 
     // Power (6) — for complex tasks
     multiEditTool,   // Batch edits across files
@@ -107,6 +112,8 @@ const executors: Record<string, (input: any) => Promise<ToolResult>> = {
   test_fix_loop: (input: any) => executeTestFixLoop(input, _toolCwd),
   plan: (input: any) => Promise.resolve(executePlan(input, _toolCwd)),
   repo_map: executeRepoMap,
+  inspect: executeInspect,
+  search: executeSearch,
   multi_edit: executeMultiEdit,
   engram: executeEngram,
   delegate: executeDelegate,

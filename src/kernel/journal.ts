@@ -6,7 +6,7 @@ import { createHash, randomUUID } from 'crypto';
 import { join } from 'path';
 import { homedir } from 'os';
 import type { RunEvent, RunEventType, RunMetadata, RunState, RunStatus } from './types.js';
-import { RUN_EVENT_SCHEMA_VERSION } from './types.js';
+import { RUN_EVENT_SCHEMA_VERSION, SUPPORTED_RUN_EVENT_SCHEMA_VERSIONS } from './types.js';
 import { redactTrajectory } from './redaction.js';
 
 function grainHome(): string {
@@ -49,7 +49,7 @@ export function readRunEvents(runId: string): RunEvent[] {
   });
   let previous: string | null = null;
   events.forEach((event, index) => {
-    if (event.schema_version !== RUN_EVENT_SCHEMA_VERSION) throw new Error(`Unsupported run schema: ${event.schema_version}`);
+    if (!(SUPPORTED_RUN_EVENT_SCHEMA_VERSIONS as readonly number[]).includes(event.schema_version)) throw new Error(`Unsupported run schema: ${event.schema_version}`);
     if (event.sequence !== index + 1) throw new Error(`Invalid run sequence at event ${index + 1}`);
     if (event.previous_hash !== previous) throw new Error(`Broken run hash chain at event ${index + 1}`);
     const { hash, ...unsigned } = event;
@@ -67,7 +67,7 @@ export function replayRun(runId: string): RunState {
   for (const event of events) {
     state.last_sequence = event.sequence;
     state.last_hash = event.hash;
-    if (event.type === 'status_changed' || event.type === 'run_completed') {
+    if (event.type === 'status_changed' || event.type === 'run_completed' || event.type === 'run_paused' || event.type === 'run_resumed') {
       state.status = (event.payload as any).status;
     }
     if (event.type === 'tool_proposed') state.pending_tool = event.payload as any;
@@ -126,6 +126,15 @@ export class RunJournal {
   transition(status: RunStatus, detail?: Record<string, unknown>): void {
     this.append(status === 'succeeded' || status === 'failed' || status === 'cancelled'
       ? 'run_completed' : 'status_changed', { status, ...detail });
+  }
+
+  command(command: import('./types.js').RunCommand): void {
+    if (command.type === 'pause') { this.append('run_paused', { status: 'paused' }); return; }
+    if (command.type === 'resume') { this.append('run_resumed', { status: 'running' }); return; }
+    if (command.type === 'cancel') { this.append('run_cancel_requested', { force: Boolean(command.force) }); return; }
+    if (command.type === 'steer') { this.append('user_steered', { target_run_id: command.targetRunId, message: command.message }); return; }
+    if (command.type === 'reconcile') { this.append('filesystem_transaction_reconciliation', { invocation_id: command.invocationId, resolution: command.resolution }); return; }
+    this.append('status_changed', { status: replayRun(this.metadata.run_id).status, command });
   }
 
   export(path: string): void {

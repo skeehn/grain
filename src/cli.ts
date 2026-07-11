@@ -16,6 +16,7 @@ import { handleWikiCommand } from './commands/wiki.js';
 import { handleRunsCommand } from './commands/runs.js';
 import { handleLearningCommand } from './commands/learning.js';
 import { handleAgentsCommand } from './commands/agents.js';
+import { runTui } from './tui/app.js';
 
 // ─── Load ~/.grain/.env before anything else ──────────────────────────────────
 
@@ -41,7 +42,7 @@ const bold = (s: string) => `${c.bold}${s}${c.reset}`;
 // ─── Arg parser ───────────────────────────────────────────────────────────────
 
 interface ParsedArgs {
-  command?: 'init' | 'update' | 'config' | 'status' | 'serve' | 'help' | 'version' | 'skills' | 'engram' | 'wiki' | 'runs' | 'learning' | 'agents';
+  command?: 'init' | 'update' | 'config' | 'status' | 'serve' | 'help' | 'version' | 'skills' | 'engram' | 'wiki' | 'runs' | 'learning' | 'agents' | 'tui';
   configSubcmd?: 'set' | 'reset' | 'show';
   configKey?: string;
   configValue?: string;
@@ -58,6 +59,10 @@ interface ParsedArgs {
   tbBridge: boolean;  // TerminalBench bridge mode
   reflect: boolean;   // post-task self-reflection + engram store
   allowDestructive: boolean;
+  classic: boolean;
+  noAltScreen: boolean;
+  theme?: 'field' | 'light' | 'system';
+  density?: 'compact' | 'comfortable';
   utilitySubcmd?: string;
   utilityArg?: string;
   utilityOutput?: string;
@@ -66,7 +71,7 @@ interface ParsedArgs {
 
 export function parseArgs(argv: string[]): ParsedArgs {
   const args = argv.slice(2);
-  const result: ParsedArgs = { autoApprove: false, concise: false, tbBridge: false, reflect: false, allowDestructive: false };
+  const result: ParsedArgs = { autoApprove: false, concise: false, tbBridge: false, reflect: false, allowDestructive: false, classic: false, noAltScreen: false };
   const promptParts: string[] = [];
 
   let i = 0;
@@ -80,6 +85,14 @@ export function parseArgs(argv: string[]): ParsedArgs {
       if (arg === 'update')                                 { result.command = 'update'; break; }
       if (arg === 'status')                                 { result.command = 'status'; break; }
       if (arg === 'serve')                                  { result.command = 'serve'; break; }
+      if (arg === 'tui') {
+        result.command = 'tui';
+        const subcommand = args[i + 1];
+        if (subcommand === '--run' || subcommand === '--resume') {
+          result.utilitySubcmd = subcommand; result.utilityArg = args[i + 2]; i += 3;
+        } else i += 1;
+        continue;
+      }
       if (arg === '--help' || arg === '-h' || arg === 'help') { result.command = 'help'; break; }
       if (arg === '--version' || arg === '-v' || arg === 'version') { result.command = 'version'; break; }
 
@@ -147,6 +160,10 @@ export function parseArgs(argv: string[]): ParsedArgs {
     else if (arg === '--tb-bridge')                  { result.tbBridge = true; }
     else if (arg === '--reflect')                    { result.reflect = true; }
     else if (arg === '--allow-destructive')          { result.allowDestructive = true; }
+    else if (arg === '--classic')                    { result.classic = true; }
+    else if (arg === '--no-alt-screen')              { result.noAltScreen = true; }
+    else if (arg === '--theme')                      { result.theme = args[++i] as ParsedArgs['theme']; }
+    else if (arg === '--density')                    { result.density = args[++i] as ParsedArgs['density']; }
     else if (arg === '--') {
       // Explicit terminator: everything after it is prompt text verbatim.
       promptParts.push(...args.slice(i + 1));
@@ -633,11 +650,18 @@ ${bold('FLAGS')}
   -h, --help                   show this help
   -v, --version                show version
   --allow-destructive          explicitly allow destructive tools inside the workspace
+  --classic                    use stable line-oriented output
+  --no-alt-screen              keep full-screen TUI in the current terminal buffer
+  --theme field|light|system   choose TUI theme
+  --density compact|comfortable choose TUI information density
 
 ${bold('COMMANDS')}
   grain init                   interactive setup wizard
   grain status                 check provider, engram, config
   grain update                 update grain to latest version
+  grain tui                    inspect the latest run in the differential TUI
+  grain tui --run <id>         inspect a specific journaled run
+  grain tui --resume <id>      resume viewing a specific journaled run
   grain runs list              list event-sourced runs
   grain runs inspect <id>      validate and replay a run journal
   grain runs export <id> <file> export a reproducible trajectory
@@ -947,6 +971,11 @@ async function main(): Promise<void> {
   if (parsed.command === 'runs') { handleRunsCommand(parsed.utilitySubcmd, parsed.utilityArg, parsed.utilityOutput); return; }
   if (parsed.command === 'learning') { handleLearningCommand(parsed.utilitySubcmd, parsed.utilityArg, parsed.utilityOutput); return; }
   if (parsed.command === 'agents') { await handleAgentsCommand(parsed.utilitySubcmd, parsed.utilityArg, parsed.utilityOutput); return; }
+  if (parsed.command === 'tui') {
+    const config = loadConfig();
+    if (parsed.utilitySubcmd && !['--run', '--resume'].includes(parsed.utilitySubcmd)) throw new Error('Usage: grain tui [--run|--resume <run-id>]');
+    await runTui({ runId: parsed.utilityArg, alternateScreen: parsed.noAltScreen ? false : config.tui?.alternateScreen }); return;
+  }
 
   if (parsed.command === 'config') {
     await handleConfig(parsed.configSubcmd, parsed.configKey, parsed.configValue);

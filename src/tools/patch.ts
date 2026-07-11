@@ -1,5 +1,7 @@
 import type { ToolResult } from '../providers/types.js';
 import { getWorkspaceFS } from '../workspace/index.js';
+import { WorkspaceTransactionManager } from '../workspace/index.js';
+import { randomUUID } from 'node:crypto';
 
 export const patchTool = {
   name: 'patch',
@@ -26,6 +28,11 @@ export async function executePatch(input: { path: string; old_string: string; ne
     const read = workspace.readRange(input.path, 1, Number.MAX_SAFE_INTEGER);
     const filePath = workspace.resolve(input.path, true);
     let content = read.content;
+    const commit = (next: string) => {
+      const manager = new WorkspaceTransactionManager(workspace); const transaction = manager.begin({ invocationId: randomUUID(),
+        expectedInputs: [{ path: input.path, content_hash: input.expected_hash || read.hash }], operations: [{ type: 'write', path: input.path, content: next }] });
+      manager.approve(transaction.id); manager.apply(transaction.id); return transaction.id;
+    };
 
     // Strategy 1: Exact match
     if (content.includes(input.old_string)) {
@@ -34,8 +41,8 @@ export async function executePatch(input: { path: string; old_string: string; ne
         return { content: `Found ${count} occurrences of old_string. Must be unique. Add more context.`, is_error: true };
       }
       content = content.replace(input.old_string, () => input.new_string);
-      workspace.writeAtomic(input.path, content, input.expected_hash || read.hash);
-      return { content: `Patched ${filePath}\n- ${input.old_string.split('\n').slice(0, 3).join('\n- ')}\n+ ${input.new_string.split('\n').slice(0, 3).join('\n+ ')}` };
+      const transaction = commit(content);
+      return { content: `Patched ${filePath}\n- ${input.old_string.split('\n').slice(0, 3).join('\n- ')}\n+ ${input.new_string.split('\n').slice(0, 3).join('\n+ ')}\ntransaction:${transaction}` };
     }
 
     // Strategy 2: Trimmed match
@@ -46,8 +53,7 @@ export async function executePatch(input: { path: string; old_string: string; ne
         return { content: `Found ${count} trimmed occurrences. Add more context.`, is_error: true };
       }
       content = content.replace(trimmedOld, () => input.new_string);
-      workspace.writeAtomic(input.path, content, input.expected_hash || read.hash);
-      return { content: `Patched ${filePath} (trimmed match)` };
+      return { content: `Patched ${filePath} (trimmed match)\ntransaction:${commit(content)}` };
     }
 
     // Strategy 3: Normalized whitespace match
@@ -75,8 +81,7 @@ export async function executePatch(input: { path: string; old_string: string; ne
 
     if (matchStart >= 0) {
       lines.splice(matchStart, matchEnd - matchStart, ...input.new_string.split('\n'));
-      workspace.writeAtomic(input.path, lines.join('\n'), input.expected_hash || read.hash);
-      return { content: `Patched ${filePath} (fuzzy whitespace match at lines ${matchStart + 1}-${matchEnd})` };
+      return { content: `Patched ${filePath} (fuzzy whitespace match at lines ${matchStart + 1}-${matchEnd})\ntransaction:${commit(lines.join('\n'))}` };
     }
 
     return { content: `Could not find old_string in ${filePath}. Verify the content matches exactly.`, is_error: true };

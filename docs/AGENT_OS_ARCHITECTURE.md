@@ -36,7 +36,7 @@ Candidates may also become `rejected`, `stale`, or `superseded`. The proposing r
 - `swarm`: bounded independent tasks with explicit merge dependencies.
 - `repair-loop`: implement, verify, diagnose, and retry within hard budgets.
 
-Graph creation and inspection are implemented. Durable execution, mailbox delivery, worktree merge transactions, crash recovery during child execution, and TUI control remain release blockers.
+Graph creation, durable execution, mailbox delivery, worktree merge transactions, child lease recovery, and TUI steering controls are implemented. Remaining release work centers on unified child-run journals, full reconciliation views, large-repository indexing, and published Harbor qualification.
 
 ## Release rule
 
