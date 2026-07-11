@@ -22,6 +22,7 @@ async function run(name: string, command: string, args: string[]): Promise<void>
 for (let index = 1; index <= cycles; index++) await run(`tests-${index}`, 'bun', ['test']);
 await run('typecheck', 'bun', ['run', 'typecheck']);
 await run('build', 'bun', ['run', 'build']);
+await run('install-smoke', 'bun', ['run', 'install:smoke']);
 await run('package-dry-run', 'npm', ['pack', '--dry-run']);
 persist();
 console.log(`Qualification passed: ${cycles} test cycles plus typecheck, build, and package dry-run.`);

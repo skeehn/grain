@@ -260,6 +260,7 @@ Without engram, grain still works — just without cross-session memory.
 ```sh
 bun install
 bun run check
+## `check` includes an offline install of the packed CLI plus help and skill discovery.
 node dist/cli.js wiki build
 node dist/cli.js wiki verify
 node dist/cli.js --version
