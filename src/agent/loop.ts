@@ -1,16 +1,21 @@
 // Agent loop - fluid execution with streaming, error recovery, and quality control
 import type { Message, ContentBlock } from '../providers/types.js';
 import { getProvider } from '../providers/index.js';
-import { TOOLS, executeTool, setToolCwd, destroyShell } from '../tools/index.js';
+import { TOOLS, setToolCwd, destroyShell, registerDynamicTool } from '../tools/index.js';
+import { closeMcpClients, discoverMcpTools } from '../mcp/index.js';
 import { classifyTaskComplexity, routeModel, explainRouting, resolveModelAlias, MODEL_CONFIGS } from '../router/index.js';
 import { trackToolCall, getContextSummary } from './context-tracker.js';
 import { getSystemPrompt } from '../system-prompt.js';
+import { getModelCapabilities, packContext } from '../context/index.js';
+import { LearningLedger } from '../learning/index.js';
 import { loadConfig } from '../config.js';
 import { createSession, addMessage, getMessages, getLastSession } from '../session/store.js';
 import { needsCompaction, compact, engramRetrieve, engramStore } from './context.js';
 import * as renderer from '../tui/renderer.js';
 import { getSkillManager } from '../skills/manager.js';
 import type { SkillMatch } from '../skills/types.js';
+import { RunJournal } from '../kernel/index.js';
+import { ToolGateway } from '../policy/index.js';
 
 export interface AgentOpts {
   prompt?: string;
@@ -22,6 +27,8 @@ export interface AgentOpts {
   concise?: boolean;
   maxTurns?: number;  // override default MAX_TURNS (useful for benchmarking)
   reflect?: boolean;  // post-task self-reflection: store learnings + print summary
+  allowDestructive?: boolean;
+  benchmark?: boolean;
 }
 
 const MAX_TURNS = 30; // Safety limit to prevent infinite loops
@@ -62,6 +69,7 @@ async function* withInactivityTimeout<T>(source: AsyncIterable<T>, ms: number): 
 // 2-3 learnings from this run, stores them in engram, and prints them.
 
 interface ReflectionContext {
+  runId: string;
   task: string;
   outcome: string;
   toolsUsed: string[];
@@ -73,7 +81,7 @@ async function runReflection(
   provider: ReturnType<typeof getProvider>,
   ctx: ReflectionContext,
 ): Promise<void> {
-  const { task, outcome, toolsUsed, filesChanged, errors } = ctx;
+  const { runId, task, outcome, toolsUsed, filesChanged, errors } = ctx;
 
   const toolSummary  = toolsUsed.length  ? toolsUsed.join(' → ')  : 'none';
   const fileSummary  = filesChanged.length ? filesChanged.join(', ') : 'none';
@@ -138,22 +146,22 @@ async function runReflection(
 
   if (learnings.length === 0) return;
 
-  // Store each learning in engram
+  // Reflections are hypotheses, not facts. Store them as candidates; promotion
+  // requires passing evidence from a different run.
   const tags = ['reflection', 'grain-task'];
   if (filesChanged.some(f => f.endsWith('.rs')))               tags.push('rust');
   if (filesChanged.some(f => f.endsWith('.ts') || f.endsWith('.js'))) tags.push('typescript');
   if (filesChanged.some(f => f.endsWith('.go')))               tags.push('go');
   if (filesChanged.some(f => f.endsWith('.py')))               tags.push('python');
 
-  await Promise.all(
-    learnings.map(l => engramStore(l, tags).catch(() => { /* best-effort */ })),
-  );
+  const ledger = new LearningLedger();
+  const candidates = learnings.map(learning => ledger.propose('procedure', learning, runId, tags));
 
   // Print Reflection section
   renderer.newLine();
-  renderer.info('Reflection:');
-  for (const learning of learnings) {
-    renderer.dim(`  • ${learning}`);
+  renderer.info('Learning candidates (awaiting independent validation):');
+  for (const candidate of candidates) {
+    renderer.dim(`  • ${candidate.statement} [${candidate.id.slice(0, 8)}]`);
   }
   renderer.newLine();
 }
@@ -162,6 +170,8 @@ export async function agentLoop(opts: AgentOpts): Promise<void> {
   const config = loadConfig();
   const skillManager = getSkillManager();
   await skillManager.initialize();
+  try { for (const remote of await discoverMcpTools()) registerDynamicTool(remote.tool, remote.execute); }
+  catch (error: any) { renderer.warn(`MCP discovery failed: ${error.message}`); }
 
   // Model routing
   let providerName = opts.provider || config.provider;
@@ -188,6 +198,18 @@ export async function agentLoop(opts: AgentOpts): Promise<void> {
 
   const provider = getProvider(providerName, modelName);
   renderer.info(`Using ${provider.name} / ${provider.model}`);
+
+  const journal = RunJournal.create({ task: opts.prompt || 'interactive session', cwd: process.cwd(),
+    provider: provider.name, model: provider.model, policy_profile: opts.benchmark ? 'benchmark' : 'default' });
+  journal.transition('running');
+  const gateway = new ToolGateway({
+    autoApprove: Boolean(opts.autoApprove), allowDestructive: Boolean(opts.allowDestructive),
+    benchmark: Boolean(opts.benchmark), interactive: Boolean(process.stdin.isTTY), journal,
+    approve: async (name, _input, policy) => {
+      const answer = await renderer.userPrompt(`Approve ${policy.risk} tool "${name}"? [y/N] `);
+      return answer?.trim().toLowerCase() === 'y' || answer?.trim().toLowerCase() === 'yes';
+    },
+  });
 
   // Session management
   let sessionId: string;
@@ -237,7 +259,7 @@ export async function agentLoop(opts: AgentOpts): Promise<void> {
     turnCount++;
 
     // Build system prompt with context + skills
-    let system = getSystemPrompt(opts.concise);
+    let system = getSystemPrompt(opts.concise, opts.prompt || '');
 
     const contextSummary = getContextSummary();
     if (contextSummary) {
@@ -308,8 +330,17 @@ export async function agentLoop(opts: AgentOpts): Promise<void> {
 
     try {
       const STREAM_TIMEOUT = 90000; // 90s inactivity (large files take time)
+      const capabilities = getModelCapabilities(provider.name, provider.model);
+      const packed = packContext(capabilities, [
+        { id: `system-${turnCount}`, kind: 'instruction', content: system, priority: 100, required: true,
+          source: 'grain-system-prompt' },
+        { id: `conversation-${turnCount}`, kind: 'conversation', content: JSON.stringify(messages), priority: 90,
+          required: true, source: `session:${sessionId}` },
+      ], TOOLS);
+      journal.append('model_requested', { turn: turnCount, message_count: messages.length,
+        context_manifest: packed.manifest, capabilities });
 
-      for await (const event of withInactivityTimeout(provider.stream(messages, system, TOOLS), STREAM_TIMEOUT)) {
+      for await (const event of withInactivityTimeout(provider.stream(messages, system, packed.tools), STREAM_TIMEOUT)) {
         if (event.type === 'text_delta') {
           if (!spinnerStopped) { spin.stop(); renderer.clearLine(); spinnerStopped = true; }
           textBuffer += event.text;
@@ -328,14 +359,16 @@ export async function agentLoop(opts: AgentOpts): Promise<void> {
           if (!spinnerStopped) { spin.stop(); renderer.clearLine(); spinnerStopped = true; }
           renderer.tool(event.name, { _streaming: true });
         } else if (event.type === 'tool_use_delta') {
-          currentToolInputJson += event.input_json;
-          toolInputJsonMap.set(currentToolId, currentToolInputJson);
+          const toolId = event.id || currentToolId;
+          currentToolInputJson = (toolInputJsonMap.get(toolId) || '') + event.input_json;
+          toolInputJsonMap.set(toolId, currentToolInputJson);
         } else if (event.type === 'tool_use_end') {
-          const jsonStr = toolInputJsonMap.get(currentToolId) || currentToolInputJson;
+          const toolId = event.id || currentToolId;
+          const jsonStr = toolInputJsonMap.get(toolId) || currentToolInputJson;
           if (jsonStr) {
             try {
               const parsed = JSON.parse(jsonStr);
-              const block = assistantBlocks.find(b => b.type === 'tool_use' && b.id === currentToolId) as any;
+              const block = assistantBlocks.find(b => b.type === 'tool_use' && b.id === toolId) as any;
               if (block) {
                 block.input = parsed;
                 // Overwrite the "⚡ write..." line with full details now that we have input
@@ -351,15 +384,18 @@ export async function agentLoop(opts: AgentOpts): Promise<void> {
               }
             } catch (err) {
               renderer.warn(`Failed to parse tool input: ${err}`);
-              malformedToolIds.add(currentToolId);
+              malformedToolIds.add(toolId);
             }
           }
         } else if (event.type === 'error') {
           throw new Error(event.error);
+        } else if (event.type === 'usage') {
+          journal.append('usage_recorded', { turn: turnCount, ...event });
         }
       }
 
       if (!spinnerStopped) spin.stop();
+      journal.append('model_completed', { turn: turnCount, has_tool_use: hasToolUse, text_bytes: Buffer.byteLength(textBuffer) });
       if (textBuffer) {
         assistantBlocks.unshift({ type: 'text', text: textBuffer });
       }
@@ -376,7 +412,7 @@ export async function agentLoop(opts: AgentOpts): Promise<void> {
           renderer.warn('Provider returned an empty response.');
         }
 
-        if (opts.oneShot) return;
+        if (opts.oneShot) { journal.transition('succeeded'); closeMcpClients(); return; }
 
         // Interactive: wait for next input
         // If stdin is not a TTY (e.g. subprocess/CI), treat as one-shot and exit
@@ -414,7 +450,15 @@ export async function agentLoop(opts: AgentOpts): Promise<void> {
         }
 
         if (block.name === 'finish') {
-          const msg = block.input?.message || 'Task complete.';
+          const evidence = Array.isArray(block.input?.evidence)
+            ? block.input.evidence.filter((item: unknown) => typeof item === 'string' && item.trim()) : [];
+          if (evidence.length === 0) {
+            renderer.warn('Finish rejected: verification evidence is required');
+            toolResults.push({ type: 'tool_result', tool_use_id: block.id,
+              content: 'finish requires at least one concrete verification artifact or command result', is_error: true });
+            continue;
+          }
+          const msg = block.input?.result || block.input?.message || 'Task complete.';
           renderer.success(`✓ ${msg}`);
           finishCalled = true;
 
@@ -435,34 +479,6 @@ export async function agentLoop(opts: AgentOpts): Promise<void> {
             );
           }
 
-          // ── Write to engram: store task + outcome for future recall ──────────
-          try {
-            const toolsUsed = assistantBlocks
-              .filter((b: any) => b.type === 'tool_use')
-              .map((b: any) => b.name);
-            const filesChanged = assistantBlocks
-              .filter((b: any) => b.type === 'tool_use' && (b.name === 'write' || b.name === 'patch' || b.name === 'multi_edit'))
-              .map((b: any) => b.input?.path || (b.input?.edits || []).map((e: any) => e.path).join(', '))
-              .filter(Boolean);
-
-            const taskDesc = opts.prompt || 'interactive task';
-            const fact = [
-              `Task: ${taskDesc.slice(0, 200)}`,
-              `Result: ${msg}`,
-              filesChanged.length ? `Files: ${[...new Set(filesChanged)].join(', ')}` : '',
-              toolsUsed.length ? `Tools: ${[...new Set(toolsUsed)].join(', ')}` : '',
-            ].filter(Boolean).join('\n');
-
-            const tags = ['grain-task'];
-            if (filesChanged.some(f => f.endsWith('.rs'))) tags.push('rust');
-            if (filesChanged.some(f => f.endsWith('.ts') || f.endsWith('.js'))) tags.push('typescript');
-            if (filesChanged.some(f => f.endsWith('.go'))) tags.push('go');
-            if (filesChanged.some(f => f.endsWith('.py'))) tags.push('python');
-
-            await engramStore(fact, tags);
-          } catch { /* never let engram writes block task completion */ }
-          // ─────────────────────────────────────────────────────────────────────
-
           toolResults.push({
             type: 'tool_result',
             tool_use_id: block.id,
@@ -473,7 +489,7 @@ export async function agentLoop(opts: AgentOpts): Promise<void> {
         }
 
         // Execute the tool
-        const result = await executeTool(block.name, block.input);
+        const result = await gateway.execute(block.name, block.input, block.id);
         trackToolCall(block.name, block.input, result);
         // Accumulate for reflection
         allToolsUsed.push(block.name);
@@ -539,12 +555,14 @@ export async function agentLoop(opts: AgentOpts): Promise<void> {
 
       // If finish was called, handle exit or next input
       if (finishCalled) {
+        journal.transition('verifying');
         destroyShell(); // clean up persistent bash session
 
         // ── Reflection step ───────────────────────────────────────────────────
         if (opts.reflect) {
           const finishBlock = assistantBlocks.find((b: any) => b.type === 'tool_use' && b.name === 'finish') as any;
           await runReflection(provider, {
+            runId: journal.metadata.run_id,
             task:         opts.prompt || 'interactive task',
             outcome:      finishBlock?.input?.result || finishBlock?.input?.message || 'Task complete.',
             toolsUsed:    [...new Set(allToolsUsed)],
@@ -554,7 +572,8 @@ export async function agentLoop(opts: AgentOpts): Promise<void> {
         }
         // ─────────────────────────────────────────────────────────────────────
 
-        if (opts.oneShot) return;
+        if (opts.oneShot) { journal.transition('succeeded'); return; }
+        journal.transition('running');
 
         // Non-TTY (subprocess/CI): treat as one-shot
         if (!process.stdin.isTTY) return;
@@ -575,8 +594,10 @@ export async function agentLoop(opts: AgentOpts): Promise<void> {
 
     } catch (err: any) {
       if (!spinnerStopped) spin.stop();
-      renderer.error(err.message);
+      if (!opts.oneShot) renderer.error(err.message);
       await engramStore(`Error: ${err.message}`, ['error']);
+      journal.append(/parse|protocol|malformed/i.test(err.message) ? 'protocol_error' : 'provider_error', { error: err.message, turn: turnCount });
+      journal.transition('failed', { error: err.message });
       destroyShell();
 
       if (opts.oneShot) {
@@ -590,7 +611,7 @@ export async function agentLoop(opts: AgentOpts): Promise<void> {
         } else {
           renderer.warn(`Task stopped due to error: ${err.message}`);
         }
-        process.exit(1); // hard exit — persistent shell would hang otherwise
+        throw err;
       }
 
       renderer.newLine();
@@ -603,9 +624,8 @@ export async function agentLoop(opts: AgentOpts): Promise<void> {
 
   if (turnCount >= turnLimit) {
     renderer.warn(`Reached ${turnLimit} turn limit. Use a more specific prompt or break into smaller tasks.`);
+    journal.transition('failed', { error: 'turn_limit', turn_limit: turnLimit });
   }
 
   renderer.info('Goodbye!');
-  // Force exit — persistent shell and other async handles keep the process alive otherwise
-  process.exit(0);
 }

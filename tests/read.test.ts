@@ -7,7 +7,7 @@ import { executeRead } from '../src/tools/read.js';
 let dir: string;
 
 beforeEach(() => {
-  dir = mkdtempSync(join(tmpdir(), 'grain-read-'));
+  dir = mkdtempSync(join(process.env.GRAIN_HOME!, 'grain-read-'));
 });
 
 describe('executeRead', () => {
@@ -16,7 +16,8 @@ describe('executeRead', () => {
     writeFileSync(f, 'alpha\nbeta\ngamma');
     const res = await executeRead({ path: f });
     expect(res.is_error).toBeFalsy();
-    expect(res.content).toBe('1|alpha\n2|beta\n3|gamma');
+    expect(res.content).toContain('1|alpha\n2|beta\n3|gamma');
+    expect(res.content).toContain('[sha256:');
   });
 
   test('offset and limit window the output', async () => {

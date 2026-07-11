@@ -97,6 +97,7 @@ export async function handleConfigShow(): Promise<void> {
   const keyMap: Record<string, string> = {
     anthropic: 'ANTHROPIC_API_KEY',
     openrouter: 'OPENROUTER_API_KEY',
+    groq: 'GROQ_API_KEY',
     bedrock: 'AWS_ACCESS_KEY_ID',
   };
   

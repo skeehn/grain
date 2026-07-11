@@ -21,6 +21,14 @@ export interface ModelConfig {
 
 // June 2026 — verified live against AWS Bedrock us-east-1 inference profiles
 export const MODEL_CONFIGS: Record<string, ModelConfig> = {
+  'poolside': {
+    provider: 'openrouter',
+    label: 'Poolside Laguna XS 2.1',
+    model: 'poolside/laguna-xs-2.1',
+    inputCostPer1M: 0.06,
+    outputCostPer1M: 0.12,
+    speedRating: 9,
+  },
   'haiku': {
     provider: 'bedrock',
     label: 'Haiku 4.5',
@@ -49,6 +57,11 @@ export const MODEL_CONFIGS: Record<string, ModelConfig> = {
 
 // Aliases so users can pass --model sonnet4-5, sonnet, opus, etc.
 export const MODEL_ALIASES: Record<string, string> = {
+  'pool':          'poolside',
+  'poolside':      'poolside',
+  'laguna':        'poolside',
+  'laguna-xs':     'poolside',
+  'laguna-xs-2.1': 'poolside',
   'haiku':        'haiku',
   'haiku4':       'haiku',
   'haiku4-5':     'haiku',

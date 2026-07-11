@@ -86,4 +86,22 @@ describe('parseArgs — existing behavior preserved', () => {
     expect(p.skillsSubcmd).toBe('add');
     expect(p.skillsName).toBe('deploy');
   });
+
+  test('wiki, runs, and destructive approval flags parse explicitly', () => {
+    const wiki = parse('wiki', 'search', 'architecture');
+    expect(wiki.command).toBe('wiki');
+    expect(wiki.utilitySubcmd).toBe('search');
+    expect(wiki.utilityArg).toBe('architecture');
+    const runs = parse('runs', 'export', 'run-1', 'out.json');
+    expect(runs.utilityOutput).toBe('out.json');
+    expect(parse('--allow-destructive', 'fix it').allowDestructive).toBe(true);
+  });
+
+  test('learning and agent graph commands parse explicitly', () => {
+    expect(parseArgs(['node', 'grain', 'learning', 'show', 'abc']).command).toBe('learning');
+    const agents = parseArgs(['node', 'grain', 'agents', 'pair', 'implement auth']);
+    expect(agents.command).toBe('agents');
+    expect(agents.utilitySubcmd).toBe('pair');
+    expect(agents.utilityArg).toBe('implement auth');
+  });
 });

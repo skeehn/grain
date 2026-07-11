@@ -3,6 +3,7 @@
 import { readdirSync, readFileSync, statSync } from 'fs';
 import { join, relative, extname } from 'path';
 import type { ToolResult } from '../providers/types.js';
+import { getWorkspaceFS } from '../workspace/index.js';
 
 export const repoMapTool = {
   name: 'repo_map',
@@ -140,10 +141,9 @@ function parseFile(filePath: string): FileInfo {
 }
 
 export async function executeRepoMap(input: { path?: string; depth?: number; focus?: string }): Promise<ToolResult> {
-  const rootDir = input.path || process.cwd();
-  const maxDepth = input.depth || 4;
-
   try {
+    const rootDir = getWorkspaceFS().resolve(input.path || '.', true);
+    const maxDepth = input.depth || 4;
     let files = walkDir(rootDir, maxDepth);
 
     // Apply focus filter (glob-ish: ** matches across dirs, * within a segment)

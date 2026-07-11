@@ -12,6 +12,17 @@ import { tmpdir } from "os";
 import { join } from "path";
 import type { AgentPlugin, AgentTask, AgentResult, AgentCapability } from "./types.ts";
 
+export function normalizeClaudeResult(parsed: any): any {
+  const result = Array.isArray(parsed) ? [...parsed].reverse().find((event: any) => event?.type === 'result') : parsed;
+  if (!result || (result.type && result.type !== 'result')) throw new Error('Claude output has no terminal result event');
+  return result;
+}
+
+export function isClaudeSuccess(result: any, exitReason: AgentResult['exitReason']): boolean {
+  const semanticFailure = /credit balance is too low|authentication required|unauthorized|billing/i.test(String(result?.result || ''));
+  return result?.subtype === 'success' && result?.is_error !== true && exitReason === 'completed' && !semanticFailure;
+}
+
 export class ClaudeCodePlugin implements AgentPlugin {
   name = "claude-code";
   version = "2.x";
@@ -117,7 +128,9 @@ export class ClaudeCodePlugin implements AgentPlugin {
         timeout: task.constraints?.timeoutSeconds
           ? task.constraints.timeoutSeconds * 1000
           : 180_000, // 3 min default
+        signal: task.signal,
       });
+      const heartbeat = task.onHeartbeat ? setInterval(task.onHeartbeat, 10_000) : undefined;
 
       proc.stdout.on("data", (chunk) => {
         stdout += chunk.toString();
@@ -128,17 +141,19 @@ export class ClaudeCodePlugin implements AgentPlugin {
       });
 
       proc.on("close", (code, signal) => {
+        if (heartbeat) clearInterval(heartbeat);
         // code === null + signal means the process was killed (e.g. timeout)
         const timedOut = code === null && signal !== null;
 
         // Parse JSON output
         try {
-          const result = JSON.parse(stdout);
+          const parsed = JSON.parse(stdout);
+          const result = normalizeClaudeResult(parsed);
           
           const exitReason = this.mapExitReason(result.terminal_reason, result.stop_reason);
           
           resolve({
-            success: result.subtype === "success",
+            success: isClaudeSuccess(result, exitReason),
             output: result.result || "",
             sessionId: result.session_id,
             costUSD: result.total_cost_usd,
@@ -168,6 +183,7 @@ export class ClaudeCodePlugin implements AgentPlugin {
       });
 
       proc.on("error", (err) => {
+        if (heartbeat) clearInterval(heartbeat);
         resolve({
           success: false,
           output: `Failed to spawn claude: ${err.message}`,

@@ -12,21 +12,25 @@ import * as readline from 'readline';
 import { spawn, execSync } from 'child_process';
 import { handleConfigShow } from './commands/config.js';
 import { discoverPlugins } from './plugins/discovery.js';
+import { handleWikiCommand } from './commands/wiki.js';
+import { handleRunsCommand } from './commands/runs.js';
+import { handleLearningCommand } from './commands/learning.js';
+import { handleAgentsCommand } from './commands/agents.js';
 
 // ─── Load ~/.grain/.env before anything else ──────────────────────────────────
-loadGrainEnv();
 
 // ─── ANSI helpers (no chalk import needed in cli.ts) ─────────────────────────
+const ansi = process.stdout.isTTY && !process.env.NO_COLOR;
 const c = {
-  reset:  '\x1b[0m',
-  bold:   '\x1b[1m',
-  dim:    '\x1b[2m',
-  cyan:   '\x1b[36m',
-  green:  '\x1b[32m',
-  red:    '\x1b[31m',
-  yellow: '\x1b[33m',
-  blue:   '\x1b[34m',
-  white:  '\x1b[37m',
+  reset:  ansi ? '\x1b[0m' : '',
+  bold:   ansi ? '\x1b[1m' : '',
+  dim:    ansi ? '\x1b[2m' : '',
+  cyan:   ansi ? '\x1b[36m' : '',
+  green:  ansi ? '\x1b[32m' : '',
+  red:    ansi ? '\x1b[31m' : '',
+  yellow: ansi ? '\x1b[33m' : '',
+  blue:   ansi ? '\x1b[34m' : '',
+  white:  ansi ? '\x1b[37m' : '',
 };
 const ok   = `${c.green}✓${c.reset}`;
 const warn = `${c.yellow}!${c.reset}`;
@@ -37,7 +41,7 @@ const bold = (s: string) => `${c.bold}${s}${c.reset}`;
 // ─── Arg parser ───────────────────────────────────────────────────────────────
 
 interface ParsedArgs {
-  command?: 'init' | 'update' | 'config' | 'status' | 'serve' | 'help' | 'version' | 'skills' | 'engram';
+  command?: 'init' | 'update' | 'config' | 'status' | 'serve' | 'help' | 'version' | 'skills' | 'engram' | 'wiki' | 'runs' | 'learning' | 'agents';
   configSubcmd?: 'set' | 'reset' | 'show';
   configKey?: string;
   configValue?: string;
@@ -53,12 +57,16 @@ interface ParsedArgs {
   maxTurns?: number;
   tbBridge: boolean;  // TerminalBench bridge mode
   reflect: boolean;   // post-task self-reflection + engram store
+  allowDestructive: boolean;
+  utilitySubcmd?: string;
+  utilityArg?: string;
+  utilityOutput?: string;
   unknownFlags?: string[]; // dash-tokens before any prompt text that match no known flag
 }
 
 export function parseArgs(argv: string[]): ParsedArgs {
   const args = argv.slice(2);
-  const result: ParsedArgs = { autoApprove: false, concise: false, tbBridge: false, reflect: false };
+  const result: ParsedArgs = { autoApprove: false, concise: false, tbBridge: false, reflect: false, allowDestructive: false };
   const promptParts: string[] = [];
 
   let i = 0;
@@ -121,6 +129,13 @@ export function parseArgs(argv: string[]): ParsedArgs {
         }
         break;
       }
+      if (arg === 'wiki' || arg === 'runs' || arg === 'learning' || arg === 'agents') {
+        result.command = arg;
+        result.utilitySubcmd = args[i + 1];
+        result.utilityArg = args[i + 2];
+        result.utilityOutput = args[i + 3];
+        break;
+      }
     }
 
     if (arg === '-p' || arg === '--prompt')         { result.prompt = args[++i]; }
@@ -131,6 +146,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
     else if (arg === '--max-turns')                  { result.maxTurns = parseInt(args[++i], 10); }
     else if (arg === '--tb-bridge')                  { result.tbBridge = true; }
     else if (arg === '--reflect')                    { result.reflect = true; }
+    else if (arg === '--allow-destructive')          { result.allowDestructive = true; }
     else if (arg === '--') {
       // Explicit terminator: everything after it is prompt text verbatim.
       promptParts.push(...args.slice(i + 1));
@@ -413,6 +429,10 @@ async function handleStatus(): Promise<void> {
     console.log(process.env.OPENROUTER_API_KEY
       ? `${ok} openrouter`
       : `${err} openrouter — OPENROUTER_API_KEY not set\n       Run: grain config set key OPENROUTER_API_KEY ...`);
+  } else if (config.provider === 'groq') {
+    console.log(process.env.GROQ_API_KEY
+      ? `${ok} groq`
+      : `${err} groq — GROQ_API_KEY not set\n       Run: grain config set key GROQ_API_KEY ...`);
   } else if (config.provider === 'ollama') {
     try {
       await fetch('http://localhost:11434/api/tags');
@@ -475,6 +495,9 @@ async function handleInit(): Promise<void> {
   if (process.env.OPENROUTER_API_KEY) {
     available.push({ name: 'openrouter', label: 'OpenRouter', hint: 'OPENROUTER_API_KEY set' });
   }
+  if (process.env.GROQ_API_KEY) {
+    available.push({ name: 'groq', label: 'Groq', hint: 'GROQ_API_KEY set' });
+  }
   available.push({ name: 'ollama', label: 'Ollama', hint: 'local, no key needed' });
 
   available.forEach((p, i) => {
@@ -520,6 +543,14 @@ async function handleInit(): Promise<void> {
     console.log(`${ok} Saved to ~/.grain/.env\n`);
   }
 
+  if (provider === 'groq' && !process.env.GROQ_API_KEY) {
+    const key = await ask('GROQ_API_KEY: ');
+    if (!key.trim()) { console.log('No key entered. Exiting.'); process.exit(1); }
+    saveKeyToEnv('GROQ_API_KEY', key.trim());
+    process.env.GROQ_API_KEY = key.trim();
+    console.log(`${ok} Saved to ~/.grain/.env\n`);
+  }
+
   // ── Test connection ───────────────────────────────────────────────────────
   if (provider === 'bedrock') {
     process.stdout.write('Testing Bedrock connection... ');
@@ -541,7 +572,7 @@ async function handleInit(): Promise<void> {
 
   // ── Skills dir ────────────────────────────────────────────────────────────
   const { mkdirSync } = await import('fs');
-  mkdirSync(join(homedir(), '.grain', 'skills'), { recursive: true });
+  mkdirSync(join(process.env.GRAIN_HOME || join(homedir(), '.grain'), 'skills'), { recursive: true });
 
   // ── Engram ────────────────────────────────────────────────────────────────
   const engramBin = join(homedir(), 'bin', 'engram');
@@ -598,13 +629,38 @@ ${bold('FLAGS')}
   -c, --concise                shorter output, fewer tokens
   --provider <name>            override provider for this run
   --model <id>                 override model for this run
+                               aliases: pool, haiku, sonnet, opus
   -h, --help                   show this help
   -v, --version                show version
+  --allow-destructive          explicitly allow destructive tools inside the workspace
 
 ${bold('COMMANDS')}
   grain init                   interactive setup wizard
   grain status                 check provider, engram, config
   grain update                 update grain to latest version
+  grain runs list              list event-sourced runs
+  grain runs inspect <id>      validate and replay a run journal
+  grain runs export <id> <file> export a reproducible trajectory
+  grain runs context <id>       inspect exactly what entered the model budget
+  grain learning list          inspect verified learning ledger
+  grain learning show <id>     show evidence and promotion status
+  grain learning validate <id> <run-id> validate and automatically promote
+  grain agents pair <task>     create a durable driver/navigator task graph
+  grain agents plan <task>     create independently reviewed implementation plan
+  grain agents swarm <task>    run parallel scouts and an isolated writer
+  grain agents review-panel <task> run correctness, security, test, and performance panel
+  grain agents repair-loop <task> run bounded evidence-gated repair attempts
+  grain agents research <task> create a read-only research and critique graph
+  grain agents show <id>       inspect agent authority, dependencies, and state
+  grain agents execute <id>    run ready tasks with durable leases and recovery
+  grain agents merge <id>      apply a fully reviewed verified driver patch
+  grain agents watch <id>      interactive graph controls: select, steer, cancel, refresh
+  grain agents dashboard <id>  show graph, leases, recovery, and mailbox state
+  grain agents cancel <id> <task-id> request cooperative cancellation
+  grain wiki build             build/update repository wiki provenance
+  grain wiki search <query>    search repository wiki
+  grain wiki verify            fail on stale or invalid wiki sources
+  grain wiki serve [port]      serve read-only wiki on localhost
   grain config                 show current config
   grain config set provider <name>         set provider
   grain config set model <id>              set model override
@@ -616,12 +672,15 @@ ${bold('PROVIDERS')}
   bedrock     AWS Bedrock (Haiku/Sonnet/Opus — smart routing)
   anthropic   Direct Anthropic API  ANTHROPIC_API_KEY
   openrouter  OpenRouter            OPENROUTER_API_KEY
+  groq        Groq                  GROQ_API_KEY
   ollama      Local Ollama          no key needed
 
 ${bold('EXAMPLES')}
   grain "explain the architecture of this project"
   grain --yes "add unit tests for src/parser.ts"
   grain --provider anthropic "refactor this to use async/await"
+  grain --provider openrouter --model pool "fix and test this repo"
+  grain --provider groq --model qwen/qwen3-32b "fix and test this repo"
   grain config set key ANTHROPIC_API_KEY sk-ant-abc123
   grain config set provider anthropic
 
@@ -633,7 +692,7 @@ ${bold('grain skills')}               List all skills
 ${bold('grain skills view <name>')}   Show a skill's content
 ${bold('grain skills add <name>')}    Create a new skill (interactive)
 ${bold('grain skills delete <name>')} Remove a skill
-${bold('LOGS')}      ~/.grain/sessions/
+${bold('SESSIONS')}  ~/.grain/sessions.json
 `);
 }
 
@@ -663,14 +722,9 @@ function showWelcomeIfNeeded(): void {
   if (existsSync(flag)) return;
   try { writeFileSync(flag, new Date().toISOString()); } catch { /* ignore */ }
 
-  console.log(`
-${bold('Welcome to grain.')} v${GRAIN_VERSION}
-
-Self-improving AI coding agent with persistent memory.
-
-Run ${c.cyan}grain init${c.reset} to set up your provider and API keys.
-Run ${c.cyan}grain --help${c.reset} for all commands.
-`);
+  renderer.banner(`v${GRAIN_VERSION} · coding agent · memory in the loop`);
+  console.log(`Run ${c.cyan}grain init${c.reset} to set up your provider and API keys.`);
+  console.log(`Run ${c.cyan}grain --help${c.reset} for all commands.\n`);
 }
 
 // ─── Engram handler ───────────────────────────────────────────────────────────
@@ -866,6 +920,7 @@ async function handleSkills(subcmd?: string, name?: string): Promise<void> {
 // ─── main ─────────────────────────────────────────────────────────────────────
 
 async function main(): Promise<void> {
+  loadGrainEnv();
   const parsed = parseArgs(process.argv);
 
   if (parsed.unknownFlags?.length) {
@@ -881,8 +936,17 @@ async function main(): Promise<void> {
   if (parsed.command === 'update')  { await handleUpdate(); return; }
   if (parsed.command === 'init')    { await handleInit(); return; }
   if (parsed.command === 'status')  { await handleStatus(); return; }
+  if (parsed.command === 'serve') {
+    renderer.error('The serve command is not available. Run "grain" for the interactive agent.');
+    process.exitCode = 1;
+    return;
+  }
   if (parsed.command === 'skills')  { await handleSkills(parsed.skillsSubcmd, parsed.skillsName); return; }
   if (parsed.command === 'engram')  { await handleEngram(parsed.engramSubcmd, parsed.engramArg); return; }
+  if (parsed.command === 'wiki') { await handleWikiCommand(parsed.utilitySubcmd, parsed.utilityArg); return; }
+  if (parsed.command === 'runs') { handleRunsCommand(parsed.utilitySubcmd, parsed.utilityArg, parsed.utilityOutput); return; }
+  if (parsed.command === 'learning') { handleLearningCommand(parsed.utilitySubcmd, parsed.utilityArg, parsed.utilityOutput); return; }
+  if (parsed.command === 'agents') { await handleAgentsCommand(parsed.utilitySubcmd, parsed.utilityArg, parsed.utilityOutput); return; }
 
   if (parsed.command === 'config') {
     await handleConfig(parsed.configSubcmd, parsed.configKey, parsed.configValue);
@@ -900,6 +964,7 @@ async function main(): Promise<void> {
     // TB bridge mode: set env so bash.ts proxies commands to container
     if (parsed.tbBridge) {
       process.env.GRAIN_TB_BRIDGE = '1';
+      process.env.GRAIN_MACHINE = '1';
     }
 
     await orchestrate({
@@ -910,6 +975,8 @@ async function main(): Promise<void> {
       provider:    parsed.provider,
       maxTurns:    parsed.maxTurns,
       reflect:     parsed.reflect,
+      allowDestructive: parsed.allowDestructive,
+      benchmark: parsed.tbBridge,
     });
 
     // Signal done to TB bridge
@@ -933,4 +1000,6 @@ async function main(): Promise<void> {
   }
 }
 
-main().catch(e => { renderer.error(e.message); process.exit(1); });
+if (import.meta.main) {
+  main().catch(e => { renderer.error(e.message); process.exitCode = 1; });
+}

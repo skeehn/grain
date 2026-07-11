@@ -27,7 +27,7 @@ class ContextTracker {
   private session: SessionContext;
 
   constructor() {
-    const baseDir = join(homedir(), '.grain', 'context');
+    const baseDir = join(process.env.GRAIN_HOME || join(homedir(), '.grain'), 'context');
     this.sessionPath = join(baseDir, 'session');
     if (!existsSync(this.sessionPath)) {
       mkdirSync(this.sessionPath, { recursive: true });

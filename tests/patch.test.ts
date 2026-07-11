@@ -8,7 +8,7 @@ let dir: string;
 let file: string;
 
 beforeEach(() => {
-  dir = mkdtempSync(join(tmpdir(), 'grain-patch-'));
+  dir = mkdtempSync(join(process.env.GRAIN_HOME!, 'grain-patch-'));
   file = join(dir, 'target.txt');
 });
 

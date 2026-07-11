@@ -8,7 +8,7 @@ import type { ToolResult } from '../providers/types.js';
 // The TerminalBench grain agent reads these messages and executes them in the
 // Docker container via TmuxSession, then writes back the result.
 
-const TB_BRIDGE = process.env.GRAIN_TB_BRIDGE === '1';
+const isBridge = () => process.env.GRAIN_TB_BRIDGE === '1';
 
 // readline interface for reading bridge responses
 let _rl: readline.Interface | null = null;
@@ -198,7 +198,7 @@ export async function executeBash(
   const timeoutMs = (input.timeout ?? 60) * 1000;
 
   // ── TB bridge: proxy to container via JSON-line protocol ──────────────────
-  if (TB_BRIDGE) {
+  if (isBridge()) {
     const { output, exitCode } = await executeBashBridge(input.command, timeoutMs);
     if (exitCode !== 0 && exitCode !== 124) {
       return { content: output || `Command failed with exit code ${exitCode}`, is_error: false };

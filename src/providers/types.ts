@@ -10,6 +10,7 @@ export type StreamEvent =
   | { type: 'tool_use_delta'; id: string; input_json: string }
   | { type: 'tool_use_end'; id: string }
   | { type: 'message_end'; stop_reason: string }
+  | { type: 'usage'; input_tokens: number; output_tokens: number; cache_read_tokens?: number; reasoning_tokens?: number; cost_usd?: number }
   | { type: 'error'; error: string };
 
 export interface Message {

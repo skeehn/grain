@@ -9,6 +9,8 @@ export interface OrchestratorOpts {
   provider?: string;
   maxTurns?: number;
   reflect?: boolean;
+  allowDestructive?: boolean;
+  benchmark?: boolean;
 }
 
 export async function orchestrate(opts: OrchestratorOpts): Promise<void> {
@@ -25,5 +27,7 @@ export async function orchestrate(opts: OrchestratorOpts): Promise<void> {
     concise:     opts.concise,
     maxTurns:    opts.maxTurns,
     reflect:     opts.reflect,
+    allowDestructive: opts.allowDestructive,
+    benchmark: opts.benchmark,
   });
 }

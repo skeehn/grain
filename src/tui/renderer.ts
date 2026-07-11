@@ -1,170 +1,152 @@
 import chalk from 'chalk';
-import ora from 'ora';
 import * as readline from 'readline';
+import type { AgentMessage, TaskGraph } from '../orchestration/types.js';
+import type { ContextManifest } from '../context/types.js';
 
-let currentSpinner: ReturnType<typeof ora> | null = null;
+const BAYER = [[0, 8, 2, 10], [12, 4, 14, 6], [3, 11, 1, 9], [15, 7, 13, 5]] as const;
+const color = process.stdout.isTTY && !process.env.NO_COLOR;
+const motion = process.stdout.isTTY && process.env.GRAIN_REDUCED_MOTION !== '1';
+const tone = {
+  grain: (s: string) => color ? chalk.hex('#D6A85F')(s) : s,
+  leaf: (s: string) => color ? chalk.hex('#88A678')(s) : s,
+  text: (s: string) => color ? chalk.hex('#E7E0D2')(s) : s,
+  quiet: (s: string) => color ? chalk.hex('#817D73')(s) : s,
+  danger: (s: string) => color ? chalk.hex('#E06C75')(s) : s,
+  warning: (s: string) => color ? chalk.hex('#E5B567')(s) : s,
+};
 
-export function streamText(text: string): void {
-  if (currentSpinner) {
-    currentSpinner.stop();
-    currentSpinner = null;
-    // Clear the spinner line completely
-    process.stdout.write('\r\x1b[K');
-  }
-  process.stdout.write(chalk.cyan(text));
+export interface SpinnerHandle { stop(): void }
+let currentSpinner: SpinnerHandle | null = null;
+const sink = () => process.env.GRAIN_MACHINE === '1' ? process.stderr : process.stdout;
+
+export function orderedDither(width: number, phase = 0, level = 8): string {
+  return Array.from({ length: width }, (_, x) => BAYER[phase % 4][x % 4] < level ? '█' : '░').join('');
 }
 
-// Alias for streamText
-export function stream(text: string): void {
-  streamText(text);
+export function banner(subtitle = 'coding agent · memory in the loop'): void {
+  const width = Math.min(34, Math.max(24, (process.stdout.columns || 80) - 4));
+  const rows = [3, 7, 11, 15].map((level, row) => orderedDither(width, row, level));
+  sink().write(`\n${tone.grain(rows[0])}\n`);
+  sink().write(`${tone.grain(rows[1].slice(0, 8))}  ${chalk.bold('G R A I N')}  ${tone.grain(rows[1].slice(19))}\n`);
+  sink().write(`${tone.quiet(rows[2])}\n${tone.quiet(rows[3])}\n${tone.quiet(subtitle)}\n\n`);
 }
+
+function stopCurrent(): void {
+  currentSpinner?.stop();
+  currentSpinner = null;
+}
+
+export function streamText(text: string): void { stopCurrent(); sink().write(tone.text(text)); }
+export const stream = streamText;
 
 export function toolStart(name: string, input: any): void {
-  if (currentSpinner) {
-    currentSpinner.stop();
-    currentSpinner = null;
-    process.stdout.write('\r\x1b[K');
-  }
-  // If input is the streaming placeholder, just show tool name
-  if (input?._streaming) {
-    process.stdout.write('\n' + chalk.dim(`⚡ ${name}...`) + '\n');
-    return;
-  }
-  const summary = summarizeInput(name, input);
-  process.stdout.write('\n' + chalk.dim(`⚡ ${name}: ${summary}`) + '\n');
+  stopCurrent();
+  sink().write(`\n${tone.grain('┌')} ${chalk.bold(name)} ${tone.quiet(input?._streaming ? 'running' : summarizeInput(name, input))}\n`);
 }
+export const tool = toolStart;
 
-// Alias for toolStart
-export function tool(name: string, input: any): void {
-  toolStart(name, input);
-}
-
-export function toolResult(output: string, isError?: boolean): void {
-  const maxLines = 30;
+export function toolResult(output: string, isError = false): void {
+  const max = Math.max(6, Math.min(24, Math.floor((process.stdout.rows || 30) * .6)));
   const lines = output.split('\n');
-  let display = lines.slice(0, maxLines).join('\n');
-  if (lines.length > maxLines) {
-    display += `\n... (${lines.length - maxLines} more lines)`;
+  const shown = lines.slice(0, max);
+  if (lines.length > max) shown.push(`… ${lines.length - max} more lines`);
+  const paint = isError ? tone.danger : tone.quiet;
+  sink().write(shown.map(line => paint(`│ ${line}`)).join('\n') + `\n${tone.grain('└')}\n`);
+}
+export function result(output: unknown, isError?: boolean): void {
+  toolResult(typeof output === 'string' ? output : JSON.stringify(output, null, 2), isError);
+}
+export function success(message: string): void { sink().write(`${tone.leaf('◆')} ${message}\n`); }
+export function newLine(): void { sink().write('\n'); }
+export function clearLine(): void { if (process.stdout.isTTY) sink().write('\r\x1b[K'); }
+export function warn(message: string): void { process.stderr.write(`${tone.warning('△')} ${message}\n`); }
+export function error(message: string): void { process.stderr.write(`${tone.danger('×')} ${message}\n`); }
+export function info(message: string): void { sink().write(`${tone.quiet('·')} ${message}\n`); }
+export function dim(message: string): void { sink().write(`${tone.quiet(message)}\n`); }
+
+const stateGlyph: Record<string, string> = {
+  pending: '○', ready: '◇', running: '◈', waiting: '◌', succeeded: '◆', failed: '×', cancelled: '—', needs_reconciliation: '△',
+};
+
+export function formatAgentDashboard(graph: TaskGraph, messages: AgentMessage[] = []): string {
+  const width = Math.max(48, Math.min(process.stdout.columns || 100, 120));
+  const lines = [orderedDither(width, 1, 5), `AGENT GRAPH  ${graph.mode}  ${graph.id}`, orderedDither(width, 2, 2)];
+  for (const task of graph.tasks) {
+    const deps = task.dependencies.length ? ` ← ${task.dependencies.map(id => id.slice(0, 6)).join(',')}` : '';
+    const lease = task.lease ? `  ${task.lease.owner} · heartbeat ${task.lease.heartbeatAt}` : '';
+    lines.push(`${stateGlyph[task.state] || '?'} ${task.role.padEnd(11)} ${task.state.padEnd(20)} ${task.objective}${deps}${lease}`);
+    if (task.lastError) lines.push(`  ! ${task.lastError}`);
   }
-
-  const color = isError ? chalk.red : chalk.dim;
-  const indented = display.split('\n').map(l => '  ' + l).join('\n');
-  process.stdout.write(color(indented) + '\n');
+  const pending = messages.filter(message => !message.acknowledgedAt);
+  lines.push(orderedDither(width, 3, 2), `MAILBOX  ${pending.length} pending / ${messages.length} total`);
+  for (const message of pending.slice(-5)) lines.push(`◇ ${message.from} → ${message.to}  ${message.kind}`);
+  return lines.join('\n');
 }
 
-// Alias for toolResult
-export function result(output: string | any, isError?: boolean): void {
-  // Ensure output is a string
-  if (typeof output !== 'string') {
-    output = JSON.stringify(output, null, 2);
+export function agentDashboard(graph: TaskGraph, messages: AgentMessage[] = []): void {
+  sink().write(`${formatAgentDashboard(graph, messages)}\n`);
+}
+
+export function formatContextBudget(manifest: ContextManifest): string {
+  const used = manifest.estimatedInputTokens; const total = manifest.inputBudgetTokens;
+  const cells = 24; const filled = Math.min(cells, Math.round((used / Math.max(1, total)) * cells));
+  const bar = '█'.repeat(filled) + '░'.repeat(cells - filled);
+  const kinds = new Map<string, number>();
+  for (const item of manifest.selected) kinds.set(item.kind, (kinds.get(item.kind) || 0) + item.estimatedTokens);
+  return [`CONTEXT  ${manifest.provider}/${manifest.model}`, `${bar} ${used}/${total} input tokens · ${manifest.reservedOutputTokens} reserved output`,
+    ...[...kinds].map(([kind, tokens]) => `${kind.padEnd(14)} ${tokens}`), `tools          ${manifest.tools.join(', ') || 'none'}`].join('\n');
+}
+
+export function spinner(label = 'Thinking'): SpinnerHandle {
+  stopCurrent();
+  if (!process.stdout.isTTY) {
+    sink().write(`${label.replace(/\.{1,3}$/, '')}…\n`);
+    return currentSpinner = { stop() {} };
   }
-  toolResult(output, isError);
+  let frame = 0;
+  let stopped = false;
+  const render = () => sink().write(`\r\x1b[K${tone.grain(orderedDither(8, frame % 4, 4 + ((frame++ * 3) % 12)))}  ${tone.quiet(label)}`);
+  render();
+  const timer = motion ? setInterval(render, 110) : undefined;
+  timer?.unref();
+  const handle = currentSpinner = {
+    stop() {
+      if (stopped) return;
+      stopped = true;
+      if (timer) clearInterval(timer);
+      clearLine();
+      if (currentSpinner === handle) currentSpinner = null;
+    },
+  };
+  return handle;
 }
+export function stopSpinner(): void { stopCurrent(); }
 
-// Success message
-export function success(msg: string): void {
-  process.stdout.write(chalk.green(msg) + '\n');
-}
-
-export function newLine() {
-  console.log();
-}
-
-export function clearLine() {
-  process.stdout.write('\r\x1b[K');
-}
-
-export function warn(msg: string): void {
-  process.stderr.write(chalk.yellow('⚠ ' + msg) + '\n');
-}
-
-export function error(msg: string): void {
-  process.stderr.write(chalk.red('✗ ' + msg) + '\n');
-}
-
-export function info(msg: string): void {
-  process.stdout.write(chalk.dim(msg) + '\n');
-}
-
-export function dim(msg: string): void {
-  process.stdout.write(chalk.gray(msg) + '\n');
-}
-
-export function spinner(text?: string): ReturnType<typeof ora> {
-  if (currentSpinner) {
-    currentSpinner.stop();
-  }
-  currentSpinner = ora({ text: text || 'Thinking...', color: 'cyan' }).start();
-  return currentSpinner;
-}
-
-export function stopSpinner(): void {
-  if (currentSpinner) {
-    currentSpinner.stop();
-    currentSpinner = null;
-    // Clear the spinner line completely
-    process.stdout.write('\r\x1b[K');
-  }
-}
-
-/** Resolves the user's input, or null when stdin closed without input (EOF/Ctrl+D). */
 export function userPrompt(promptText?: string): Promise<string | null> {
   return new Promise((resolve, reject) => {
-    // Force stdin to stay open
-    if (process.stdin.isTTY) {
-      process.stdin.setRawMode(false);
-    }
-    
-    const rl = readline.createInterface({
-      input: process.stdin,
-      output: process.stdout,
-      terminal: process.stdin.isTTY,
-    });
-
+    if (process.stdin.isTTY) process.stdin.setRawMode(false);
+    const rl = readline.createInterface({ input: process.stdin, output: process.stdout, terminal: process.stdin.isTTY });
     let answered = false;
-
-    const question = promptText || chalk.bold.green('\n❯ ');
-    
-    rl.question(question, (answer: string) => {
+    rl.question(promptText || `\n${tone.grain('◇')} `, answer => {
       answered = true;
       rl.close();
       resolve(answer);
     });
-
-    rl.on('SIGINT', () => {
-      rl.close();
-      reject(new Error('SIGINT'));
-    });
-
-    // Closed without an answer = stdin EOF (Ctrl+D) — callers must stop
-    // re-prompting, otherwise they busy-loop on instantly-closing readlines.
-    rl.on('close', () => {
-      if (!answered) {
-        resolve(null);
-      }
-    });
+    rl.on('SIGINT', () => { rl.close(); reject(new Error('SIGINT')); });
+    rl.on('close', () => { if (!answered) resolve(null); });
   });
 }
 
-function summarizeInput(toolName: string, input: any): string {
-  switch (toolName) {
-    case 'bash':
-      return input.command?.slice(0, 80) || '';
-    case 'read':
-      return input.path || '';
-    case 'write':
-      return `${input.path} (${input.content?.length || 0} chars)`;
-    case 'patch':
-      return input.path || '';
-    case 'grep':
-      return `"${input.pattern}" in ${input.path || '.'}`;
-    case 'engram':
-      return `${input.action}: ${input.query || input.body?.slice(0, 50) || ''}`;
-    case 'delegate':
-      return input.task?.slice(0, 60) || '';
-    case 'finish':
-      return input.result?.slice(0, 60) || '';
-    default:
-      return JSON.stringify(input).slice(0, 80);
-  }
+function summarizeInput(name: string, input: any): string {
+  if (!input || typeof input !== 'object') return '';
+  const line = name === 'bash' ? input.command
+    : name === 'write' ? `${input.path || ''} · ${Buffer.byteLength(input.content || '', 'utf8')} bytes`
+    : name === 'grep' ? `/${input.pattern || ''}/ in ${input.path || '.'}`
+    : name === 'engram' ? `${input.action || ''} ${input.query || input.body || ''}`
+    : name === 'delegate' ? input.task
+    : name === 'finish' ? (input.result || input.message)
+    : input.path || JSON.stringify(input);
+  const clean = String(line || '').replace(/[\r\n\t]+/g, ' ').replace(/\s+/g, ' ').trim();
+  const width = Math.max(30, Math.min(process.stdout.columns || 80, 120) - 8);
+  return clean.length > width ? `${clean.slice(0, width - 1)}…` : clean;
 }

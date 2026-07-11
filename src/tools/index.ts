@@ -21,10 +21,12 @@ import { ClaudeCodePlugin } from '../plugins/claude-code.js';
 import { CodexPlugin } from '../plugins/codex.js';
 import { createSpawnAgentTool } from './spawn-agent.js';
 import { loadConfig } from '../config.js';
+import { setWorkspaceRoot } from '../workspace/index.js';
+import { wikiSearchTool, wikiGetTool, wikiProposeTool, executeWikiSearch, executeWikiGet, executeWikiPropose } from './wiki.js';
 
 // Tool execution context — set once at agent loop start
 let _toolCwd: string = process.cwd();
-export function setToolCwd(cwd: string) { _toolCwd = cwd; }
+export function setToolCwd(cwd: string) { _toolCwd = cwd; setWorkspaceRoot(cwd); }
 export { destroyShell };
 
 // Plugin system initialization
@@ -83,6 +85,9 @@ function getLazyTools(): Tool[] {
     testFixLoopTool, // Run tests + return structured failures for fix loop
     planTool,        // Read/write .grain-plan.json — survives context compaction
     getSpawnAgentTool(), // Multi-agent orchestration (plugins)
+    wikiSearchTool,
+    wikiGetTool,
+    wikiProposeTool,
   ];
   return tools;
 }
@@ -110,7 +115,15 @@ const executors: Record<string, (input: any) => Promise<ToolResult>> = {
     const tool = getSpawnAgentTool();
     return await tool.execute(input);
   },
+  wiki_search: executeWikiSearch,
+  wiki_get: executeWikiGet,
+  wiki_propose_update: executeWikiPropose,
 };
+
+export function registerDynamicTool(tool: Tool, executor: (input: any) => Promise<ToolResult>): void {
+  if (TOOLS.some(existing => existing.name === tool.name)) return;
+  TOOLS.push(tool); executors[tool.name] = executor;
+}
 
 export async function executeTool(name: string, input: any): Promise<ToolResult> {
   const executor = executors[name];

@@ -52,7 +52,7 @@ const DEFAULTS: GrainConfig = {
   },
 };
 
-export const VALID_PROVIDERS = ['bedrock', 'anthropic', 'openrouter', 'ollama', 'vllm'] as const;
+export const VALID_PROVIDERS = ['bedrock', 'anthropic', 'openrouter', 'groq', 'ollama', 'vllm'] as const;
 
 // ─── .env loading ─────────────────────────────────────────────────────────────
 // Load ~/.grain/.env into process.env at startup.
@@ -143,6 +143,7 @@ export function validateConfig(config: GrainConfig): { valid: boolean; error?: s
   const needs: Record<string, string> = {
     anthropic:  'ANTHROPIC_API_KEY',
     openrouter: 'OPENROUTER_API_KEY',
+    groq: 'GROQ_API_KEY',
   };
   const envKey = needs[config.provider];
   if (envKey && !process.env[envKey]) {

@@ -1,8 +1,8 @@
-import { writeFileSync, mkdirSync } from 'fs';
-import { dirname, resolve, extname } from 'path';
+import { extname } from 'path';
 import { execSync, execFileSync } from 'child_process';
 import type { ToolResult } from '../providers/types.js';
 import { getContextTracker } from '../agent/context-tracker.js';
+import { getWorkspaceFS } from '../workspace/index.js';
 
 export const writeTool = {
   name: 'write',
@@ -12,6 +12,7 @@ export const writeTool = {
     properties: {
       path: { type: 'string', description: 'Path to the file to write' },
       content: { type: 'string', description: 'Content to write to the file' },
+      expected_hash: { type: 'string', description: 'Optional sha256 from read; write fails if the file changed' },
     },
     required: ['path', 'content'],
   },
@@ -66,44 +67,11 @@ function syntaxCheck(filePath: string): string | null {
   }
 }
 
-export async function executeWrite(input: { path: string; content: string }): Promise<ToolResult> {
-  const filePath = resolve(input.path);
-
-  // Auto-fix: always inject scroll-reveal fallback into any web main.js that uses IntersectionObserver
-  // Prevents invisible content when elements start at opacity:0 and observer never fires (viewport, headless, etc.)
-  let content = input.content;
-  if (filePath.endsWith('main.js') && content.includes('IntersectionObserver') &&
-      content.includes('isIntersecting') && !content.includes('_revealFallback')) {
-    const fallbackSnippet = `
-// AUTO-INJECTED: Force-show all animated elements after 900ms in case IntersectionObserver never fires
-// (e.g. elements already in viewport, headless browser, reduced-motion, etc.)
-(function() {
-  var _revealFallback = setTimeout(function() {
-    document.querySelectorAll('[class*="card"], [class*="feature"], [class*="pricing"], [class*="reveal"], [data-reveal]').forEach(function(el) {
-      el.style.opacity = '1';
-      el.style.transform = 'none';
-    });
-  }, 900);
-  // Also reveal anything already in viewport on DOMContentLoaded
-  document.addEventListener('DOMContentLoaded', function() {
-    setTimeout(function() {
-      document.querySelectorAll('[class*="card"], [class*="feature"], [class*="pricing"], [class*="reveal"], [data-reveal]').forEach(function(el) {
-        var rect = el.getBoundingClientRect();
-        if (rect.top < window.innerHeight + 100) {
-          el.style.opacity = '1';
-          el.style.transform = 'none';
-        }
-      });
-    }, 100);
-  });
-})();
-`;
-    content = content + fallbackSnippet;
-  }
-
+export async function executeWrite(input: { path: string; content: string; expected_hash?: string }): Promise<ToolResult> {
   try {
-    mkdirSync(dirname(filePath), { recursive: true });
-    writeFileSync(filePath, content);
+    const workspace = getWorkspaceFS();
+    const written = workspace.writeAtomic(input.path, input.content, input.expected_hash);
+    const filePath = workspace.resolve(input.path, true);
     const bytes = Buffer.byteLength(input.content);
 
     // Track file write
@@ -119,7 +87,7 @@ export async function executeWrite(input: { path: string; content: string }): Pr
       };
     }
 
-    return { content: `✓ Wrote ${bytes} bytes to ${filePath}` };
+    return { content: `✓ Wrote ${bytes} bytes to ${filePath}\nsha256:${written.content_hash}` };
   } catch (err: any) {
     return { content: `Error writing file: ${err.message}`, is_error: true };
   }
