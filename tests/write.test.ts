@@ -7,7 +7,7 @@ import { executeWrite } from '../src/tools/write.js';
 let dir: string;
 
 beforeEach(() => {
-  dir = mkdtempSync(join(tmpdir(), 'grain-write-'));
+  dir = mkdtempSync(join(process.env.GRAIN_HOME!, 'grain-write-'));
 });
 
 describe('executeWrite', () => {

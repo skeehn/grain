@@ -1,7 +1,8 @@
 // Multi-file edit tool - atomic changes across multiple files
-import { readFileSync, writeFileSync, mkdirSync, unlinkSync } from 'fs';
-import { resolve, dirname } from 'path';
 import type { ToolResult } from '../providers/types.js';
+import { getWorkspaceFS } from '../workspace/index.js';
+import { WorkspaceTransactionManager } from '../workspace/index.js';
+import { randomUUID } from 'node:crypto';
 
 export const multiEditTool = {
   name: 'multi_edit',
@@ -88,18 +89,19 @@ export async function executeMultiEdit(input: { edits: Edit[]; preview?: boolean
   }
   
   // Validate all edits first
+  const workspace = getWorkspaceFS();
   const backups: Backup[] = [];
   const diffs: string[] = [];
   
   for (const edit of edits) {
-    const filePath = resolve(edit.path);
+    const filePath = workspace.resolve(edit.path);
     
     try {
       let oldContent = '';
       let existed = true;
       
       try {
-        oldContent = readFileSync(filePath, 'utf-8');
+        oldContent = workspace.readRange(edit.path, 1, Number.MAX_SAFE_INTEGER).content;
       } catch (err) {
         existed = false;
         if (!edit.create_if_missing) {
@@ -141,42 +143,22 @@ export async function executeMultiEdit(input: { edits: Edit[]; preview?: boolean
     return { content: output };
   }
   
-  // Apply all edits
   try {
-    for (let i = 0; i < edits.length; i++) {
-      const edit = edits[i];
-      const backup = backups[i];
-      const filePath = backup.path;
-      
-      // Create directory if needed
-      mkdirSync(dirname(filePath), { recursive: true });
-      
-      // Write new content
-      writeFileSync(filePath, edit.new_content, 'utf-8');
-    }
+    const manager = new WorkspaceTransactionManager(workspace);
+    const transaction = manager.begin({ invocationId: randomUUID(),
+      expectedInputs: backups.filter(backup => backup.existed).map(backup => ({ path: edits[backups.indexOf(backup)].path, content_hash: workspace.stat(edits[backups.indexOf(backup)].path).content_hash })),
+      operations: edits.map(edit => ({ type: 'write' as const, path: edit.path, content: edit.new_content })) });
+    manager.approve(transaction.id); manager.apply(transaction.id);
     
     let output = `✓ Applied changes to ${edits.length} file${edits.length > 1 ? 's' : ''}:\n`;
     for (const edit of edits) {
-      const existed = backups.find(b => b.path === resolve(edit.path))?.existed;
+      const existed = backups.find(b => b.path === workspace.resolve(edit.path))?.existed;
       const action = existed ? 'Modified' : 'Created';
       output += `  ${action}: ${edit.path}\n`;
     }
     
-    return { content: output };
+    return { content: `${output}transaction:${transaction.id}` };
   } catch (err: any) {
-    // Rollback on error — restore modified files, remove newly created ones
-    for (const backup of backups) {
-      try {
-        if (backup.existed) {
-          writeFileSync(backup.path, backup.content, 'utf-8');
-        } else {
-          unlinkSync(backup.path);
-        }
-      } catch {
-        // Best effort rollback (unlinkSync throws if the file was never written)
-      }
-    }
-    
     return {
       content: `Multi-edit failed, rolled back: ${err.message}`,
       is_error: true,

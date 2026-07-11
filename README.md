@@ -19,6 +19,11 @@ grain is a **multi-agent AI coding orchestrator** — it reads your codebase, wr
 - 🎯 **Smart routing** — Auto-routes tasks to the cheapest capable model
 - 🔌 **MCP support** — Connect to any Model Context Protocol server (Computer Use, GitHub, etc.)
 - 📦 **Zero config** — Works out of the box with AWS Bedrock, Anthropic, OpenRouter, or Ollama
+- 🌾 **Purpose-built terminal UI** — Ordered Bayer-dither activity, compact tool cards, no-color and reduced-motion support
+- 🧪 **One-command quality gate** — Tests, typecheck, and production build via `bun run check`
+- 🧾 **Replayable runs** — Hash-chained event journals record model, policy, tool, usage, and terminal outcomes
+- 🗂️ **Confined filesystem** — Symlink-safe workspace roots, optimistic hashes, atomic writes, and content-addressed snapshots
+- 📚 **Repository wiki** — Versioned Markdown, source provenance, stale-reference checks, search, and a loopback-only web view
 
 It's your personal software factory that runs locally on your machine.
 
@@ -54,6 +59,25 @@ grain "why is the auth middleware returning 401 on valid tokens"
 
 # Build something new
 grain "build a dark-themed landing page for this project"
+
+# Run Poolside Laguna XS 2.1 through OpenRouter
+grain --provider openrouter --model pool "fix and test this project"
+
+# Inspect the exact model context budget from a completed run
+grain runs context <run-id>
+
+# Create durable multi-agent task graphs
+grain agents pair "implement and verify authentication"
+grain agents research "compare migration strategies"
+
+# Inspect the latest replayable run in the differential full-screen TUI
+grain tui
+
+# Inspect a specific run without replacing the current terminal buffer
+grain --no-alt-screen tui --run <run-id>
+
+# Inspect verified learning candidates and evidence
+grain learning list
 ```
 
 ---
@@ -68,6 +92,13 @@ grain --yes "task"            fully automated, no prompts
 grain init                    interactive setup wizard
 grain status                  check provider, engram, config
 grain update                  update to latest version
+grain runs list              list event-sourced runs
+grain runs inspect <id>      validate and replay a run
+grain runs export <id> <file> export a redacted trajectory
+grain wiki build             build repository wiki provenance
+grain wiki search <query>    search wiki pages
+grain wiki verify            check source hashes and line ranges
+grain wiki serve [port]      serve the read-only local wiki
 
 grain config                  show current config
 grain config set provider <name>
@@ -89,10 +120,13 @@ grain --version               show version
 | `bedrock`   | `aws configure` or set `AWS_REGION` + `AWS_ACCESS_KEY_ID` | ~$0.003/task |
 | `anthropic` | `grain config set key ANTHROPIC_API_KEY sk-ant-...` | ~$0.003/task |
 | `openrouter`| `grain config set key OPENROUTER_API_KEY ...` | Varies |
+| `groq`      | `grain config set key GROQ_API_KEY ...`       | `qwen/qwen3-32b` |
 | `ollama`    | Install [Ollama](https://ollama.ai), no key needed | Free (local) |
 | `vllm`      | See **Local Models** below | Free (local) |
 
 API keys are saved to `~/.grain/.env` — never to your shell profile. grain loads them automatically on startup.
+
+`--model pool` is a convenience alias for OpenRouter's `poolside/laguna-xs-2.1` coding model.
 
 ### Local Models with vLLM
 
@@ -187,7 +221,7 @@ Everything lives in `~/.grain/`:
   config.json       provider, model, settings
   .env              API keys (chmod 600, auto-loaded)
   skills/           project-specific agent skills
-  sessions/         conversation logs
+  sessions.json     conversation history
 ```
 
 ---
@@ -209,6 +243,7 @@ Without engram, grain still works — just without cross-session memory.
 -c, --concise      shorter output
 --provider <name>  override provider for this run
 --model <id>       override model for this run
+--allow-destructive explicitly allow destructive operations inside the workspace
 -h, --help
 -v, --version
 ```
@@ -219,6 +254,21 @@ Without engram, grain still works — just without cross-session memory.
 
 - Node.js >= 18
 - One of: AWS credentials, Anthropic API key, OpenRouter API key, or Ollama
+
+## Verify your install
+
+```sh
+bun install
+bun run check
+## `check` includes an offline install of the packed CLI plus help and skill discovery.
+node dist/cli.js wiki build
+node dist/cli.js wiki verify
+node dist/cli.js --version
+
+# Live provider smoke test (uses a small real request)
+grain --provider openrouter --model pool --max-turns 1 \
+  "Reply exactly GRAIN_POOL_OK. Do not call tools."
+```
 
 ---
 

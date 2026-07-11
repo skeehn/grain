@@ -10,6 +10,7 @@ import {
   loadGrainEnv,
   getConfigDir,
 } from '../src/config.js';
+import { loadMcpConfig } from '../src/mcp/config.js';
 
 // GRAIN_HOME is a temp dir (tests/setup.ts), so this exercises real file I/O safely.
 const grainHome = process.env.GRAIN_HOME!;
@@ -61,6 +62,18 @@ describe('config', () => {
     expect(res2.valid).toBe(true);
     if (saved === undefined) delete process.env.ANTHROPIC_API_KEY;
     else process.env.ANTHROPIC_API_KEY = saved;
+  });
+
+  test('loads versioned field-instrument TUI defaults and rejects invalid values', () => {
+    rmSync(join(grainHome, 'config.json'), { force: true }); const cfg = loadConfig();
+    expect(cfg.tui?.theme).toBe('field'); expect(cfg.tui?.alternateScreen).toBe(true);
+    expect(validateConfig({ ...cfg, tui: { ...cfg.tui!, theme: 'purple' as any } }).valid).toBe(false);
+  });
+
+  test('MCP config rejects non-loopback plaintext HTTP', () => {
+    require('node:fs').writeFileSync(join(grainHome, 'mcp.json'), JSON.stringify({ servers: { bad: { transport: 'http', url: 'http://example.com/mcp', trust: { enabled: true, allowTools: [] } } } }));
+    expect(() => loadMcpConfig()).toThrow('HTTPS or loopback');
+    rmSync(join(grainHome, 'mcp.json'), { force: true });
   });
 });
 

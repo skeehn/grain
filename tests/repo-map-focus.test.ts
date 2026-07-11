@@ -8,7 +8,7 @@ import { executeRepoMap } from '../src/tools/repo-map.js';
 let dir: string;
 
 beforeEach(() => {
-  dir = mkdtempSync(join(tmpdir(), 'grain-repomap-'));
+  dir = mkdtempSync(join(process.env.GRAIN_HOME!, 'grain-repomap-'));
   mkdirSync(join(dir, 'src', 'sub'), { recursive: true });
   mkdirSync(join(dir, 'lib'), { recursive: true });
   writeFileSync(join(dir, 'src', 'alpha.ts'), 'export function alpha() {}\n');

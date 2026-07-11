@@ -1,6 +1,7 @@
 // Workspace scanner - understand project structure
 import { readdirSync, statSync, readFileSync } from 'fs';
 import { join, relative } from 'path';
+import { getWorkspaceFS } from '../workspace/index.js';
 
 export const workspaceScanTool = {
   name: 'workspace_scan',
@@ -32,7 +33,9 @@ interface ScanResult {
 }
 
 export async function executeWorkspaceScan(input: { path?: string; max_depth?: number }): Promise<{ content: string }> {
-  const rootPath = input.path || process.cwd();
+  let rootPath: string;
+  try { rootPath = getWorkspaceFS().resolve(input.path || '.', true); }
+  catch (error: any) { return { content: `Workspace scan failed: ${error.message}` }; }
   const maxDepth = input.max_depth || 3;
 
   const result: ScanResult = {

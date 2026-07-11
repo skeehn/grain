@@ -42,6 +42,10 @@ describe('classifyTaskComplexity', () => {
 });
 
 describe('resolveModelAlias', () => {
+  test('maps Poolside convenience aliases', () => {
+    expect(resolveModelAlias('pool')).toBe('poolside');
+    expect(resolveModelAlias('laguna')).toBe('poolside');
+  });
   test('resolves known aliases case-insensitively', () => {
     expect(resolveModelAlias('SONNET4-6')).toBe('sonnet');
     expect(resolveModelAlias('fast')).toBe('haiku');

@@ -85,6 +85,10 @@ export class CodexPlugin implements AgentPlugin {
     const args = [
       "exec",
       "--json",  // Output JSONL events for structured parsing
+      '--ephemeral',
+      '--ignore-user-config',
+      '--ignore-rules',
+      '--sandbox', task.sandbox || 'read-only',
       "--skip-git-repo-check",  // Allow running outside git repos
       task.prompt,
     ];
@@ -101,7 +105,9 @@ export class CodexPlugin implements AgentPlugin {
         timeout: task.constraints?.timeoutSeconds
           ? task.constraints.timeoutSeconds * 1000
           : 180_000,
+        signal: task.signal,
       });
+      const heartbeat = task.onHeartbeat ? setInterval(task.onHeartbeat, 10_000) : undefined;
 
       proc.stdout.on("data", (chunk: Buffer) => {
         stdout += chunk.toString();
@@ -112,6 +118,7 @@ export class CodexPlugin implements AgentPlugin {
       });
 
       proc.on("close", (code: number | null, signal: NodeJS.Signals | null) => {
+        if (heartbeat) clearInterval(heartbeat);
         const durationMs = Date.now() - startTime;
 
         // Parse JSONL output
@@ -139,6 +146,7 @@ export class CodexPlugin implements AgentPlugin {
       });
 
       proc.on("error", (err: Error) => {
+        if (heartbeat) clearInterval(heartbeat);
         const durationMs = Date.now() - startTime;
         resolve({
           success: false,

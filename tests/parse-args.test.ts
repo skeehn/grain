@@ -86,4 +86,36 @@ describe('parseArgs — existing behavior preserved', () => {
     expect(p.skillsSubcmd).toBe('add');
     expect(p.skillsName).toBe('deploy');
   });
+
+  test('wiki, runs, and destructive approval flags parse explicitly', () => {
+    const wiki = parse('wiki', 'search', 'architecture');
+    expect(wiki.command).toBe('wiki');
+    expect(wiki.utilitySubcmd).toBe('search');
+    expect(wiki.utilityArg).toBe('architecture');
+    const runs = parse('runs', 'export', 'run-1', 'out.json');
+    expect(runs.utilityOutput).toBe('out.json');
+    expect(parse('--allow-destructive', 'fix it').allowDestructive).toBe(true);
+  });
+
+  test('learning and agent graph commands parse explicitly', () => {
+    expect(parseArgs(['node', 'grain', 'learning', 'show', 'abc']).command).toBe('learning');
+    const agents = parseArgs(['node', 'grain', 'agents', 'pair', 'implement auth']);
+    expect(agents.command).toBe('agents');
+    expect(agents.utilitySubcmd).toBe('pair');
+    expect(agents.utilityArg).toBe('implement auth');
+  });
+
+  test('TUI command and presentation flags parse without changing classic prompts', () => {
+    const tui = parseArgs(['node', 'grain', 'tui', '--run', 'run-1']);
+    expect(tui.command).toBe('tui'); expect(tui.utilitySubcmd).toBe('--run'); expect(tui.utilityArg).toBe('run-1');
+    const flags = parse('--classic', '--no-alt-screen', '--theme', 'field', '--density', 'compact', 'inspect repo');
+    expect(flags.classic).toBe(true); expect(flags.noAltScreen).toBe(true); expect(flags.theme).toBe('field'); expect(flags.density).toBe('compact');
+  });
+  test('TUI continues parsing presentation flags after a run selector', () => {
+    const result = parseArgs(['node', 'grain', 'tui', '--run', 'run-123', '--no-alt-screen']);
+    expect(result.command).toBe('tui');
+    expect(result.utilitySubcmd).toBe('--run');
+    expect(result.utilityArg).toBe('run-123');
+    expect(result.noAltScreen).toBe(true);
+  });
 });

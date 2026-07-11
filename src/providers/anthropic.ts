@@ -16,6 +16,7 @@ export class AnthropicProvider implements Provider {
   }
 
   async *stream(messages: Message[], system: string, tools: Tool[]): AsyncIterable<StreamEvent> {
+    let currentToolId = '';
     const apiMessages = messages.map(m => ({
       role: m.role as 'user' | 'assistant',
       content: m.content.map(block => {
@@ -44,6 +45,7 @@ export class AnthropicProvider implements Provider {
       if (event.type === 'content_block_start') {
         const block = (event as any).content_block;
         if (block.type === 'tool_use') {
+          currentToolId = block.id;
           yield { type: 'tool_use_start', id: block.id, name: block.name };
         }
       } else if (event.type === 'content_block_delta') {
@@ -51,10 +53,13 @@ export class AnthropicProvider implements Provider {
         if (delta.type === 'text_delta') {
           yield { type: 'text_delta', text: delta.text };
         } else if (delta.type === 'input_json_delta') {
-          yield { type: 'tool_use_delta', id: '', input_json: delta.partial_json };
+          yield { type: 'tool_use_delta', id: currentToolId, input_json: delta.partial_json };
         }
       } else if (event.type === 'content_block_stop') {
-        yield { type: 'tool_use_end', id: '' };
+        if (currentToolId) {
+          yield { type: 'tool_use_end', id: currentToolId };
+          currentToolId = '';
+        }
       } else if (event.type === 'message_delta') {
         const delta = (event as any).delta;
         if (delta.stop_reason) {

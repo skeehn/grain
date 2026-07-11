@@ -40,6 +40,11 @@ export interface AgentTask {
   
   /** Resume an existing session */
   sessionId?: string;
+
+  /** Runtime-only cancellation and liveness hooks; never persisted. */
+  signal?: AbortSignal;
+  onHeartbeat?: () => void;
+  sandbox?: 'read-only' | 'workspace-write';
 }
 
 export interface AgentResult {

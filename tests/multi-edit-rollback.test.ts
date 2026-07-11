@@ -8,7 +8,7 @@ import { executeMultiEdit } from '../src/tools/multi-edit.js';
 let dir: string;
 
 beforeEach(() => {
-  dir = mkdtempSync(join(tmpdir(), 'grain-multiedit-'));
+  dir = mkdtempSync(join(process.env.GRAIN_HOME!, 'grain-multiedit-'));
 });
 
 describe('executeMultiEdit rollback', () => {

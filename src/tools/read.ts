@@ -1,6 +1,5 @@
-import { readFileSync, existsSync } from 'fs';
-import { resolve } from 'path';
 import type { ToolResult } from '../providers/types.js';
+import { getWorkspaceFS } from '../workspace/index.js';
 
 export const readTool = {
   name: 'read',
@@ -17,28 +16,14 @@ export const readTool = {
 };
 
 export async function executeRead(input: { path: string; offset?: number; limit?: number }): Promise<ToolResult> {
-  const filePath = resolve(input.path);
   const offset = Math.max(1, input.offset || 1);
   const limit = input.limit || 500;
 
-  if (!existsSync(filePath)) {
-    return { content: `File not found: ${filePath}`, is_error: true };
-  }
-
   try {
-    const content = readFileSync(filePath, 'utf-8');
-    const lines = content.split('\n');
-    const startIdx = offset - 1;
-    const endIdx = Math.min(startIdx + limit, lines.length);
-    const selected = lines.slice(startIdx, endIdx);
-
-    const numbered = selected.map((line, i) => `${startIdx + i + 1}|${line}`).join('\n');
-
-    let result = numbered;
-    if (endIdx < lines.length) {
-      result += `\n... (${lines.length - endIdx} more lines)`;
-    }
-
+    const read = getWorkspaceFS().readRange(input.path, offset, limit);
+    const result = read.content.split('\n').map((line, index) => `${read.start_line + index}|${line}`).join('\n')
+      + (read.end_line < read.total_lines ? `\n... (${read.total_lines - read.end_line} more lines)` : '')
+      + `\n[sha256:${read.hash}]`;
     return { content: result };
   } catch (err: any) {
     return { content: `Error reading file: ${err.message}`, is_error: true };

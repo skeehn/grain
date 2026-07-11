@@ -1,0 +1,16 @@
+dataset:
+  id: terminal-bench.0
+agents:
+  - name: grain
+    import_path: benchmarks.harbor.grain_agent:GrainAgent
+models:
+  - poolside/laguna-xs-2.1
+  - anthropic/claude-sonnet-4.6
+orchestrator:
+  type: local
+  n_concurrent_trials: 4
+trials:
+  pull_request: 1
+  nightly: 3
+  weekly: 3
+  release: 5

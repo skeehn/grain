@@ -1,6 +1,7 @@
-import { readFileSync, writeFileSync, existsSync } from 'fs';
-import { resolve } from 'path';
 import type { ToolResult } from '../providers/types.js';
+import { getWorkspaceFS } from '../workspace/index.js';
+import { WorkspaceTransactionManager } from '../workspace/index.js';
+import { randomUUID } from 'node:crypto';
 
 export const patchTool = {
   name: 'patch',
@@ -11,6 +12,7 @@ export const patchTool = {
       path: { type: 'string', description: 'Path to the file to patch' },
       old_string: { type: 'string', description: 'Text to find (must be unique in file)' },
       new_string: { type: 'string', description: 'Replacement text' },
+      expected_hash: { type: 'string', description: 'Optional sha256 from read; patch fails if the file changed' },
     },
     required: ['path', 'old_string', 'new_string'],
   },
@@ -20,15 +22,17 @@ function normalizeWhitespace(s: string): string {
   return s.replace(/\s+/g, ' ').trim();
 }
 
-export async function executePatch(input: { path: string; old_string: string; new_string: string }): Promise<ToolResult> {
-  const filePath = resolve(input.path);
-
-  if (!existsSync(filePath)) {
-    return { content: `File not found: ${filePath}`, is_error: true };
-  }
-
+export async function executePatch(input: { path: string; old_string: string; new_string: string; expected_hash?: string }): Promise<ToolResult> {
   try {
-    let content = readFileSync(filePath, 'utf-8');
+    const workspace = getWorkspaceFS();
+    const read = workspace.readRange(input.path, 1, Number.MAX_SAFE_INTEGER);
+    const filePath = workspace.resolve(input.path, true);
+    let content = read.content;
+    const commit = (next: string) => {
+      const manager = new WorkspaceTransactionManager(workspace); const transaction = manager.begin({ invocationId: randomUUID(),
+        expectedInputs: [{ path: input.path, content_hash: input.expected_hash || read.hash }], operations: [{ type: 'write', path: input.path, content: next }] });
+      manager.approve(transaction.id); manager.apply(transaction.id); return transaction.id;
+    };
 
     // Strategy 1: Exact match
     if (content.includes(input.old_string)) {
@@ -37,8 +41,8 @@ export async function executePatch(input: { path: string; old_string: string; ne
         return { content: `Found ${count} occurrences of old_string. Must be unique. Add more context.`, is_error: true };
       }
       content = content.replace(input.old_string, () => input.new_string);
-      writeFileSync(filePath, content);
-      return { content: `Patched ${filePath}\n- ${input.old_string.split('\n').slice(0, 3).join('\n- ')}\n+ ${input.new_string.split('\n').slice(0, 3).join('\n+ ')}` };
+      const transaction = commit(content);
+      return { content: `Patched ${filePath}\n- ${input.old_string.split('\n').slice(0, 3).join('\n- ')}\n+ ${input.new_string.split('\n').slice(0, 3).join('\n+ ')}\ntransaction:${transaction}` };
     }
 
     // Strategy 2: Trimmed match
@@ -49,8 +53,7 @@ export async function executePatch(input: { path: string; old_string: string; ne
         return { content: `Found ${count} trimmed occurrences. Add more context.`, is_error: true };
       }
       content = content.replace(trimmedOld, () => input.new_string);
-      writeFileSync(filePath, content);
-      return { content: `Patched ${filePath} (trimmed match)` };
+      return { content: `Patched ${filePath} (trimmed match)\ntransaction:${commit(content)}` };
     }
 
     // Strategy 3: Normalized whitespace match
@@ -78,8 +81,7 @@ export async function executePatch(input: { path: string; old_string: string; ne
 
     if (matchStart >= 0) {
       lines.splice(matchStart, matchEnd - matchStart, ...input.new_string.split('\n'));
-      writeFileSync(filePath, lines.join('\n'));
-      return { content: `Patched ${filePath} (fuzzy whitespace match at lines ${matchStart + 1}-${matchEnd})` };
+      return { content: `Patched ${filePath} (fuzzy whitespace match at lines ${matchStart + 1}-${matchEnd})\ntransaction:${commit(lines.join('\n'))}` };
     }
 
     return { content: `Could not find old_string in ${filePath}. Verify the content matches exactly.`, is_error: true };
