@@ -2,8 +2,18 @@ import { describe, expect, test } from 'bun:test';
 import { AgentMailbox, AgentScheduler, DurableAgentRuntime, RepairLoopRunner, TaskGraphStore, WorkflowRunner } from '../src/orchestration/index.js';
 import { join } from 'path';
 import { randomUUID } from 'crypto';
+import { createTemplate } from '../src/commands/agents.js';
 
 describe('hybrid agent scheduler', () => {
+  test('solo and repair templates always isolate their writable task', () => {
+    for (const mode of ['solo', 'repair-loop'] as const) {
+      const graph = createTemplate(mode, 'fix the project');
+      expect(graph.tasks).toHaveLength(1);
+      expect(graph.tasks[0].authority.write).toBe(true);
+      expect(graph.tasks[0].isolation).toBe('worktree');
+    }
+  });
+
   test('uses shared read-only research and worktree-isolated writers', () => {
     const scheduler = new AgentScheduler(); const graph = scheduler.createGraph('pair');
     const research = scheduler.addTask(graph, { role: 'researcher', objective: 'inspect architecture', expectedArtifact: 'evidence report' });

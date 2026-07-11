@@ -4,7 +4,7 @@ import { AgentMailbox } from '../orchestration/index.js';
 import { agentDashboard } from '../tui/renderer.js';
 import { watchAgentGraph } from '../orchestration/dashboard.js';
 
-function createTemplate(mode: TaskGraph['mode'], objective: string): TaskGraph {
+export function createTemplate(mode: TaskGraph['mode'], objective: string): TaskGraph {
   const scheduler = new AgentScheduler(); const graph = scheduler.createGraph(mode);
   if (mode === 'pair') {
     const research = scheduler.addTask(graph, { role: 'researcher', objective: `Research: ${objective}`, expectedArtifact: 'evidence-backed implementation brief' });
@@ -22,7 +22,7 @@ function createTemplate(mode: TaskGraph['mode'], objective: string): TaskGraph {
     const scouts = ['architecture', 'implementation', 'tests'].map(focus => scheduler.addTask(graph,
       { role: 'researcher', objective: `${focus} scout: ${objective}`, expectedArtifact: `${focus} evidence packet` }));
     scheduler.addTask(graph, { role: 'coordinator', objective, expectedArtifact: 'verified integrated patch', write: true, dependencies: scouts.map(task => task.id) });
-  } else scheduler.addTask(graph, { role: mode === 'repair-loop' ? 'driver' : 'coordinator', objective, expectedArtifact: 'verified result', write: mode !== 'plan' });
+  } else scheduler.addTask(graph, { role: mode === 'repair-loop' ? 'driver' : 'coordinator', objective, expectedArtifact: 'verified result', write: true });
   return graph;
 }
 
