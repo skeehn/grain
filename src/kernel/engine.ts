@@ -22,6 +22,10 @@ export class RunEngine {
       // The first request is durable but gives in-flight work a chance to stop
       // cleanly. A forced request is the explicit terminal transition.
       if (command.force) this.journal.transition('cancelled', { forced: true });
+    } else if (command.type === 'answer') {
+      if (state.status !== 'waiting_input') throw new Error(`Cannot answer run in ${state.status}`);
+      this.journal.append('user_answered', { question_id: command.questionId, answer: command.answer });
+      this.journal.transition('running');
     } else {
       this.journal.command(command);
     }

@@ -20,6 +20,7 @@ export interface Message {
 
 export type ContentBlock =
   | { type: 'text'; text: string }
+  | { type: 'image'; media_type: string; data: string; name?: string }
   | { type: 'tool_use'; id: string; name: string; input: any }
   | { type: 'tool_result'; tool_use_id: string; content: string; is_error?: boolean };
 

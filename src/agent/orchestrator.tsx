@@ -11,6 +11,7 @@ export interface OrchestratorOpts {
   reflect?: boolean;
   allowDestructive?: boolean;
   benchmark?: boolean;
+  attachments?: string[];
 }
 
 export async function orchestrate(opts: OrchestratorOpts): Promise<void> {
@@ -29,5 +30,6 @@ export async function orchestrate(opts: OrchestratorOpts): Promise<void> {
     reflect:     opts.reflect,
     allowDestructive: opts.allowDestructive,
     benchmark: opts.benchmark,
+    attachments: opts.attachments,
   });
 }
