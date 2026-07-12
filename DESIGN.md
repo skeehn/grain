@@ -52,6 +52,13 @@ ANSI-256, ANSI-16, and no-color modes retain the same semantic hierarchy. Color 
 - First `Ctrl+C` requests graceful cancellation; a second press forces termination and journals it.
 - Alternate-screen state, raw input, cursor visibility, and mouse modes must always restore on exit and exceptions.
 
+## Workshop Companion
+
+- The rice-ball companion is a status instrument: it changes only for meaningful work states (thinking, tools, questions, approval, verification, recovery, success, failure).
+- `/theme field|studio|arcade|system` persists the visual mode. `t` cycles it in the run viewer.
+- `grain lab` is a loopback-only companion surface for journal-backed cards, attachment context, and sandboxed experiments. It never grants generated browser artifacts direct filesystem or command access.
+- The `ask_user` tool journals a question and answer, allowing a run to pause for a real decision rather than guessing.
+
 ## Decisions Log
 
 | Date | Decision | Rationale |

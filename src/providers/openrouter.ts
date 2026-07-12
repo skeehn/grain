@@ -44,6 +44,7 @@ export class OpenRouterProvider implements Provider {
       const results: unknown[] = [];
       for (const block of message.content) {
         if (block.type === 'text') text.push(block.text);
+        if (block.type === 'image') text.push(`[Image attachment retained locally: ${block.name || block.media_type}]`);
         if (block.type === 'tool_use') calls.push({
           id: block.id,
           type: 'function',

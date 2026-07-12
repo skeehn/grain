@@ -73,6 +73,12 @@ grain agents research "compare migration strategies"
 # Inspect the latest replayable run in the differential full-screen TUI
 grain tui
 
+# Open the local visual workbench for the latest run
+grain lab
+
+# Change the persistent workshop theme
+grain "/theme arcade"
+
 # Inspect a specific run without replacing the current terminal buffer
 grain --no-alt-screen tui --run <run-id>
 

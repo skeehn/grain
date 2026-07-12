@@ -1,14 +1,14 @@
 // Agent loop - fluid execution with streaming, error recovery, and quality control
 import type { Message, ContentBlock } from '../providers/types.js';
 import { getProvider } from '../providers/index.js';
-import { TOOLS, setToolCwd, destroyShell, registerDynamicTool } from '../tools/index.js';
+import { TOOLS, setToolCwd, destroyShell, registerDynamicTool, setQuestionJournal } from '../tools/index.js';
 import { closeMcpClients, discoverMcpTools } from '../mcp/index.js';
 import { classifyTaskComplexity, routeModel, explainRouting, resolveModelAlias, MODEL_CONFIGS } from '../router/index.js';
 import { trackToolCall, getContextSummary } from './context-tracker.js';
 import { getSystemPrompt } from '../system-prompt.js';
 import { getModelCapabilities, packContext } from '../context/index.js';
 import { LearningLedger } from '../learning/index.js';
-import { loadConfig } from '../config.js';
+import { loadConfig, saveConfig } from '../config.js';
 import { createSession, addMessage, getMessages, getLastSession } from '../session/store.js';
 import { needsCompaction, compact, engramRetrieve, engramStore } from './context.js';
 import * as renderer from '../tui/renderer.js';
@@ -16,6 +16,8 @@ import { getSkillManager } from '../skills/manager.js';
 import type { SkillMatch } from '../skills/types.js';
 import { RunJournal } from '../kernel/index.js';
 import { ToolGateway } from '../policy/index.js';
+import { queueAttachment, type GrainAttachment } from '../attachments.js';
+import { readFileSync } from 'fs';
 
 export interface AgentOpts {
   prompt?: string;
@@ -29,6 +31,7 @@ export interface AgentOpts {
   reflect?: boolean;  // post-task self-reflection: store learnings + print summary
   allowDestructive?: boolean;
   benchmark?: boolean;
+  attachments?: string[];
 }
 
 const MAX_TURNS = 30; // Safety limit to prevent infinite loops
@@ -167,6 +170,14 @@ async function runReflection(
 }
 
 export async function agentLoop(opts: AgentOpts): Promise<void> {
+  if (opts.prompt?.startsWith('/theme')) {
+    const theme = opts.prompt.trim().split(/\s+/)[1];
+    if (!['field', 'studio', 'arcade', 'system'].includes(theme || '')) {
+      renderer.info('Usage: /theme field|studio|arcade|system'); return;
+    }
+    const config = loadConfig(); saveConfig({ ...config, tui: { ...config.tui!, theme: theme as any, schemaVersion: 2 } });
+    renderer.success(`Theme set to ${theme}.`); return;
+  }
   const config = loadConfig();
   const skillManager = getSkillManager();
   await skillManager.initialize();
@@ -202,6 +213,13 @@ export async function agentLoop(opts: AgentOpts): Promise<void> {
   const journal = RunJournal.create({ task: opts.prompt || 'interactive session', cwd: process.cwd(),
     provider: provider.name, model: provider.model, policy_profile: opts.benchmark ? 'benchmark' : 'default' });
   journal.transition('running');
+  setQuestionJournal(journal);
+  const attachments: GrainAttachment[] = [];
+  for (const path of opts.attachments || []) {
+    const attachment = queueAttachment(journal.metadata.run_id, path);
+    attachments.push(attachment);
+    journal.append('attachment_queued', attachment as any);
+  }
   const gateway = new ToolGateway({
     autoApprove: Boolean(opts.autoApprove), allowDestructive: Boolean(opts.allowDestructive),
     benchmark: Boolean(opts.benchmark), interactive: Boolean(process.stdin.isTTY), journal,
@@ -233,8 +251,15 @@ export async function agentLoop(opts: AgentOpts): Promise<void> {
 
   // Get initial prompt
   if (opts.prompt) {
-    messages.push({ role: 'user', content: [{ type: 'text', text: opts.prompt }] });
-    await addMessage(sessionId, 'user', [{ type: 'text', text: opts.prompt }]);
+    const capabilities = getModelCapabilities(provider.name, provider.model);
+    const attachmentContext = attachments.length ? `\n\nAttached material:\n${attachments.map(item => `- ${item.name} (${item.mediaType}, ${item.bytes} bytes) at ${item.storedPath}${item.kind === 'image' && !capabilities.supportsImages ? ' — image retained; selected provider cannot receive vision input.' : ''}`).join('\n')}` : '';
+    const prompt = `${opts.prompt}${attachmentContext}`;
+    const content: ContentBlock[] = [{ type: 'text', text: prompt }];
+    if (capabilities.supportsImages) for (const item of attachments.filter(item => item.kind === 'image')) {
+      content.push({ type: 'image', media_type: item.mediaType, data: readFileSync(item.storedPath).toString('base64'), name: item.name });
+    }
+    messages.push({ role: 'user', content });
+    await addMessage(sessionId, 'user', content);
   } else if (messages.length === 0) {
     // Non-TTY (subprocess): no prompt = nothing to do, exit cleanly
     if (!process.stdin.isTTY) return;

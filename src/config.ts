@@ -17,8 +17,8 @@ export interface GrainConfig {
     apiKey?: string;
   };
   tui?: {
-    schemaVersion: 1;
-    theme: 'field' | 'light' | 'system';
+    schemaVersion: 2;
+    theme: 'field' | 'studio' | 'arcade' | 'system' | 'light';
     density: 'compact' | 'comfortable';
     mouse: boolean;
     alternateScreen: boolean;
@@ -36,7 +36,7 @@ const DEFAULTS: GrainConfig = {
   model:      null,
   engram_db:  '~/.engram/knowledge',
   max_tokens: 180000,
-  tui: { schemaVersion: 1, theme: 'field', density: 'compact', mouse: true, alternateScreen: true, motion: true,
+  tui: { schemaVersion: 2, theme: 'field', density: 'compact', mouse: true, alternateScreen: true, motion: true,
     defaultPanels: ['timeline', 'workspace', 'agents'] },
   plugins: {
     plugins: {
@@ -133,7 +133,10 @@ export function loadConfig(): GrainConfig {
           routing: { ...DEFAULTS.plugins!.routing, ...(parsed.plugins.routing || {}) },
         }
       : DEFAULTS.plugins;
-    return { ...DEFAULTS, ...parsed, plugins, tui: { ...DEFAULTS.tui!, ...(parsed.tui || {}) } };
+    const tui = { ...DEFAULTS.tui!, ...(parsed.tui || {}) };
+    if (tui.theme === 'light') tui.theme = 'studio';
+    tui.schemaVersion = 2;
+    return { ...DEFAULTS, ...parsed, plugins, tui };
   } catch {
     return { ...DEFAULTS };
   }
@@ -160,9 +163,9 @@ export function validateConfig(config: GrainConfig): { valid: boolean; error?: s
   if (envKey && !process.env[envKey]) {
     return { valid: false, error: `${config.provider} requires ${envKey}.\n\nRun: grain config set key ${envKey} <your-key>\nor:  grain init` };
   }
-  if (config.tui && (config.tui.schemaVersion !== 1 || !['field', 'light', 'system'].includes(config.tui.theme)
+  if (config.tui && (config.tui.schemaVersion !== 2 || !['field', 'studio', 'arcade', 'system', 'light'].includes(config.tui.theme)
     || !['compact', 'comfortable'].includes(config.tui.density))) {
-    return { valid: false, error: 'Invalid TUI configuration. Expected schemaVersion=1 and supported theme/density values.' };
+    return { valid: false, error: 'Invalid TUI configuration. Expected schemaVersion=2 and a supported theme/density value.' };
   }
   return { valid: true };
 }
