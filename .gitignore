@@ -9,6 +9,7 @@ __pycache__/
 
 # Build output
 dist/
+release-dist/
 
 # Environment
 .env
