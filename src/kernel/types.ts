@@ -1,5 +1,5 @@
-export const RUN_EVENT_SCHEMA_VERSION = 2 as const;
-export const SUPPORTED_RUN_EVENT_SCHEMA_VERSIONS = [1, 2] as const;
+export const RUN_EVENT_SCHEMA_VERSION = 3 as const;
+export const SUPPORTED_RUN_EVENT_SCHEMA_VERSIONS = [1, 2, 3] as const;
 export type RunEventSchemaVersion = typeof SUPPORTED_RUN_EVENT_SCHEMA_VERSIONS[number];
 
 export type RunStatus =
@@ -7,6 +7,7 @@ export type RunStatus =
   | 'running'
   | 'paused'
   | 'waiting_approval'
+  | 'waiting_input'
   | 'executing_tool'
   | 'verifying'
   | 'succeeded'
@@ -20,6 +21,10 @@ export type RunEventType =
   | 'run_resumed'
   | 'run_cancel_requested'
   | 'run_recovered'
+  | 'attachment_queued'
+  | 'user_questioned'
+  | 'user_answered'
+  | 'view_generated'
   | 'status_changed'
   | 'model_requested'
   | 'model_stream_started'
@@ -95,5 +100,6 @@ export type RunCommand =
   | { type: 'approve'; proposalId: string }
   | { type: 'deny'; proposalId: string; reason?: string }
   | { type: 'steer'; targetRunId: string; message: string }
+  | { type: 'answer'; questionId: string; answer: string }
   | { type: 'retry'; phaseId: string }
   | { type: 'reconcile'; invocationId: string; resolution: ReconciliationResolution };

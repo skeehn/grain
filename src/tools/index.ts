@@ -25,12 +25,14 @@ import { setWorkspaceRoot } from '../workspace/index.js';
 import { wikiSearchTool, wikiGetTool, wikiProposeTool, executeWikiSearch, executeWikiGet, executeWikiPropose } from './wiki.js';
 import { inspectTool, executeInspect } from './inspect.js';
 import { searchTool, executeSearch } from './search.js';
+import { askUserTool, setQuestionJournal } from './ask-user.js';
 export * from './contract.js';
 
 // Tool execution context — set once at agent loop start
 let _toolCwd: string = process.cwd();
 export function setToolCwd(cwd: string) { _toolCwd = cwd; setWorkspaceRoot(cwd); }
 export { destroyShell };
+export { setQuestionJournal };
 
 // Plugin system initialization
 let _pluginRegistry: PluginRegistry | null = null;
@@ -82,6 +84,7 @@ function getLazyTools(): Tool[] {
     repoMapTool,     // Understand codebase structure
     inspectTool,
     searchTool,
+    askUserTool,
 
     // Power (6) — for complex tasks
     multiEditTool,   // Batch edits across files
@@ -114,6 +117,7 @@ const executors: Record<string, (input: any) => Promise<ToolResult>> = {
   repo_map: executeRepoMap,
   inspect: executeInspect,
   search: executeSearch,
+  ask_user: async input => askUserTool.execute(input),
   multi_edit: executeMultiEdit,
   engram: executeEngram,
   delegate: executeDelegate,

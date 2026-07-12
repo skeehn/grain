@@ -17,6 +17,7 @@ import { handleRunsCommand } from './commands/runs.js';
 import { handleLearningCommand } from './commands/learning.js';
 import { handleAgentsCommand } from './commands/agents.js';
 import { runTui } from './tui/app.js';
+import { handleLabCommand } from './commands/lab.js';
 
 // ─── Load ~/.grain/.env before anything else ──────────────────────────────────
 
@@ -42,7 +43,7 @@ const bold = (s: string) => `${c.bold}${s}${c.reset}`;
 // ─── Arg parser ───────────────────────────────────────────────────────────────
 
 interface ParsedArgs {
-  command?: 'init' | 'update' | 'config' | 'status' | 'serve' | 'help' | 'version' | 'skills' | 'engram' | 'wiki' | 'runs' | 'learning' | 'agents' | 'tui';
+  command?: 'init' | 'update' | 'config' | 'status' | 'serve' | 'help' | 'version' | 'skills' | 'engram' | 'wiki' | 'runs' | 'learning' | 'agents' | 'tui' | 'lab';
   configSubcmd?: 'set' | 'reset' | 'show';
   configKey?: string;
   configValue?: string;
@@ -63,6 +64,7 @@ interface ParsedArgs {
   noAltScreen: boolean;
   theme?: 'field' | 'light' | 'system';
   density?: 'compact' | 'comfortable';
+  attachments: string[];
   utilitySubcmd?: string;
   utilityArg?: string;
   utilityOutput?: string;
@@ -71,7 +73,7 @@ interface ParsedArgs {
 
 export function parseArgs(argv: string[]): ParsedArgs {
   const args = argv.slice(2);
-  const result: ParsedArgs = { autoApprove: false, concise: false, tbBridge: false, reflect: false, allowDestructive: false, classic: false, noAltScreen: false };
+  const result: ParsedArgs = { autoApprove: false, concise: false, tbBridge: false, reflect: false, allowDestructive: false, classic: false, noAltScreen: false, attachments: [] };
   const promptParts: string[] = [];
 
   let i = 0;
@@ -93,6 +95,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
         } else i += 1;
         continue;
       }
+      if (arg === 'lab') { result.command = 'lab'; result.utilityArg = args[i + 1] === '--run' ? args[i + 2] : undefined; break; }
       if (arg === '--help' || arg === '-h' || arg === 'help') { result.command = 'help'; break; }
       if (arg === '--version' || arg === '-v' || arg === 'version') { result.command = 'version'; break; }
 
@@ -164,6 +167,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
     else if (arg === '--no-alt-screen')              { result.noAltScreen = true; }
     else if (arg === '--theme')                      { result.theme = args[++i] as ParsedArgs['theme']; }
     else if (arg === '--density')                    { result.density = args[++i] as ParsedArgs['density']; }
+    else if (arg === '--attach')                     { result.attachments.push(args[++i]); }
     else if (arg === '--') {
       // Explicit terminator: everything after it is prompt text verbatim.
       promptParts.push(...args.slice(i + 1));
@@ -652,8 +656,9 @@ ${bold('FLAGS')}
   --allow-destructive          explicitly allow destructive tools inside the workspace
   --classic                    use stable line-oriented output
   --no-alt-screen              keep full-screen TUI in the current terminal buffer
-  --theme field|light|system   choose TUI theme
+  --theme field|studio|arcade|system choose TUI theme
   --density compact|comfortable choose TUI information density
+  --attach <path>             attach code/text or a supported image to this run
 
 ${bold('COMMANDS')}
   grain init                   interactive setup wizard
@@ -662,6 +667,8 @@ ${bold('COMMANDS')}
   grain tui                    inspect the latest run in the differential TUI
   grain tui --run <id>         inspect a specific journaled run
   grain tui --resume <id>      resume viewing a specific journaled run
+  grain lab [--run <id>]       open the local visual workbench
+  /theme field|studio|arcade|system change Grain's persistent visual mode
   grain runs list              list event-sourced runs
   grain runs inspect <id>      validate and replay a run journal
   grain runs export <id> <file> export a reproducible trajectory
@@ -976,6 +983,7 @@ async function main(): Promise<void> {
     if (parsed.utilitySubcmd && !['--run', '--resume'].includes(parsed.utilitySubcmd)) throw new Error('Usage: grain tui [--run|--resume <run-id>]');
     await runTui({ runId: parsed.utilityArg, alternateScreen: parsed.noAltScreen ? false : config.tui?.alternateScreen }); return;
   }
+  if (parsed.command === 'lab') { handleLabCommand(parsed.utilityArg); return; }
 
   if (parsed.command === 'config') {
     await handleConfig(parsed.configSubcmd, parsed.configKey, parsed.configValue);
@@ -1006,6 +1014,7 @@ async function main(): Promise<void> {
       reflect:     parsed.reflect,
       allowDestructive: parsed.allowDestructive,
       benchmark: parsed.tbBridge,
+      attachments: parsed.attachments,
     });
 
     // Signal done to TB bridge

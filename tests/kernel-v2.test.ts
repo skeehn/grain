@@ -11,7 +11,7 @@ describe('run event schema v2', () => {
     engine.dispatch({ type: 'resume' }); expect(engine.state().status).toBe('running'); engine.dispatch({ type: 'cancel' });
     expect(engine.state().status).toBe('running'); engine.dispatch({ type: 'cancel', force: true });
     expect(engine.state().status).toBe('cancelled');
-    const events = readRunEvents(journal.metadata.run_id); expect(events.every(event => event.schema_version === 2)).toBe(true);
+    const events = readRunEvents(journal.metadata.run_id); expect(events.every(event => event.schema_version === 3)).toBe(true);
     expect(events.map(event => event.type)).toContain('user_steered');
   });
   test('rejects invalid command transitions', () => {
