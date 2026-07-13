@@ -38,52 +38,31 @@ curl -fsSL https://raw.githubusercontent.com/skeehn/grain/main/install.sh | sh
 
 Installs standalone `grain` and `engram` executables to `~/bin/`. No Node.js or Bun runtime is required to run them.
 
-**Then set up your provider:**
+**Then start Grain:**
 ```sh
-grain init
+grain
 ```
+Grain connects a provider in the conversation the first time you run it.
 
 ---
 
 ## Quick start
 
 ```sh
-# Explain a codebase
+# Open the repository-scoped workspace
+grain
+
+# Or begin with a task
 grain "explain the architecture of this project"
 
-# Write code, fully automated
-grain --yes "add input validation to src/api/users.ts"
-
-# Debug something
-grain "why is the auth middleware returning 401 on valid tokens"
-
-# Build something new
-grain "build a dark-themed landing page for this project"
+# Inside Grain: /help, /plan, /files, /wiki, /history, /agents, /settings
+# Attach context with @src/auth.ts or @screenshot.png
 
 # Run Poolside Laguna XS 2.1 through OpenRouter
 grain --provider openrouter --model pool "fix and test this project"
 
-# Inspect the exact model context budget from a completed run
-grain runs context <run-id>
-
-# Create durable multi-agent task graphs
-grain agents pair "implement and verify authentication"
-grain agents research "compare migration strategies"
-
-# Inspect the latest replayable run in the differential full-screen TUI
-grain tui
-
-# Open the local visual workbench for the latest run
-grain lab
-
-# Change the persistent workshop theme
-grain "/theme arcade"
-
-# Inspect a specific run without replacing the current terminal buffer
-grain --no-alt-screen tui --run <run-id>
-
-# Inspect verified learning candidates and evidence
-grain learning list
+# Update later
+grain update
 ```
 
 ---
@@ -91,31 +70,19 @@ grain learning list
 ## Commands
 
 ```
-grain [task]                  run a task interactively
-grain "do something"          one-shot inline task
-grain --yes "task"            fully automated, no prompts
+grain                         open the workspace
+grain "task"                  open the workspace with a task
+grain update                  update Grain
 
-grain init                    interactive setup wizard
-grain status                  check provider, engram, config
-grain update                  update to latest version
-grain runs list              list event-sourced runs
-grain runs inspect <id>      validate and replay a run
-grain runs export <id> <file> export a redacted trajectory
-grain wiki build             build repository wiki provenance
-grain wiki search <query>    search wiki pages
-grain wiki verify            check source hashes and line ranges
-grain wiki serve [port]      serve the read-only local wiki
-
-grain config                  show current config
-grain config set provider <name>
-grain config set model <id>
-grain config set key <KEY_NAME> <value>    saves to ~/.grain/.env
-grain config set engram_db <path>
-grain config reset
-
-grain --help                  full help
-grain --version               show version
+# Inside the workspace
+/help                         discover controls
+/plan                         plan before changing work
+/files /diff /wiki /history   inspect the repository and prior work
+/agents /settings /theme      access advanced capabilities
 ```
+
+`grain -p`, `grain runs`, `grain wiki`, `grain agents`, `grain lab`, and
+`grain config` remain stable expert and automation commands.
 
 ---
 

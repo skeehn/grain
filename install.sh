@@ -134,18 +134,17 @@ main() {
   step "Checking PATH..."
   path_hint "$INSTALL_DIR"
 
-  # ── Run grain init ────────────────────────────────────────────────────────
-  step "Setup..."
+  # ── Start Grain ───────────────────────────────────────────────────────────
+  step "Ready..."
   if command -v grain >/dev/null 2>&1; then
-    printf "\n  Run ${cyan}grain init${reset} to configure your AI provider.\n"
+    printf "\n  Run ${cyan}grain${reset} to start. Grain connects your provider in chat.\n"
   else
-    printf "\n  Run ${cyan}${grain_dest} init${reset} to configure your AI provider.\n"
+    printf "\n  Run ${cyan}${grain_dest}${reset} to start. Grain connects your provider in chat.\n"
   fi
 
   printf "\n${bold}Done.${reset}\n\n"
-  printf "  ${cyan}grain --help${reset}          see all commands\n"
-  printf "  ${cyan}grain init${reset}            configure provider & keys\n"
-  printf "  ${cyan}grain status${reset}          verify everything works\n\n"
+  printf "  ${cyan}grain${reset}                 open your coding workspace\n"
+  printf "  ${cyan}grain update${reset}          update Grain\n\n"
 }
 
 main "$@"

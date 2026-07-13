@@ -1,5 +1,6 @@
 // Hybrid orchestrator - use Ink if TTY available, else fallback to simple renderer
 import { agentLoop } from './loop.js';
+import { runWorkspace } from '../workspace/app.js';
 
 export interface OrchestratorOpts {
   prompt?: string;
@@ -12,12 +13,14 @@ export interface OrchestratorOpts {
   allowDestructive?: boolean;
   benchmark?: boolean;
   attachments?: string[];
+  workspace?: boolean;
 }
 
 export async function orchestrate(opts: OrchestratorOpts): Promise<void> {
-  // For Phase 1, use the existing loop but enhance it
-  // Ink TUI will come in Phase 1B after we verify basic functionality
-  
+  if (opts.workspace !== false && process.stdin.isTTY) {
+    await runWorkspace(opts);
+    return;
+  }
   await agentLoop({
     prompt:      opts.prompt,
     resume:      false,
