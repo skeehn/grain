@@ -4,8 +4,8 @@ import { executeBash } from '../src/tools/bash.js';
 describe('bounded shell inspection', () => {
   test('rejects searches that escape the workspace before starting a shell', async () => {
     const result = await executeBash(
-      { command: 'grep -r "ohmygit" /Users/kstephenkeehn --include="*.md"' },
-      '/Users/kstephenkeehn/conductor/repos/grain',
+      { command: 'grep -r "ohmygit" /Users/testuser --include="*.md"' },
+      '/Users/testuser/conductor/repos/grain',
     );
     expect(result.is_error).toBe(true);
     expect(result.content).toContain('outside the workspace');
