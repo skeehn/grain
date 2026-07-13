@@ -13,6 +13,7 @@ describe('Workshop Companion', () => {
     expect(mascotState('waiting_approval')).toBe('approval');
     expect(mascotState('verifying')).toBe('verifying');
     expect(mascotState('succeeded')).toBe('complete');
-    expect(mascotFrame('running', 0, true)).toBe(mascotFrame('running', 9, true));
+    expect(mascotFrame('running', 0, false)).toBe(mascotFrame('running', 9, false));
+    expect(mascotFrame('running', 0, true)).toBe(mascotFrame('running', 0, true));
   });
 });

@@ -77,6 +77,7 @@ export interface RunState {
   last_sequence: number;
   last_hash: string | null;
   pending_tool?: { id: string; name: string; input: unknown };
+  pending_question?: { id: string; question: string; choices: string[] };
   error?: string;
 }
 

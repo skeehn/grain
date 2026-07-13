@@ -18,7 +18,7 @@ export interface GrainConfig {
   };
   tui?: {
     schemaVersion: 2;
-    theme: 'field' | 'studio' | 'arcade' | 'system' | 'light';
+    theme: 'field' | 'studio' | 'arcade' | 'system';
     density: 'compact' | 'comfortable';
     mouse: boolean;
     alternateScreen: boolean;
@@ -163,7 +163,7 @@ export function validateConfig(config: GrainConfig): { valid: boolean; error?: s
   if (envKey && !process.env[envKey]) {
     return { valid: false, error: `${config.provider} requires ${envKey}.\n\nRun: grain config set key ${envKey} <your-key>\nor:  grain init` };
   }
-  if (config.tui && (config.tui.schemaVersion !== 2 || !['field', 'studio', 'arcade', 'system', 'light'].includes(config.tui.theme)
+  if (config.tui && (config.tui.schemaVersion !== 2 || !['field', 'studio', 'arcade', 'system'].includes(config.tui.theme)
     || !['compact', 'comfortable'].includes(config.tui.density))) {
     return { valid: false, error: 'Invalid TUI configuration. Expected schemaVersion=2 and a supported theme/density value.' };
   }

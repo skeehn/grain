@@ -1,4 +1,4 @@
-import { copyFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'fs';
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'fs';
 import { createHash } from 'crypto';
 import { basename, extname, join } from 'path';
 import { runDirectory } from './kernel/journal.js';
@@ -25,8 +25,8 @@ export function queueAttachment(runId: string, path: string): GrainAttachment {
   const content = readFileSync(path);
   const sha256 = createHash('sha256').update(content).digest('hex');
   const dir = join(runDirectory(runId), 'attachments'); mkdirSync(dir, { recursive: true });
-  const storedPath = join(dir, `${sha256.slice(0, 12)}-${basename(path)}`); copyFileSync(path, storedPath);
-  const attachment: GrainAttachment = { id: sha256.slice(0, 16), name: basename(path), path, storedPath, mediaType: type.mediaType, kind: type.kind, bytes: stat.size, sha256 };
+  const storedPath = join(dir, `${sha256.slice(0, 12)}-${basename(path)}`); writeFileSync(storedPath, content, { mode: 0o600 });
+  const attachment: GrainAttachment = { id: sha256.slice(0, 16), name: basename(path), path, storedPath, mediaType: type.mediaType, kind: type.kind, bytes: content.length, sha256 };
   writeFileSync(join(dir, `${attachment.id}.json`), JSON.stringify(attachment, null, 2), { mode: 0o600 });
   return attachment;
 }

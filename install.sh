@@ -22,19 +22,6 @@ warn() { printf "  ${yellow}!${reset} %s\n" "$*"; }
 fail() { printf "  ${red}✗${reset} %s\n" "$*" >&2; exit 1; }
 step() { printf "\n${bold}%s${reset}\n" "$*"; }
 
-# ── Node check ───────────────────────────────────────────────────────────────
-check_node() {
-  if ! command -v node >/dev/null 2>&1; then
-    fail "Node.js >= 18 is required. Install it from https://nodejs.org or via your package manager."
-  fi
-  local ver
-  ver=$(node -e 'process.stdout.write(process.version.slice(1).split(".")[0])' 2>/dev/null)
-  if [ "${ver:-0}" -lt 18 ]; then
-    fail "Node.js >= 18 required (found v$ver). Upgrade at https://nodejs.org"
-  fi
-  ok "Node.js v$ver"
-}
-
 # ── Detect platform ──────────────────────────────────────────────────────────
 detect_platform() {
   local os arch
@@ -106,7 +93,7 @@ main() {
   printf "${cyan}https://github.com/${REPO}${reset}\n"
 
   step "Checking requirements..."
-  check_node
+  ok "Standalone Bun executable — no Node.js runtime required"
 
   step "Fetching latest release..."
   local version
@@ -128,24 +115,7 @@ main() {
   if download_binary "$grain_asset" "$version" "$grain_dest"; then
     ok "grain installed at ${grain_dest}"
   else
-    # Fallback: download the .js bundle (works on any Node >=18)
-    warn "Pre-built binary not found, trying JS bundle..."
-    if download_binary "grain.js" "$version" "$grain_dest"; then
-      # Prepend shebang if missing
-      local first
-      first=$(head -1 "$grain_dest")
-      if [[ "$first" != "#!/usr/bin/env node"* ]]; then
-        local tmp
-        tmp=$(mktemp)
-        printf '#!/usr/bin/env node\n' > "$tmp"
-        cat "$grain_dest" >> "$tmp"
-        mv "$tmp" "$grain_dest"
-        chmod +x "$grain_dest"
-      fi
-      ok "grain installed (JS bundle) at ${grain_dest}"
-    else
-      fail "Could not download grain for ${platform}. File a bug: https://github.com/${REPO}/issues"
-    fi
+    fail "Could not download a standalone grain executable for ${platform}. File a bug: https://github.com/${REPO}/issues"
   fi
 
   # ── Download engram (optional, Rust binary) ───────────────────────────────

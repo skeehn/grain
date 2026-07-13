@@ -24,40 +24,31 @@ fail() { printf "  ${red}✗${reset} %s\n" "$*" >&2; exit 1; }
 VERSION="${1:-}"
 if [ -z "$VERSION" ]; then
   # Read from package.json
-  VERSION=$(node -e "process.stdout.write(require('./package.json').version)")
+  VERSION=$(grep -m1 '"version"' package.json | sed -E 's/.*"version": "([^"]+)".*/\1/')
 fi
 
 # Bump version in config.ts and package.json if arg provided
 if [ -n "$1" ]; then
   step "Bumping version to $1..."
   sed -i '' "s/GRAIN_VERSION = '[^']*'/GRAIN_VERSION = '$1'/" src/config.ts
-  node -e "
-    const fs = require('fs');
-    const pkg = JSON.parse(fs.readFileSync('package.json'));
-    pkg.version = '$1';
-    fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
-  "
+  sed -i '' -E "0,/\"version\": \"[^\"]+\"/s//\"version\": \"$1\"/" package.json
   ok "Bumped to v$1"
 fi
 
 step "Building grain v${VERSION}..."
 bun run build
-ok "Build complete ($(du -sh dist/cli.js | cut -f1))"
+ok "Build complete ($(du -sh dist/grain | cut -f1))"
 
 # ── Prepare dist dir ─────────────────────────────────────────────────────────
 rm -rf "$DIST" && mkdir -p "$DIST"
 
-# The JS bundle works on any platform with Node >=18
-cp dist/cli.js "${DIST}/grain.js"
-ok "Copied grain.js (universal Node bundle)"
-
-# Also create named platform aliases (symlinks or copies)
-# For now, grain.js IS the binary for all platforms — no cross-compilation needed
+# Compile standalone executables; runtime users never need Node or Bun installed.
 for platform in darwin-arm64 darwin-x64 linux-arm64 linux-x64; do
-  cp dist/cli.js "${DIST}/grain-${platform}"
-  chmod +x "${DIST}/grain-${platform}"
+  target="bun-${platform}"
+  case "$platform" in *-x64) target="${target}-baseline";; esac
+  bun build --compile --minify --target="$target" --outfile="${DIST}/grain-${platform}" src/cli.ts
 done
-ok "Platform binaries created (darwin-arm64, darwin-x64, linux-arm64, linux-x64)"
+ok "Standalone platform binaries created (darwin-arm64, darwin-x64, linux-arm64, linux-x64)"
 
 # ── Checksums ────────────────────────────────────────────────────────────────
 step "Generating checksums..."
@@ -97,7 +88,6 @@ $(git log --oneline $(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo '
 gh release create "v${VERSION}" \
   --title "grain v${VERSION}" \
   --notes "$NOTES" \
-  ${DIST}/grain.js \
   ${DIST}/grain-darwin-arm64 \
   ${DIST}/grain-darwin-x64 \
   ${DIST}/grain-linux-arm64 \

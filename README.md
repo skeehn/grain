@@ -36,7 +36,7 @@ It's your personal software factory that runs locally on your machine.
 curl -fsSL https://raw.githubusercontent.com/skeehn/grain/main/install.sh | sh
 ```
 
-Installs `grain` and `engram` to `~/bin/`. Requires Node.js >= 18.
+Installs standalone `grain` and `engram` executables to `~/bin/`. No Node.js or Bun runtime is required to run them.
 
 **Then set up your provider:**
 ```sh
@@ -258,7 +258,7 @@ Without engram, grain still works — just without cross-session memory.
 
 ## Requirements
 
-- Node.js >= 18
+- Bun >= 1.0 (development and source builds only)
 - One of: AWS credentials, Anthropic API key, OpenRouter API key, or Ollama
 
 ## Verify your install
@@ -267,9 +267,9 @@ Without engram, grain still works — just without cross-session memory.
 bun install
 bun run check
 ## `check` includes an offline install of the packed CLI plus help and skill discovery.
-node dist/cli.js wiki build
-node dist/cli.js wiki verify
-node dist/cli.js --version
+./dist/grain wiki build
+./dist/grain wiki verify
+./dist/grain --version
 
 # Live provider smoke test (uses a small real request)
 grain --provider openrouter --model pool --max-turns 1 \

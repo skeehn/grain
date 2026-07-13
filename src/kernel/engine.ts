@@ -24,6 +24,7 @@ export class RunEngine {
       if (command.force) this.journal.transition('cancelled', { forced: true });
     } else if (command.type === 'answer') {
       if (state.status !== 'waiting_input') throw new Error(`Cannot answer run in ${state.status}`);
+      if (!state.pending_question || state.pending_question.id !== command.questionId) throw new Error('Answer does not match the pending question');
       this.journal.append('user_answered', { question_id: command.questionId, answer: command.answer });
       this.journal.transition('running');
     } else {

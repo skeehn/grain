@@ -9,6 +9,8 @@ export interface GrainTheme {
   warning: string; danger: string; evidence: string;
 }
 
+export type GrainThemeRole = Exclude<keyof GrainTheme, 'name'>;
+
 export const THEMES: Record<GrainThemeName, GrainTheme> = {
   field:  { name: 'field', canvas: '#161713', panel: '#1D1F1A', raised: '#25271F', line: '#393A31', text: '#E7E0D2', muted: '#929084', accent: '#D6A85F', success: '#88A678', warning: '#E5B567', danger: '#E06C75', evidence: '#7FA7B8' },
   studio: { name: 'studio', canvas: '#FFF8ED', panel: '#FFFDF8', raised: '#F6E5C7', line: '#D9C7A9', text: '#30291F', muted: '#796F63', accent: '#C87337', success: '#4E8B72', warning: '#B87822', danger: '#C35262', evidence: '#397E9B' },
@@ -17,9 +19,9 @@ export const THEMES: Record<GrainThemeName, GrainTheme> = {
 };
 
 export function resolveTheme(value: string | undefined): GrainTheme {
-  return THEMES[value as GrainThemeName] || THEMES.field;
+  return value && Object.prototype.hasOwnProperty.call(THEMES, value) ? THEMES[value as GrainThemeName] : THEMES.field;
 }
 
-export function themeStyle(theme: GrainTheme, role: keyof GrainTheme, extra: CellStyle = {}): CellStyle {
+export function themeStyle(theme: GrainTheme, role: GrainThemeRole, extra: CellStyle = {}): CellStyle {
   return { foreground: theme[role] as string, ...extra };
 }

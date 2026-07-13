@@ -13,7 +13,7 @@ export function layoutRun(view: TuiViewModel, capabilities: TerminalCapabilities
   putText(frame, 0, 0, header.padEnd(width), { foreground: theme.accent, background: theme.panel, bold: true });
   putText(frame, 0, 8, rice, { foreground: mascotColor(view.run.status, theme), background: theme.panel, bold: true });
   putText(frame, 1, 1, clip(view.run.task, width - 2), { foreground: theme.muted, background: theme.canvas });
-  const footer = width < 80 ? ' Tab panels  : commands  t theme  p pause  q quit ' : ' Tab focus · Enter inspect · : commands · t theme · a approvals · d diff · g agents · c context · s steer · p pause · q quit ';
+  const footer = width < 80 ? ' t theme  p pause  q quit ' : ' t theme · p pause/resume · q quit · Ctrl-C cancel ';
   putText(frame, height - 1, 0, footer.padEnd(width), { foreground: theme.muted, background: theme.panel });
   const bodyTop = 3; const bodyHeight = Math.max(1, height - bodyTop - 2);
   if (width < 80) {
