@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { parseComposerInput } from '../src/workspace/app.js';
-import { discoverProviders, providerReady } from '../src/workspace/setup.js';
+import { discoverProviders, providerReady, selectProvider } from '../src/workspace/setup.js';
 import { workspaceKey } from '../src/session/store.js';
 
 describe('unified workspace', () => {
@@ -19,5 +19,19 @@ describe('unified workspace', () => {
     expect(providers.find(provider => provider.id === 'bedrock')?.detected).toBe(true);
     expect(providerReady({ provider: 'anthropic' } as any, { ANTHROPIC_API_KEY: 'key' })).toBe(true);
     expect(workspaceKey('/tmp/project')).not.toBe(workspaceKey('/tmp/other-project'));
+    expect(workspaceKey('/tmp/project/')).toBe(workspaceKey('/tmp/project'));
+  });
+
+  test('keeps attachment-only composer input visible to the workspace', () => {
+    expect(parseComposerInput('@notes.md')).toEqual({ argument: '', attachments: ['notes.md'] });
+  });
+
+  test('accepts only explicit provider choices, while retaining the blank default', () => {
+    const providers = discoverProviders({ ANTHROPIC_API_KEY: 'key' }, false);
+    expect(selectProvider(providers, '')?.id).toBe('anthropic');
+    expect(selectProvider(providers, 'anthropic')?.id).toBe('anthropic');
+    expect(selectProvider(providers, '2')?.id).toBe('anthropic');
+    expect(selectProvider(providers, '0')).toBeUndefined();
+    expect(selectProvider(providers, 'unknown')).toBeUndefined();
   });
 });

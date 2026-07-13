@@ -63,7 +63,11 @@ function saveStore() {
 }
 
 export function workspaceKey(cwd = process.cwd()): string {
-  return cwd.replace(/\\/g, '/');
+  const normalized = cwd.replaceAll('\\', '/');
+  // Preserve a Windows drive root while treating every other trailing slash
+  // as cosmetic, so the same repository always resumes the same session.
+  if (/^[A-Za-z]:\/$/u.test(normalized)) return normalized;
+  return normalized.replace(/\/+$/u, '') || '/';
 }
 
 export async function createSession(title?: string, workspace?: string): Promise<string> {
@@ -72,7 +76,7 @@ export async function createSession(title?: string, workspace?: string): Promise
   s.sessions.push({
     id,
     title: title || null,
-    workspace,
+    workspace: workspace ? workspaceKey(workspace) : undefined,
     messages: [],
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
@@ -143,7 +147,8 @@ export async function getMessages(sessionId: string): Promise<Message[]> {
 
 export async function getLastSession(workspace?: string): Promise<string | null> {
   const s = getStore();
-  const candidates = workspace ? s.sessions.filter(session => session.workspace === workspace) : s.sessions;
+  const key = workspace ? workspaceKey(workspace) : undefined;
+  const candidates = key ? s.sessions.filter(session => session.workspace === key) : s.sessions;
   if (candidates.length === 0) return null;
   // Sort by updated_at descending
   const sorted = [...candidates].sort((a, b) =>
@@ -153,7 +158,8 @@ export async function getLastSession(workspace?: string): Promise<string | null>
 }
 
 export async function listSessions(workspace?: string): Promise<Pick<SessionRecord, 'id' | 'title' | 'workspace' | 'updated_at'>[]> {
-  const sessions = getStore().sessions.filter(session => !workspace || session.workspace === workspace);
+  const key = workspace ? workspaceKey(workspace) : undefined;
+  const sessions = getStore().sessions.filter(session => !key || session.workspace === key);
   return [...sessions].sort((a, b) => Date.parse(b.updated_at) - Date.parse(a.updated_at))
     .map(({ id, title, workspace: key, updated_at }) => ({ id, title, workspace: key, updated_at }));
 }

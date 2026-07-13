@@ -28,6 +28,12 @@ export function providerReady(config: GrainConfig, env: NodeJS.ProcessEnv = proc
   return Boolean(option?.envKey && env[option.envKey]);
 }
 
+export function selectProvider(providers: ProviderSetup[], choice: string): ProviderSetup | undefined {
+  if (!choice) return providers.find(provider => provider.detected) || providers.find(provider => provider.id === 'ollama');
+  if (/^\d+$/u.test(choice)) return providers[Number.parseInt(choice, 10) - 1];
+  return providers.find(provider => provider.id === choice.toLowerCase());
+}
+
 export async function detectOllama(fetcher: typeof fetch = fetch): Promise<boolean> {
   try {
     const controller = new AbortController(); const timer = setTimeout(() => controller.abort(), 250);
@@ -53,9 +59,12 @@ export async function ensureWorkspaceSetup(io: SetupIO, options: { env?: NodeJS.
   const providers = discoverProviders(env, ollamaDetected);
   io.info('(•ᴗ•) Let’s connect Grain. Pick a provider; you can change this later in /settings.');
   providers.forEach((provider, index) => io.info(`  ${index + 1}. ${provider.label}${provider.detected ? ' · ready' : ''}`));
-  const rawChoice = (await io.prompt(`Provider [1-${providers.length}]`))?.trim() || '';
-  const index = Number.parseInt(rawChoice, 10) - 1;
-  const selected = providers[index] || providers.find(provider => provider.id === rawChoice.toLowerCase()) || providers.find(provider => provider.detected) || providers.find(provider => provider.id === 'ollama')!;
+  let selected: ProviderSetup | undefined;
+  do {
+    const rawChoice = (await io.prompt(`Provider [1-${providers.length}]`))?.trim() || '';
+    selected = selectProvider(providers, rawChoice);
+    if (!selected) io.info('Invalid provider choice. Enter a listed number or provider name.');
+  } while (!selected);
 
   if (selected.envKey && !env[selected.envKey]) {
     const open = (await io.prompt(`Open ${selected.label} to create an API key? [y/N]`))?.trim().toLowerCase();

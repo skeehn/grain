@@ -106,7 +106,10 @@ export async function runWorkspace(options: WorkspaceOptions = {}): Promise<void
     const composer = parseComposerInput(input);
     input = undefined;
     if (composer.command) { if (await handleCommand(composer, state) === 'exit') return; workspaceHeader(state.mode); continue; }
-    if (!composer.argument) continue;
+    if (!composer.argument) {
+      if (composer.attachments.length) renderer.info('Attachments need a message. Add what you want Grain to do with them.');
+      continue;
+    }
     const attachments = [...queuedAttachments.splice(0), ...composer.attachments];
     attachmentPreview(attachments).forEach(renderer.info);
     const feed: string[] = [];
