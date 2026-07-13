@@ -32,7 +32,20 @@ export interface AgentOpts {
   allowDestructive?: boolean;
   benchmark?: boolean;
   attachments?: string[];
+  /** Project-scoped session identity supplied by the unified workspace. */
+  workspaceKey?: string;
+  /** Adds a visible plan contract without changing automation or tool policy. */
+  mode?: 'ask' | 'plan' | 'execute';
+  /** Mutable workspace-scoped approvals, intentionally limited to a risk class. */
+  approvedRisks?: Set<string>;
+  onEvent?: (event: AgentWorkspaceEvent) => void;
 }
+
+export type AgentWorkspaceEvent =
+  | { type: 'status'; status: string; detail?: string }
+  | { type: 'tool'; name: string; input?: unknown }
+  | { type: 'approval'; name: string; risk: string; decision: 'allowed' | 'denied' }
+  | { type: 'verification'; passed: boolean; detail: string };
 
 const MAX_TURNS = 30; // Safety limit to prevent infinite loops
 
@@ -223,6 +236,7 @@ export async function agentLoop(opts: AgentOpts): Promise<void> {
   const journal = RunJournal.create({ task: opts.prompt || 'interactive session', cwd: process.cwd(),
     provider: provider.name, model: provider.model, policy_profile: opts.benchmark ? 'benchmark' : 'default' });
   journal.transition('running');
+  opts.onEvent?.({ type: 'status', status: 'running', detail: opts.mode || 'ask' });
   setQuestionJournal(journal);
   const attachments: GrainAttachment[] = [];
   try {
@@ -241,8 +255,16 @@ export async function agentLoop(opts: AgentOpts): Promise<void> {
     autoApprove: Boolean(opts.autoApprove), allowDestructive: Boolean(opts.allowDestructive),
     benchmark: Boolean(opts.benchmark), interactive: Boolean(process.stdin.isTTY), journal,
     approve: async (name, _input, policy) => {
-      const answer = await renderer.userPrompt(`Approve ${policy.risk} tool "${name}"? [y/N] `);
-      return answer?.trim().toLowerCase() === 'y' || answer?.trim().toLowerCase() === 'yes';
+      if (opts.approvedRisks?.has(policy.risk)) {
+        opts.onEvent?.({ type: 'approval', name, risk: policy.risk, decision: 'allowed' });
+        return true;
+      }
+      const answer = await renderer.userPrompt(`Approve ${policy.risk} tool "${name}"? [y] once · [a]llow this session · [N]o `);
+      const choice = answer?.trim().toLowerCase();
+      const allowed = choice === 'y' || choice === 'yes' || choice === 'a' || choice === 'allow';
+      if (choice === 'a' || choice === 'allow') opts.approvedRisks?.add(policy.risk);
+      opts.onEvent?.({ type: 'approval', name, risk: policy.risk, decision: allowed ? 'allowed' : 'denied' });
+      return allowed;
     },
   });
 
@@ -254,16 +276,16 @@ export async function agentLoop(opts: AgentOpts): Promise<void> {
   setToolCwd(process.cwd());
 
   if (opts.resume) {
-    const last = await getLastSession();
+    const last = await getLastSession(opts.workspaceKey);
     if (last) {
       sessionId = last;
       messages = await getMessages(sessionId);
       renderer.info('Resumed session');
     } else {
-      sessionId = await createSession();
+      sessionId = await createSession(opts.prompt?.slice(0, 80), opts.workspaceKey);
     }
   } else {
-    sessionId = await createSession();
+    sessionId = await createSession(opts.prompt?.slice(0, 80), opts.workspaceKey);
   }
 
   // Get initial prompt
@@ -298,6 +320,7 @@ export async function agentLoop(opts: AgentOpts): Promise<void> {
 
     // Build system prompt with context + skills
     let system = getSystemPrompt(opts.concise, opts.prompt || '');
+    if (opts.mode === 'plan') system += '\n\nThe user selected Plan mode. Explain the approach, affected files, risks, and verification before proposing any write or command that changes state.';
 
     const contextSummary = getContextSummary();
     if (contextSummary) {
@@ -396,6 +419,7 @@ export async function agentLoop(opts: AgentOpts): Promise<void> {
           });
           if (!spinnerStopped) { spin.stop(); renderer.clearLine(); spinnerStopped = true; }
           renderer.tool(event.name, { _streaming: true });
+          opts.onEvent?.({ type: 'tool', name: event.name });
         } else if (event.type === 'tool_use_delta') {
           const toolId = event.id || currentToolId;
           currentToolInputJson = (toolInputJsonMap.get(toolId) || '') + event.input_json;
@@ -499,6 +523,7 @@ export async function agentLoop(opts: AgentOpts): Promise<void> {
           }
           const msg = block.input?.result || block.input?.message || 'Task complete.';
           renderer.success(`✓ ${msg}`);
+          opts.onEvent?.({ type: 'verification', passed: true, detail: String(msg) });
           finishCalled = true;
 
           // Record skill success for all matched skills (up to 3)
@@ -529,6 +554,7 @@ export async function agentLoop(opts: AgentOpts): Promise<void> {
 
         // Execute the tool
         const result = await gateway.execute(block.name, block.input, block.id);
+        opts.onEvent?.({ type: 'tool', name: block.name, input: block.input });
         trackToolCall(block.name, block.input, result);
         // Accumulate for reflection
         allToolsUsed.push(block.name);
@@ -638,6 +664,7 @@ export async function agentLoop(opts: AgentOpts): Promise<void> {
       await engramStore(`Error: ${err.message}`, ['error']);
       journal.append(/parse|protocol|malformed/i.test(err.message) ? 'protocol_error' : 'provider_error', { error: err.message, turn: turnCount });
       journal.transition('failed', { error: err.message });
+      opts.onEvent?.({ type: 'status', status: 'failed', detail: err.message });
       destroyShell();
 
       if (opts.oneShot) {

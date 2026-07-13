@@ -38,7 +38,7 @@ try {
   const version = await run(grain, ['--version'], { cwd: sandbox, env });
   if (!version.includes(`grain v${packageJson.version}`)) throw new Error(`Unexpected version output: ${version}`);
   const help = await run(grain, ['--help'], { cwd: sandbox, env });
-  if (!help.includes('grain skills') || !help.includes('grain tui')) throw new Error('Installed help is missing required commands');
+  if (!help.includes('open your workspace') || !help.includes('grain update')) throw new Error('Installed help is missing the primary workspace flow');
   writeFileSync(join(home, 'skills', 'smoke.md'), `---\nname: smoke\ndescription: Installation smoke skill.\ntriggers:\n  - install smoke\n---\n\nVerify installed skill discovery.\n`);
   const skills = await run(grain, ['skills'], { cwd: sandbox, env });
   if (!skills.includes('smoke')) throw new Error('Installed binary did not discover Markdown skills');
