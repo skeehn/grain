@@ -24,11 +24,12 @@ export function orderedDither(width: number, phase = 0, level = 8): string {
 }
 
 export function banner(subtitle = 'coding agent · memory in the loop'): void {
-  const width = Math.min(34, Math.max(24, (process.stdout.columns || 80) - 4));
-  const rows = [3, 7, 11, 15].map((level, row) => orderedDither(width, row, level));
-  sink().write(`\n${tone.grain(rows[0])}\n`);
-  sink().write(`${tone.grain(rows[1].slice(0, 8))}  ${chalk.bold('G R A I N')}  ${tone.grain(rows[1].slice(19))}\n`);
-  sink().write(`${tone.quiet(rows[2])}\n${tone.quiet(rows[3])}\n${tone.quiet(subtitle)}\n\n`);
+  const width = Math.min(64, Math.max(36, (process.stdout.columns || 80) - 4));
+  const line = '─'.repeat(width);
+  sink().write(`\n${tone.grain(`╭${line}╮`)}\n`);
+  sink().write(`${tone.grain('│')}  ${tone.grain('GRAIN')} ${tone.quiet('· repository workspace agent')}${' '.repeat(Math.max(1, width - 31))}${tone.grain('│')}\n`);
+  sink().write(`${tone.grain('│')}  ${tone.quiet(subtitle.padEnd(width - 2).slice(0, width - 2))}${tone.grain('│')}\n`);
+  sink().write(`${tone.grain(`╰${line}╯`)}\n\n`);
 }
 
 function stopCurrent(): void {
@@ -41,17 +42,18 @@ export const stream = streamText;
 
 export function toolStart(name: string, input: any): void {
   stopCurrent();
-  sink().write(`\n${tone.grain('┌')} ${chalk.bold(name)} ${tone.quiet(input?._streaming ? 'running' : summarizeInput(name, input))}\n`);
+  const detail = input?._streaming ? 'running' : summarizeInput(name, input);
+  sink().write(`\n${tone.grain('◆')} ${chalk.bold(name)} ${detail ? tone.quiet(`· ${detail}`) : ''}\n`);
 }
 export const tool = toolStart;
 
 export function toolResult(output: string, isError = false): void {
-  const max = Math.max(6, Math.min(24, Math.floor((process.stdout.rows || 30) * .6)));
+  const max = Math.max(6, Math.min(18, Math.floor((process.stdout.rows || 30) * .45)));
   const lines = output.split('\n');
   const shown = lines.slice(0, max);
   if (lines.length > max) shown.push(`… ${lines.length - max} more lines`);
   const paint = isError ? tone.danger : tone.quiet;
-  sink().write(shown.map(line => paint(`│ ${line}`)).join('\n') + `\n${tone.grain('└')}\n`);
+  sink().write(shown.map(line => paint(`  ${line}`)).join('\n') + `\n${tone.grain(isError ? '×' : '·')} ${isError ? 'tool failed' : 'done'}\n`);
 }
 export function result(output: unknown, isError?: boolean): void {
   toolResult(typeof output === 'string' ? output : JSON.stringify(output, null, 2), isError);
