@@ -23,4 +23,24 @@ describe('differential TUI', () => {
     const view = projectRun(events as any, 1000); const frame = layoutRun(view, capabilities);
     expect(view.run.status).toBe('running'); expect(frame.width).toBe(100); expect(frame.cells.map(cell => cell.grapheme).join('')).toContain('TIMELINE');
   });
+
+  test('projects unanswered questions into an inline decision card', () => {
+    const events: any[] = [{ type: 'run_created', sequence: 1, payload: { run_id: 'q', task: 'ship the change', provider: 'test', model: 'model', created_at: new Date(0).toISOString() } },
+      { type: 'status_changed', sequence: 2, payload: { status: 'waiting_input' } },
+      { type: 'user_questioned', sequence: 3, payload: { question_id: 'q1', question: 'Use the safe path?', choices: ['Yes', 'No'] } }];
+    const view = projectRun(events as any, 1000); const frame = layoutRun(view, capabilities);
+    expect(view.question).toEqual({ id: 'q1', question: 'Use the safe path?', choices: ['Yes', 'No'] });
+    expect(frame.cells.map(cell => cell.grapheme).join('')).toContain('DECISION');
+    expect(frame.cells.map(cell => cell.grapheme).join('')).toContain('1. Yes');
+  });
+
+  test('renders all six choices without footer overlap', () => {
+    const events: any[] = [{ type: 'run_created', sequence: 1, payload: { run_id: 'q6', task: 'ship the change', provider: 'test', model: 'model', created_at: new Date(0).toISOString() } },
+      { type: 'status_changed', sequence: 2, payload: { status: 'waiting_input' } },
+      { type: 'user_questioned', sequence: 3, payload: { question_id: 'q6', question: 'Pick one', choices: ['A', 'B', 'C', 'D', 'E', 'F'] } }];
+    const view = projectRun(events as any, 1000); const frame = layoutRun(view, capabilities);
+    const text = frame.cells.map(cell => cell.grapheme).join('');
+    expect(text).toContain('1. A');
+    expect(text).toContain('6. F');
+  });
 });

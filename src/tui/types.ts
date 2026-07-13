@@ -25,6 +25,7 @@ export interface TimelineItem { sequence: number; kind: string; label: string; d
 export interface WorkspaceActivity { path: string; operation: string; status: string; }
 export interface AgentSummary { id: string; role: string; state: string; objective: string; }
 export interface ApprovalSummary { id: string; tool: string; risk: string; decision?: string; }
+export interface QuestionSummary { id: string; question: string; choices: string[]; }
 export interface ContextSummary { usedTokens: number; budgetTokens: number; sources: number; }
 export interface DiagnosticSummary { passed: number; failed: number; pending: number; }
 
@@ -34,6 +35,7 @@ export interface TuiViewModel {
   workspace: WorkspaceActivity[];
   agents: AgentSummary[];
   approvals: ApprovalSummary[];
+  question?: QuestionSummary;
   context: ContextSummary;
   diagnostics: DiagnosticSummary;
 }

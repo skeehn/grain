@@ -4,6 +4,7 @@ export * from './frame.js';
 export * from './differential.js';
 export * from './theme.js';
 export * from './mascot.js';
+export * from './logo.js';
 export * from './projector.js';
 export * from './layout.js';
 export * from './app.js';

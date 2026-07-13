@@ -29,6 +29,11 @@ export async function runTui(options: TuiAppOptions = {}): Promise<void> {
     const key = data.toString('utf8');
     try {
       if (key === 'q') { cleanup(); return; }
+      const current = engine.state();
+      if (current.status === 'waiting_input' && current.pending_question && /^[1-6]$/.test(key)) {
+        const choice = current.pending_question.choices[Number(key) - 1];
+        if (choice) engine.dispatch({ type: 'answer', questionId: current.pending_question.id, answer: choice });
+      }
       if (key === 'p') { const state = engine.state(); engine.dispatch({ type: state.status === 'paused' ? 'resume' : 'pause' }); }
       if (key === 't') {
         const names: GrainThemeName[] = ['field', 'studio', 'arcade', 'system'];
