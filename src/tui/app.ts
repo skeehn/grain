@@ -32,8 +32,9 @@ export async function runTui(options: TuiAppOptions = {}): Promise<void> {
       if (key === 'p') { const state = engine.state(); engine.dispatch({ type: state.status === 'paused' ? 'resume' : 'pause' }); }
       if (key === 't') {
         const names: GrainThemeName[] = ['field', 'studio', 'arcade', 'system'];
-        theme = resolveTheme(names[(names.indexOf(theme.name) + 1) % names.length]);
-        const config = loadConfig(); saveConfig({ ...config, tui: { ...config.tui!, theme: theme.name, schemaVersion: 2 } });
+        const nextTheme = resolveTheme(names[(names.indexOf(theme.name) + 1) % names.length]);
+        const config = loadConfig(); saveConfig({ ...config, tui: { ...config.tui!, theme: nextTheme.name, schemaVersion: 2 } });
+        theme = nextTheme;
       }
       if (key === '\u0003') {
         if (cancelArmed) engine.dispatch({ type: 'cancel', force: true });

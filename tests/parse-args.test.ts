@@ -118,4 +118,8 @@ describe('parseArgs — existing behavior preserved', () => {
     expect(result.utilityArg).toBe('run-123');
     expect(result.noAltScreen).toBe(true);
   });
+  test('validates operands for Lab and attachments', () => {
+    expect(() => parse('lab', '--run')).toThrow('Usage: grain lab --run <run-id>');
+    expect(() => parse('--attach')).toThrow('Missing path for --attach');
+  });
 });

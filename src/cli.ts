@@ -17,6 +17,7 @@ import { handleRunsCommand } from './commands/runs.js';
 import { handleLearningCommand } from './commands/learning.js';
 import { handleAgentsCommand } from './commands/agents.js';
 import { runTui } from './tui/app.js';
+import type { GrainThemeName } from './tui/theme.js';
 import { handleLabCommand } from './commands/lab.js';
 
 // ─── Load ~/.grain/.env before anything else ──────────────────────────────────
@@ -62,7 +63,7 @@ interface ParsedArgs {
   allowDestructive: boolean;
   classic: boolean;
   noAltScreen: boolean;
-  theme?: 'field' | 'light' | 'system';
+  theme?: GrainThemeName;
   density?: 'compact' | 'comfortable';
   attachments: string[];
   utilitySubcmd?: string;
@@ -95,7 +96,14 @@ export function parseArgs(argv: string[]): ParsedArgs {
         } else i += 1;
         continue;
       }
-      if (arg === 'lab') { result.command = 'lab'; result.utilityArg = args[i + 1] === '--run' ? args[i + 2] : undefined; break; }
+      if (arg === 'lab') {
+        result.command = 'lab';
+        if (args[i + 1] === '--run') {
+          if (!args[i + 2]) throw new Error('Usage: grain lab --run <run-id>');
+          result.utilityArg = args[i + 2];
+        }
+        break;
+      }
       if (arg === '--help' || arg === '-h' || arg === 'help') { result.command = 'help'; break; }
       if (arg === '--version' || arg === '-v' || arg === 'version') { result.command = 'version'; break; }
 
@@ -167,7 +175,11 @@ export function parseArgs(argv: string[]): ParsedArgs {
     else if (arg === '--no-alt-screen')              { result.noAltScreen = true; }
     else if (arg === '--theme')                      { result.theme = args[++i] as ParsedArgs['theme']; }
     else if (arg === '--density')                    { result.density = args[++i] as ParsedArgs['density']; }
-    else if (arg === '--attach')                     { result.attachments.push(args[++i]); }
+    else if (arg === '--attach') {
+      const path = args[++i];
+      if (!path || path.startsWith('-')) throw new Error('Missing path for --attach');
+      result.attachments.push(path);
+    }
     else if (arg === '--') {
       // Explicit terminator: everything after it is prompt text verbatim.
       promptParts.push(...args.slice(i + 1));
@@ -959,6 +971,13 @@ async function main(): Promise<void> {
     console.error('Run "grain --help" for usage, or use -- to pass literal dashes in a prompt.');
     process.exitCode = 1;
     return;
+  }
+
+  if (parsed.theme) {
+    const themes: GrainThemeName[] = ['field', 'studio', 'arcade', 'system'];
+    if (!themes.includes(parsed.theme)) throw new Error(`Unknown theme "${parsed.theme}". Use: ${themes.join(', ')}`);
+    const config = loadConfig();
+    saveConfig({ ...config, tui: { ...config.tui!, theme: parsed.theme, schemaVersion: 2 } });
   }
 
   // Commands that don't need engram or the agent

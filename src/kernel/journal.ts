@@ -72,6 +72,11 @@ export function replayRun(runId: string): RunState {
     }
     if (event.type === 'tool_proposed') state.pending_tool = event.payload as any;
     if (event.type === 'tool_completed') state.pending_tool = undefined;
+    if (event.type === 'user_questioned') {
+      const payload = event.payload as { question_id: string; question: string; choices?: string[] };
+      state.pending_question = { id: payload.question_id, question: payload.question, choices: payload.choices || [] };
+    }
+    if (event.type === 'user_answered') state.pending_question = undefined;
     if (event.type === 'provider_error' || event.type === 'protocol_error') state.error = String((event.payload as any).error);
   }
   return state;

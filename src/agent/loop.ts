@@ -36,6 +36,16 @@ export interface AgentOpts {
 
 const MAX_TURNS = 30; // Safety limit to prevent infinite loops
 
+/** Builds a user message while preserving attachment context for every turn. */
+function buildUserContent(prompt: string, attachments: GrainAttachment[], supportsImages: boolean): ContentBlock[] {
+  const attachmentContext = attachments.length ? `\n\nAttached material:\n${attachments.map(item => `- ${item.name} (${item.mediaType}, ${item.bytes} bytes) at ${item.storedPath}${item.kind === 'image' && !supportsImages ? ' — image retained; selected provider cannot receive vision input.' : ''}`).join('\n')}` : '';
+  const content: ContentBlock[] = [{ type: 'text', text: `${prompt}${attachmentContext}` }];
+  if (supportsImages) for (const item of attachments.filter(item => item.kind === 'image')) {
+    content.push({ type: 'image', media_type: item.mediaType, data: readFileSync(item.storedPath).toString('base64'), name: item.name });
+  }
+  return content;
+}
+
 // Wrap a provider stream so a stall between events rejects instead of hanging
 // forever. A plain flag checked inside `for await` never fires on a stalled
 // stream because the loop is blocked on a pending next().
@@ -215,10 +225,17 @@ export async function agentLoop(opts: AgentOpts): Promise<void> {
   journal.transition('running');
   setQuestionJournal(journal);
   const attachments: GrainAttachment[] = [];
-  for (const path of opts.attachments || []) {
-    const attachment = queueAttachment(journal.metadata.run_id, path);
-    attachments.push(attachment);
-    journal.append('attachment_queued', attachment as any);
+  try {
+    for (const path of opts.attachments || []) {
+      const attachment = queueAttachment(journal.metadata.run_id, path);
+      attachments.push(attachment);
+      journal.append('attachment_queued', attachment as any);
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    journal.append('provider_error', { error: message, phase: 'attachment_setup' });
+    journal.transition('failed', { error: message, phase: 'attachment_setup' });
+    throw error;
   }
   const gateway = new ToolGateway({
     autoApprove: Boolean(opts.autoApprove), allowDestructive: Boolean(opts.allowDestructive),
@@ -252,12 +269,7 @@ export async function agentLoop(opts: AgentOpts): Promise<void> {
   // Get initial prompt
   if (opts.prompt) {
     const capabilities = getModelCapabilities(provider.name, provider.model);
-    const attachmentContext = attachments.length ? `\n\nAttached material:\n${attachments.map(item => `- ${item.name} (${item.mediaType}, ${item.bytes} bytes) at ${item.storedPath}${item.kind === 'image' && !capabilities.supportsImages ? ' — image retained; selected provider cannot receive vision input.' : ''}`).join('\n')}` : '';
-    const prompt = `${opts.prompt}${attachmentContext}`;
-    const content: ContentBlock[] = [{ type: 'text', text: prompt }];
-    if (capabilities.supportsImages) for (const item of attachments.filter(item => item.kind === 'image')) {
-      content.push({ type: 'image', media_type: item.mediaType, data: readFileSync(item.storedPath).toString('base64'), name: item.name });
-    }
+    const content = buildUserContent(opts.prompt, attachments, capabilities.supportsImages);
     messages.push({ role: 'user', content });
     await addMessage(sessionId, 'user', content);
   } else if (messages.length === 0) {
@@ -269,8 +281,9 @@ export async function agentLoop(opts: AgentOpts): Promise<void> {
       renderer.info('Type a command to get started, or Ctrl+C to exit.');
       return agentLoop(opts);
     }
-    messages.push({ role: 'user', content: [{ type: 'text', text: input }] });
-    addMessage(sessionId, 'user', [{ type: 'text', text: input }]);
+    const content = buildUserContent(input, attachments, getModelCapabilities(provider.name, provider.model).supportsImages);
+    messages.push({ role: 'user', content });
+    addMessage(sessionId, 'user', content);
   }
 
   // Main agent loop - fluid execution
@@ -447,8 +460,9 @@ export async function agentLoop(opts: AgentOpts): Promise<void> {
         let nextInput = await renderer.userPrompt();
         while (nextInput !== null && !nextInput.trim()) nextInput = await renderer.userPrompt();
         if (nextInput === null) return; // stdin EOF
-        messages.push({ role: 'user', content: [{ type: 'text', text: nextInput }] });
-        addMessage(sessionId, 'user', [{ type: 'text', text: nextInput }]);
+        const content = buildUserContent(nextInput, attachments, getModelCapabilities(provider.name, provider.model).supportsImages);
+        messages.push({ role: 'user', content });
+        addMessage(sessionId, 'user', content);
         turnCount = 0; // Reset turn counter for new user request
         continue;
       }
@@ -608,8 +622,9 @@ export async function agentLoop(opts: AgentOpts): Promise<void> {
         while (nextInput !== null && !nextInput.trim()) nextInput = await renderer.userPrompt();
         if (nextInput === null) return; // stdin EOF
         messages = []; // Fresh context for new task
-        messages.push({ role: 'user', content: [{ type: 'text', text: nextInput }] });
-        addMessage(sessionId, 'user', [{ type: 'text', text: nextInput }]);
+        const content = buildUserContent(nextInput, attachments, getModelCapabilities(provider.name, provider.model).supportsImages);
+        messages.push({ role: 'user', content });
+        addMessage(sessionId, 'user', content);
         turnCount = 0;
         continue;
       }

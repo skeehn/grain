@@ -44,7 +44,9 @@ rm -rf "$DIST" && mkdir -p "$DIST"
 
 # Compile standalone executables; runtime users never need Node or Bun installed.
 for platform in darwin-arm64 darwin-x64 linux-arm64 linux-x64; do
-  bun build --compile --target="bun-${platform}" --outfile="${DIST}/grain-${platform}" src/cli.ts
+  target="bun-${platform}"
+  case "$platform" in *-x64) target="${target}-baseline";; esac
+  bun build --compile --minify --target="$target" --outfile="${DIST}/grain-${platform}" src/cli.ts
 done
 ok "Standalone platform binaries created (darwin-arm64, darwin-x64, linux-arm64, linux-x64)"
 

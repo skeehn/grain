@@ -3,7 +3,7 @@ import { RunEngine, RunJournal, eventHash, readRunEvents, replayRun, runDirector
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-describe('run event schema v2', () => {
+describe('run event schema v3', () => {
   test('persists pause, resume, steering, and cancellation commands', () => {
     const journal = RunJournal.create({ task: 'commands', cwd: process.cwd(), provider: 'test', model: 'test', policy_profile: 'default' });
     const engine = new RunEngine(journal); engine.dispatch({ type: 'start' }); engine.dispatch({ type: 'pause' });
@@ -17,6 +17,14 @@ describe('run event schema v2', () => {
   test('rejects invalid command transitions', () => {
     const engine = new RunEngine(RunJournal.create({ task: 'invalid', cwd: process.cwd(), provider: 'test', model: 'test', policy_profile: 'default' }));
     expect(() => engine.dispatch({ type: 'resume' })).toThrow('Cannot resume');
+  });
+  test('only accepts an answer for the active durable question', () => {
+    const journal = RunJournal.create({ task: 'question', cwd: process.cwd(), provider: 'test', model: 'test', policy_profile: 'default' });
+    const engine = new RunEngine(journal); engine.dispatch({ type: 'start' });
+    journal.append('user_questioned', { question_id: 'question-1', question: 'Proceed?', choices: ['yes', 'no'] }); journal.transition('waiting_input');
+    expect(() => engine.dispatch({ type: 'answer', questionId: 'wrong', answer: 'yes' })).toThrow('does not match');
+    engine.dispatch({ type: 'answer', questionId: 'question-1', answer: 'yes' });
+    expect(engine.state().pending_question).toBeUndefined(); expect(engine.state().status).toBe('running');
   });
   test('continues to read immutable schema-v1 journals', () => {
     const metadata = { run_id: `v1-${crypto.randomUUID()}`, task: 'legacy', cwd: process.cwd(), provider: 'test', model: 'test', policy_profile: 'default', created_at: new Date().toISOString() };
