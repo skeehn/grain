@@ -1,6 +1,7 @@
 import { blankFrame, putText } from './frame.js';
 import type { TerminalCapabilities, TuiFrame, TuiViewModel } from './types.js';
 import { mascotColor, mascotFrame } from './mascot.js';
+import { grainLogoColor, grainLogoFrame } from './logo.js';
 import { resolveTheme, type GrainTheme } from './theme.js';
 
 const clip = (value: string, width: number) => value.length <= width ? value : `${value.slice(0, Math.max(0, width - 1))}…`;
@@ -9,9 +10,11 @@ export function layoutRun(view: TuiViewModel, capabilities: TerminalCapabilities
   const { columns: width, rows: height } = capabilities; const frame = blankFrame(width, height);
   frame.cells.forEach(cell => { cell.style.background = theme.canvas; cell.style.foreground = theme.text; });
   const rice = mascotFrame(view.run.status, tick, capabilities.reducedMotion);
-  const header = ` GRAIN  ${rice}  ${view.run.status.toUpperCase()}  ${view.run.provider}/${view.run.model}`;
+  const logo = grainLogoFrame(view.run.status, tick, capabilities.reducedMotion);
+  const header = ` GRAIN ${logo}  ${view.run.status.toUpperCase()}  ${view.run.provider}/${view.run.model}`;
   putText(frame, 0, 0, header.padEnd(width), { foreground: theme.accent, background: theme.panel, bold: true });
-  putText(frame, 0, 8, rice, { foreground: mascotColor(view.run.status, theme), background: theme.panel, bold: true });
+  putText(frame, 0, 7, logo, { foreground: grainLogoColor(view.run.status, theme), background: theme.panel, bold: true });
+  putText(frame, 0, 16, rice, { foreground: mascotColor(view.run.status, theme), background: theme.panel, bold: true });
   putText(frame, 1, 1, clip(view.run.task, width - 2), { foreground: theme.muted, background: theme.canvas });
   const footer = width < 80 ? ' t theme  p pause  q quit ' : ' t theme · p pause/resume · q quit · Ctrl-C cancel ';
   putText(frame, height - 1, 0, footer.padEnd(width), { foreground: theme.muted, background: theme.panel });
