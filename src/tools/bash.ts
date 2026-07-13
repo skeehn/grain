@@ -64,7 +64,7 @@ const MAX_OUTPUT = 50_000;
 const DEFAULT_TIMEOUT = 60_000;
 
 function rejectUnboundedWorkspaceScan(command: string, cwd: string): string | undefined {
-  const normalized = command.replace(/\\s+/g, ' ');
+  const normalized = command.replace(/\s+/g, ' ');
   if (!/\b(find|grep|rg)\b/i.test(normalized)) return;
   const absolutePaths = normalized.match(/\/(?:Users|home|Volumes|var|tmp)(?:\/[^\s'\"]*)?/gi) || [];
   const outside = absolutePaths.some(path => {
@@ -73,9 +73,6 @@ function rejectUnboundedWorkspaceScan(command: string, cwd: string): string | un
   });
   if (outside) {
     return 'Refusing an unbounded search outside the workspace. Use workspace_scan, search, or grep with a repo-relative path and a limit.';
-  }
-  if (/\b(find|grep|rg)\b[^\n]*(?:\/Users\/[^\s]+|\/home\/[^\s]+)/i.test(normalized)) {
-    return 'Refusing a home-directory search. Grain searches the current repository only.';
   }
 }
 
