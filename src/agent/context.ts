@@ -138,13 +138,13 @@ export async function engramRetrieve(query: string): Promise<string> {
 export async function engramStore(fact: string, tags: string[] = ['grain-auto']): Promise<void> {
   // Try HTTP first
   try {
-    await fetch(`${ENGRAM_HTTP}/add`, {
+    const response = await fetch(`${ENGRAM_HTTP}/add`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ body: fact, tags, node_type: 'fact' }),
       signal: AbortSignal.timeout(4000),
     });
-    return;
+    if (response.ok) return;
   } catch { /* fall through to CLI */ }
 
   // Fallback: CLI subprocess
