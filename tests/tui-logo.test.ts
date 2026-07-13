@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { GRAIN_LOGO_WIDTH, grainLogoFrame, grainLogoState } from '../src/tui/logo.js';
+import { GRAIN_LOGO_HEIGHT, GRAIN_LOGO_WIDTH, grainLogoFrame, grainLogoSprite, grainLogoState } from '../src/tui/logo.js';
 
 describe('Grain rice logo', () => {
   test('maps durable run states to logo states', () => {
@@ -21,5 +21,11 @@ describe('Grain rice logo', () => {
   test('animates active states and freezes in reduced motion mode', () => {
     expect(grainLogoFrame('running', 0)).not.toBe(grainLogoFrame('running', 1));
     expect(grainLogoFrame('running', 0, true)).toBe(grainLogoFrame('running', 1, true));
+  });
+
+  test('keeps the full ASCII riceball sprite rectangular', () => {
+    const sprite = grainLogoSprite('running', 2, true);
+    expect(sprite).toHaveLength(GRAIN_LOGO_HEIGHT);
+    sprite.forEach(line => expect([...line]).toHaveLength(GRAIN_LOGO_WIDTH));
   });
 });
