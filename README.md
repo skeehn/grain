@@ -69,7 +69,7 @@ grain update
 
 ## Commands
 
-```
+```text
 grain                         open the workspace
 grain "task"                  open the workspace with a task
 grain update                  update Grain

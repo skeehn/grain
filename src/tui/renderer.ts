@@ -4,6 +4,12 @@ import type { AgentMessage, TaskGraph } from '../orchestration/types.js';
 import type { ContextManifest } from '../context/types.js';
 
 const BAYER = [[0, 8, 2, 10], [12, 4, 14, 6], [3, 11, 1, 9], [15, 7, 13, 5]] as const;
+const BAYER8 = [
+  [0, 32, 8, 40, 2, 34, 10, 42], [48, 16, 56, 24, 50, 18, 58, 26],
+  [12, 44, 4, 36, 14, 46, 6, 38], [60, 28, 52, 20, 62, 30, 54, 22],
+  [3, 35, 11, 43, 1, 33, 9, 41], [51, 19, 59, 27, 49, 17, 57, 25],
+  [15, 47, 7, 39, 13, 45, 5, 37], [63, 31, 55, 23, 61, 29, 53, 21],
+] as const;
 const color = process.stdout.isTTY && !process.env.NO_COLOR;
 const motion = process.stdout.isTTY && process.env.GRAIN_REDUCED_MOTION !== '1';
 const tone = {
@@ -23,12 +29,20 @@ export function orderedDither(width: number, phase = 0, level = 8): string {
   return Array.from({ length: width }, (_, x) => BAYER[phase % 4][x % 4] < level ? '█' : '░').join('');
 }
 
+/** Render a horizontally scrolling 8×8 Bayer strip with a 0–64 density level. */
+export function bayerDither(width: number, phase = 0, level = 32): string {
+  const row = BAYER8[((phase % 8) + 8) % 8];
+  const threshold = Math.max(0, Math.min(64, level));
+  return Array.from({ length: width }, (_, x) => row[(x + Math.floor(phase / 8)) % 8] < threshold ? '█' : '░').join('');
+}
+
 export function banner(subtitle = 'coding agent · memory in the loop'): void {
-  const width = Math.min(34, Math.max(24, (process.stdout.columns || 80) - 4));
-  const rows = [3, 7, 11, 15].map((level, row) => orderedDither(width, row, level));
-  sink().write(`\n${tone.grain(rows[0])}\n`);
-  sink().write(`${tone.grain(rows[1].slice(0, 8))}  ${chalk.bold('G R A I N')}  ${tone.grain(rows[1].slice(19))}\n`);
-  sink().write(`${tone.quiet(rows[2])}\n${tone.quiet(rows[3])}\n${tone.quiet(subtitle)}\n\n`);
+  const width = Math.min(64, Math.max(36, (process.stdout.columns || 80) - 4));
+  const line = '─'.repeat(width);
+  sink().write(`\n${tone.grain(`╭${line}╮`)}\n`);
+  sink().write(`${tone.grain('│')}  ${tone.grain('GRAIN')} ${tone.quiet('· repository workspace agent')}${' '.repeat(Math.max(0, width - 36))}${tone.grain('│')}\n`);
+  sink().write(`${tone.grain('│')}  ${tone.quiet(subtitle.padEnd(width - 2).slice(0, width - 2))}${tone.grain('│')}\n`);
+  sink().write(`${tone.grain(`╰${line}╯`)}\n\n`);
 }
 
 function stopCurrent(): void {
@@ -41,17 +55,18 @@ export const stream = streamText;
 
 export function toolStart(name: string, input: any): void {
   stopCurrent();
-  sink().write(`\n${tone.grain('┌')} ${chalk.bold(name)} ${tone.quiet(input?._streaming ? 'running' : summarizeInput(name, input))}\n`);
+  const detail = input?._streaming ? 'running' : summarizeInput(name, input);
+  sink().write(`\n${tone.grain('◆')} ${chalk.bold(name)} ${detail ? tone.quiet(`· ${detail}`) : ''}\n`);
 }
 export const tool = toolStart;
 
 export function toolResult(output: string, isError = false): void {
-  const max = Math.max(6, Math.min(24, Math.floor((process.stdout.rows || 30) * .6)));
+  const max = Math.max(6, Math.min(18, Math.floor((process.stdout.rows || 30) * .45)));
   const lines = output.split('\n');
   const shown = lines.slice(0, max);
   if (lines.length > max) shown.push(`… ${lines.length - max} more lines`);
   const paint = isError ? tone.danger : tone.quiet;
-  sink().write(shown.map(line => paint(`│ ${line}`)).join('\n') + `\n${tone.grain('└')}\n`);
+  sink().write(shown.map(line => paint(`  ${line}`)).join('\n') + `\n${tone.grain(isError ? '×' : '·')} ${isError ? 'tool failed' : 'done'}\n`);
 }
 export function result(output: unknown, isError?: boolean): void {
   toolResult(typeof output === 'string' ? output : JSON.stringify(output, null, 2), isError);
@@ -105,7 +120,10 @@ export function spinner(label = 'Thinking'): SpinnerHandle {
   }
   let frame = 0;
   let stopped = false;
-  const render = () => sink().write(`\r\x1b[K${tone.grain(orderedDither(8, frame % 4, 4 + ((frame++ * 3) % 12)))}  ${tone.quiet(label)}`);
+  const render = () => {
+    const level = 24 + Math.round((Math.sin(frame / 3) + 1) * 16);
+    sink().write(`\r\x1b[K${tone.grain(bayerDither(12, frame++, level))}  ${tone.quiet(label)}`);
+  };
   render();
   const timer = motion ? setInterval(render, 110) : undefined;
   timer?.unref();

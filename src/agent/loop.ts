@@ -517,6 +517,7 @@ export async function agentLoop(opts: AgentOpts): Promise<void> {
             ? block.input.evidence.filter((item: unknown) => typeof item === 'string' && item.trim()) : [];
           if (evidence.length === 0) {
             renderer.warn('Finish rejected: verification evidence is required');
+            opts.onEvent?.({ type: 'verification', passed: false, detail: 'verification evidence is required' });
             toolResults.push({ type: 'tool_result', tool_use_id: block.id,
               content: 'finish requires at least one concrete verification artifact or command result', is_error: true });
             continue;

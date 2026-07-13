@@ -3,7 +3,7 @@ import { getWorkspaceFS } from '../workspace/index.js';
 
 export const grepTool = {
   name: 'grep',
-  description: 'Search file contents using ripgrep. Returns matches with file:line:content format.',
+  description: 'Search text inside the current repository only. Use a repo-relative path and a narrow file_glob; results are capped.',
   input_schema: {
     type: 'object',
     properties: {

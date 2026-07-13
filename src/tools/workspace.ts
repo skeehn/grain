@@ -1,6 +1,5 @@
 // Workspace scanner - understand project structure
-import { readdirSync, statSync, readFileSync } from 'fs';
-import { join, relative } from 'path';
+import { relative } from 'path';
 import { getWorkspaceFS } from '../workspace/index.js';
 
 export const workspaceScanTool = {
@@ -36,7 +35,7 @@ export async function executeWorkspaceScan(input: { path?: string; max_depth?: n
   let rootPath: string;
   try { rootPath = getWorkspaceFS().resolve(input.path || '.', true); }
   catch (error: any) { return { content: `Workspace scan failed: ${error.message}` }; }
-  const maxDepth = input.max_depth || 3;
+  const maxDepth = Math.min(5, Math.max(1, input.max_depth || 3));
 
   const result: ScanResult = {
     root: rootPath,
@@ -50,73 +49,34 @@ export async function executeWorkspaceScan(input: { path?: string; max_depth?: n
     },
   };
 
-  const ignorePatterns = [
-    'node_modules',
-    '.git',
-    'dist',
-    'build',
-    'target',
-    '.next',
-    'coverage',
-    '__pycache__',
-    '.venv',
-    'venv',
-  ];
-
-  function scanDir(dirPath: string, depth: number) {
-    if (depth > maxDepth) return;
-
-    let entries: string[];
-    try {
-      entries = readdirSync(dirPath);
-    } catch (err) {
-      // Ignore permission errors on the directory itself
-      return;
+  // LocalWorkspaceFS.list applies .gitignore/.grainignore and skips dependency,
+  // build, binary, and symlink trees. It also keeps this tool aligned with read/search.
+  const files = getWorkspaceFS().list(input.path || '.', maxDepth);
+  const maxFiles = 5000;
+  const visibleFiles = files.slice(0, maxFiles);
+  const directories = new Set<string>();
+  for (const relativePath of visibleFiles) {
+    result.stats.totalFiles++;
+    const scanRoot = relative(getWorkspaceFS().root, rootPath) || '.';
+    const scannedPath = relative(scanRoot, relativePath) || relativePath;
+    const parts = scannedPath.split(/[\\/]/);
+    for (let i = 1; i < parts.length; i++) directories.add(parts.slice(0, i).join('/'));
+    result.structure.push(`${'  '.repeat(Math.max(0, parts.length - 1))}📄 ${parts.at(-1)}`);
+    const ext = parts.at(-1)?.split('.').pop() || '';
+    result.stats.filesByExt[ext] = (result.stats.filesByExt[ext] || 0) + 1;
+    const lower = parts.at(-1)?.toLowerCase() || '';
+    if (parts.length === 1 && lower === 'package.json') result.keyFiles.package = relativePath;
+    if (lower.startsWith('readme') && !result.keyFiles.readme) result.keyFiles.readme = relativePath;
+    if (lower.includes('config') || lower.endsWith('.json') || lower.endsWith('.yaml') || lower.endsWith('.yml')) {
+      result.keyFiles.config = result.keyFiles.config || [];
+      if (result.keyFiles.config.length < 20) result.keyFiles.config.push(relativePath);
     }
-
-    for (const entry of entries) {
-      if (ignorePatterns.includes(entry)) continue;
-
-      const fullPath = join(dirPath, entry);
-      const relativePath = relative(rootPath, fullPath);
-
-      let stat;
-      try {
-        stat = statSync(fullPath);
-      } catch (err) {
-        // Skip unreadable entries (broken symlinks, permission errors) but keep scanning
-        continue;
-      }
-
-      if (stat.isDirectory()) {
-        result.stats.totalDirs++;
-        result.structure.push(`${'  '.repeat(depth)}📁 ${entry}/`);
-        scanDir(fullPath, depth + 1);
-      } else {
-        result.stats.totalFiles++;
-        result.structure.push(`${'  '.repeat(depth)}📄 ${entry}`);
-
-        // Track extensions
-        const ext = entry.split('.').pop() || '';
-        result.stats.filesByExt[ext] = (result.stats.filesByExt[ext] || 0) + 1;
-
-        // Detect key files
-        const lower = entry.toLowerCase();
-        if (lower === 'package.json') result.keyFiles.package = relativePath;
-        if (lower.startsWith('readme')) result.keyFiles.readme = relativePath;
-        if (lower.includes('config') || lower.includes('.json') || lower.includes('.yaml')) {
-          result.keyFiles.config = result.keyFiles.config || [];
-          result.keyFiles.config.push(relativePath);
-        }
-        if (lower.includes('test') || lower.includes('spec')) {
-          result.keyFiles.tests = result.keyFiles.tests || [];
-          result.keyFiles.tests.push(relativePath);
-        }
-      }
+    if (lower.includes('test') || lower.includes('spec')) {
+      result.keyFiles.tests = result.keyFiles.tests || [];
+      result.keyFiles.tests.push(relativePath);
     }
   }
-
-  scanDir(rootPath, 0);
+  result.stats.totalDirs = directories.size;
 
   // Detect languages from extensions
   const langMap: Record<string, string> = {
@@ -160,8 +120,9 @@ export async function executeWorkspaceScan(input: { path?: string; max_depth?: n
 
   output += `\n📂 Structure (top ${maxDepth} levels):\n`;
   output += result.structure.slice(0, 50).join('\n');
-  if (result.structure.length > 50) {
-    output += `\n... (${result.structure.length - 50} more items)`;
+  if (files.length > 50) {
+    const shown = Math.min(files.length, maxFiles);
+    output += `\n... (${files.length > maxFiles ? `${files.length - maxFiles} skipped by safety cap; ` : ''}${Math.max(0, shown - 50)} more items)`;
   }
 
   output += `\n\n📈 File types:\n`;

@@ -35,11 +35,12 @@ export function selectProvider(providers: ProviderSetup[], choice: string): Prov
 }
 
 export async function detectOllama(fetcher: typeof fetch = fetch): Promise<boolean> {
+  const controller = new AbortController(); const timer = setTimeout(() => controller.abort(), 250);
   try {
-    const controller = new AbortController(); const timer = setTimeout(() => controller.abort(), 250);
     const response = await fetcher(`${process.env.OLLAMA_HOST || 'http://127.0.0.1:11434'}/api/tags`, { signal: controller.signal });
-    clearTimeout(timer); return response.ok;
-  } catch { return false; }
+    return response.ok;
+  } catch { return false;
+  } finally { clearTimeout(timer); }
 }
 
 /** Opens a provider dashboard only after the workspace explicitly asks the user. */

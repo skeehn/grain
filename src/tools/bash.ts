@@ -63,6 +63,19 @@ async function executeBashBridge(
 const MAX_OUTPUT = 50_000;
 const DEFAULT_TIMEOUT = 60_000;
 
+function rejectUnboundedWorkspaceScan(command: string, cwd: string): string | undefined {
+  const normalized = command.replace(/\s+/g, ' ');
+  if (!/\b(find|grep|rg)\b/i.test(normalized)) return;
+  const absolutePaths = normalized.match(/\/(?:Users|home|Volumes|var|tmp)(?:\/[^\s'\"]*)?/gi) || [];
+  const outside = absolutePaths.some(path => {
+    const candidate = path.replace(/[),;]+$/, '');
+    return candidate !== cwd && !candidate.startsWith(`${cwd}/`);
+  });
+  if (outside) {
+    return 'Refusing an unbounded search outside the workspace. Use workspace_scan, search, or grep with a repo-relative path and a limit.';
+  }
+}
+
 // ── Persistent shell session ───────────────────────────────────────────────────
 
 interface ShellSession {
@@ -167,7 +180,10 @@ function runInShell(
     session.proc.stderr.on('data', onErrData);
 
     // Wrap: run command, capture exit, emit sentinel on its own line
-    const wrapped = `${command}\n__gc=$?; echo "${sentinel}:$__gc"\n`;
+    // Prefix the sentinel with a newline: commands such as `printf grain`
+    // do not terminate their output with one, so a plain echo would be
+    // concatenated to the command output and never match as a whole line.
+    const wrapped = `${command}\n__gc=$?; printf '\\n%s:%s\\n' '${sentinel}' "$__gc"\n`;
     session.proc.stdin.write(wrapped);
   });
 }
@@ -208,6 +224,8 @@ export async function executeBash(
   // ─────────────────────────────────────────────────────────────────────────
 
   const workdir = cwd || process.cwd();
+  const blocked = rejectUnboundedWorkspaceScan(input.command, workdir);
+  if (blocked) return { content: blocked, is_error: true };
   const session = getOrCreateShell(workdir);
 
   const { output, exitCode } = await runInShell(
