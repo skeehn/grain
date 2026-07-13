@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { GRAIN_LOGO_HEIGHT, GRAIN_LOGO_WIDTH, grainLogoFrame, grainLogoSprite, grainLogoState } from '../src/tui/logo.js';
+import { GRAIN_LOGO_HEIGHT, GRAIN_LOGO_WIDTH, grainLogoColor, grainLogoFrame, grainLogoSprite, grainLogoState } from '../src/tui/logo.js';
 
 describe('Grain rice logo', () => {
   test('maps durable run states to logo states', () => {
@@ -27,5 +27,15 @@ describe('Grain rice logo', () => {
     const sprite = grainLogoSprite('running', 2, true);
     expect(sprite).toHaveLength(GRAIN_LOGO_HEIGHT);
     sprite.forEach(line => expect([...line]).toHaveLength(GRAIN_LOGO_WIDTH));
+  });
+
+  test('maps logo states to theme colors', () => {
+    const theme = { success: 'green', danger: 'red', warning: 'yellow', evidence: 'cyan' } as any;
+    expect(grainLogoColor('succeeded', theme)).toBe('green');
+    expect(grainLogoColor('failed', theme)).toBe('red');
+    expect(grainLogoColor('waiting_approval', theme)).toBe('yellow');
+    expect(grainLogoColor('waiting_input', theme)).toBe('yellow');
+    expect(grainLogoColor('needs_reconciliation', theme)).toBe('yellow');
+    expect(grainLogoColor('running', theme)).toBe('cyan');
   });
 });

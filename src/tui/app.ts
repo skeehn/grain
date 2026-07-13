@@ -30,7 +30,7 @@ export async function runTui(options: TuiAppOptions = {}): Promise<void> {
     try {
       if (key === 'q') { cleanup(); return; }
       const current = engine.state();
-      if (current.status === 'waiting_input' && current.pending_question && /^[1-9]$/.test(key)) {
+      if (current.status === 'waiting_input' && current.pending_question && /^[1-6]$/.test(key)) {
         const choice = current.pending_question.choices[Number(key) - 1];
         if (choice) engine.dispatch({ type: 'answer', questionId: current.pending_question.id, answer: choice });
       }

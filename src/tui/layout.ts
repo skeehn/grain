@@ -19,7 +19,7 @@ export function layoutRun(view: TuiViewModel, capabilities: TerminalCapabilities
   putText(frame, 1, Math.max(1, width - 20), `${rice}  ${view.run.elapsedMs > 0 ? `${Math.round(view.run.elapsedMs / 1000)}s` : 'ready'}`, logoColor, 19);
   const railLevel = view.run.status === 'succeeded' ? 8 : view.run.status === 'failed' ? 2 : 5 + (tick % 4);
   putText(frame, 2, 1, ditherRail(Math.max(8, width - 2), tick, railLevel), { foreground: theme.evidence, background: theme.canvas });
-  const bodyTop = 4; const footerRows = view.question ? 8 : 3; const bodyHeight = Math.max(1, height - bodyTop - footerRows);
+  const bodyTop = 4; const footerRows = view.question ? 10 : 3; const bodyHeight = Math.max(1, height - bodyTop - footerRows);
   if (width < 80) {
     putText(frame, bodyTop - 1, 1, 'TIMELINE', { foreground: theme.accent, bold: true });
     view.timeline.slice(-bodyHeight).forEach((item, index) => putText(frame, bodyTop + index, 1,
@@ -45,7 +45,7 @@ export function layoutRun(view: TuiViewModel, capabilities: TerminalCapabilities
   const budget = view.context.budgetTokens ? `${view.context.usedTokens}/${view.context.budgetTokens}` : 'not recorded';
   putText(frame, row++, right, clip(`CONTEXT ${budget} · ${view.context.sources} sources`, rightWidth), { foreground: theme.muted });
   putText(frame, row, right, clip(`VERIFY ${view.diagnostics.passed} pass · ${view.diagnostics.failed} fail`, rightWidth), { foreground: view.diagnostics.failed ? theme.danger : theme.success });
-  if (view.question) renderQuestion(frame, view.question, theme, height - 7);
+  if (view.question) renderQuestion(frame, view.question, theme, height - 10);
   const footer = width < 80 ? ' t theme · p pause · q quit ' : ' t theme · p pause/resume · q quit · Ctrl-C cancel ';
   putText(frame, height - 2, 0, footer.padEnd(width), { foreground: theme.muted, background: theme.panel });
   putText(frame, height - 1, 0, ' › ', { foreground: theme.accent, background: theme.panel, bold: true });

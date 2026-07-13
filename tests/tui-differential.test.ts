@@ -33,4 +33,14 @@ describe('differential TUI', () => {
     expect(frame.cells.map(cell => cell.grapheme).join('')).toContain('DECISION');
     expect(frame.cells.map(cell => cell.grapheme).join('')).toContain('1. Yes');
   });
+
+  test('renders all six choices without footer overlap', () => {
+    const events: any[] = [{ type: 'run_created', sequence: 1, payload: { run_id: 'q6', task: 'ship the change', provider: 'test', model: 'model', created_at: new Date(0).toISOString() } },
+      { type: 'status_changed', sequence: 2, payload: { status: 'waiting_input' } },
+      { type: 'user_questioned', sequence: 3, payload: { question_id: 'q6', question: 'Pick one', choices: ['A', 'B', 'C', 'D', 'E', 'F'] } }];
+    const view = projectRun(events as any, 1000); const frame = layoutRun(view, capabilities);
+    const text = frame.cells.map(cell => cell.grapheme).join('');
+    expect(text).toContain('1. A');
+    expect(text).toContain('6. F');
+  });
 });
