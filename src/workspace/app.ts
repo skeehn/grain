@@ -61,7 +61,9 @@ async function handleCommand(command: ComposerInput, state: { mode: WorkspaceMod
     case 'plan': state.mode = 'plan'; renderer.success('Plan mode is on. Grain will explain the approach before changing work.'); return 'continue';
     case 'mode': {
       if (!['ask', 'plan', 'execute'].includes(command.argument)) { renderer.info('Usage: /mode ask|plan|execute'); return 'continue'; }
-      state.mode = command.argument as WorkspaceMode; renderer.success(`Mode: ${state.mode}.`); return 'continue';
+      state.mode = command.argument as WorkspaceMode;
+      renderer.success(`Mode: ${state.mode}.${state.mode === 'execute' ? ' Tool approvals are now automatic.' : ''}`);
+      return 'continue';
     }
     case 'model': if (!command.argument) renderer.info('Usage: /model <name>'); else { state.model = command.argument; renderer.success(`Model: ${state.model}.`); } return 'continue';
     case 'theme': {
@@ -117,11 +119,18 @@ export async function runWorkspace(options: WorkspaceOptions = {}): Promise<void
       if (item.type === 'tool') feed.push(`working · ${item.name}`);
       if (item.type === 'approval') feed.push(`${item.decision} · ${item.name}`);
       if (item.type === 'verification') feed.push(item.passed ? 'verification passed' : 'verification failed');
+      if (item.type === 'status' && item.status === 'failed') feed.push(`failed · ${item.detail || 'task failed'}`);
     };
-    renderer.info(`WORK FEED  ${(feed.at(-1) || 'starting')} · ${state.mode}`);
-    await agentLoop({ prompt: composer.argument, resume: true, oneShot: true, provider: options.provider, model: state.model,
-      autoApprove: options.autoApprove || state.mode === 'execute', concise: options.concise, maxTurns: options.maxTurns,
-      attachments, workspaceKey: workspaceKey(), mode: state.mode, approvedRisks: state.approvedRisks, onEvent: event });
+    renderer.info(`WORK FEED  starting · ${state.mode}`);
+    try {
+      await agentLoop({ prompt: composer.argument, resume: true, oneShot: true, provider: options.provider, model: state.model,
+        autoApprove: options.autoApprove || state.mode === 'execute', concise: options.concise, maxTurns: options.maxTurns,
+        attachments, workspaceKey: workspaceKey(), mode: state.mode, approvedRisks: state.approvedRisks, onEvent: event });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (!feed.some(item => item.startsWith('failed ·'))) feed.push(`failed · ${message}`);
+      renderer.error(`Task failed: ${message}`);
+    }
     if (!process.stdin.isTTY) return;
     workspaceHeader(state.mode, feed.at(-1) || 'ready');
   }
