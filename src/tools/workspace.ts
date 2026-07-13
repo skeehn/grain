@@ -1,5 +1,4 @@
 // Workspace scanner - understand project structure
-import { statSync } from 'fs';
 import { relative } from 'path';
 import { getWorkspaceFS } from '../workspace/index.js';
 
@@ -57,14 +56,12 @@ export async function executeWorkspaceScan(input: { path?: string; max_depth?: n
   const visibleFiles = files.slice(0, maxFiles);
   const directories = new Set<string>();
   for (const relativePath of visibleFiles) {
-    const fullPath = getWorkspaceFS().resolve(relativePath, true);
-    let stat;
-    try { stat = statSync(fullPath); } catch { continue; }
-    if (!stat.isFile()) continue;
     result.stats.totalFiles++;
-    const parts = relativePath.split('/');
+    const scanRoot = relative(getWorkspaceFS().root, rootPath) || '.';
+    const scannedPath = relative(scanRoot, relativePath) || relativePath;
+    const parts = scannedPath.split(/[\\/]/);
     for (let i = 1; i < parts.length; i++) directories.add(parts.slice(0, i).join('/'));
-    result.structure.push(`${'  '.repeat(Math.max(0, parts.length - 1))}📄 ${relativePath}`);
+    result.structure.push(`${'  '.repeat(Math.max(0, parts.length - 1))}📄 ${parts.at(-1)}`);
     const ext = parts.at(-1)?.split('.').pop() || '';
     result.stats.filesByExt[ext] = (result.stats.filesByExt[ext] || 0) + 1;
     const lower = parts.at(-1)?.toLowerCase() || '';
@@ -124,7 +121,8 @@ export async function executeWorkspaceScan(input: { path?: string; max_depth?: n
   output += `\n📂 Structure (top ${maxDepth} levels):\n`;
   output += result.structure.slice(0, 50).join('\n');
   if (files.length > 50) {
-    output += `\n... (${files.length > maxFiles ? `${files.length - maxFiles} skipped by safety cap; ` : ''}${Math.max(0, files.length - 50)} more items)`;
+    const shown = Math.min(files.length, maxFiles);
+    output += `\n... (${files.length > maxFiles ? `${files.length - maxFiles} skipped by safety cap; ` : ''}${Math.max(0, shown - 50)} more items)`;
   }
 
   output += `\n\n📈 File types:\n`;
