@@ -36,6 +36,13 @@ describe('session store', () => {
     expect(await getLastSession()).toBe(a);
   });
 
+  test('resumes the most recent session in the current workspace only', async () => {
+    const projectA = await createSession('a', '/tmp/project-a');
+    const projectB = await createSession('b', '/tmp/project-b');
+    expect(await getLastSession('/tmp/project-a')).toBe(projectA);
+    expect(await getLastSession('/tmp/project-b')).toBe(projectB);
+  });
+
   test('messages are capped at 100 per session', async () => {
     const id = await createSession('cap');
     for (let i = 0; i < 105; i++) {

@@ -53,6 +53,7 @@ interface ParsedArgs {
   engramSubcmd?: 'stats' | 'search' | 'list' | 'add';
   engramArg?: string;
   prompt?: string;
+  printMode: boolean;
   autoApprove: boolean;
   concise: boolean;
   model?: string;
@@ -74,7 +75,7 @@ interface ParsedArgs {
 
 export function parseArgs(argv: string[]): ParsedArgs {
   const args = argv.slice(2);
-  const result: ParsedArgs = { autoApprove: false, concise: false, tbBridge: false, reflect: false, allowDestructive: false, classic: false, noAltScreen: false, attachments: [] };
+  const result: ParsedArgs = { autoApprove: false, concise: false, tbBridge: false, reflect: false, allowDestructive: false, classic: false, noAltScreen: false, printMode: false, attachments: [] };
   const promptParts: string[] = [];
 
   let i = 0;
@@ -162,7 +163,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
       }
     }
 
-    if (arg === '-p' || arg === '--prompt')         { result.prompt = args[++i]; }
+    if (arg === '-p' || arg === '--prompt')         { result.prompt = args[++i]; result.printMode = true; }
     else if (arg === '-y' || arg === '--yes')        { result.autoApprove = true; }
     else if (arg === '--concise' || arg === '-c')    { result.concise = true; }
     else if (arg === '--model')                      { result.model = args[++i]; }
@@ -650,92 +651,26 @@ async function handleInit(): Promise<void> {
 
 function showHelp(): void {
   console.log(`
-${bold(`grain v${GRAIN_VERSION}`)} — self-improving AI coding agent
+${bold(`grain v${GRAIN_VERSION}`)} — your coding workspace
 
-${bold('USAGE')}
-  grain [task]                 run a task interactively
-  grain "do something"         one-shot inline task
-  grain -p "task" --yes        fully automated (no prompts)
+  grain                         open your workspace
+  grain "do something"           start a workspace with a task
+  grain update                   install the latest release
 
-${bold('FLAGS')}
-  -y, --yes                    auto-approve all actions
-  -c, --concise                shorter output, fewer tokens
-  --provider <name>            override provider for this run
-  --model <id>                 override model for this run
-                               aliases: pool, haiku, sonnet, opus
-  -h, --help                   show this help
-  -v, --version                show version
-  --allow-destructive          explicitly allow destructive tools inside the workspace
-  --classic                    use stable line-oriented output
-  --no-alt-screen              keep full-screen TUI in the current terminal buffer
-  --theme field|studio|arcade|system choose TUI theme
-  --density compact|comfortable choose TUI information density
-  --attach <path>             attach code/text or a supported image to this run
+Your first launch connects a provider in the conversation. Grain remembers the
+current repository, your sessions, theme, and approved tools for the session.
 
-${bold('COMMANDS')}
-  grain init                   interactive setup wizard
-  grain status                 check provider, engram, config
-  grain update                 update grain to latest version
-  grain tui                    inspect the latest run in the differential TUI
-  grain tui --run <id>         inspect a specific journaled run
-  grain tui --resume <id>      resume viewing a specific journaled run
-  grain lab [--run <id>]       open the local visual workbench
-  /theme field|studio|arcade|system change Grain's persistent visual mode
-  grain runs list              list event-sourced runs
-  grain runs inspect <id>      validate and replay a run journal
-  grain runs export <id> <file> export a reproducible trajectory
-  grain runs context <id>       inspect exactly what entered the model budget
-  grain learning list          inspect verified learning ledger
-  grain learning show <id>     show evidence and promotion status
-  grain learning validate <id> <run-id> validate and automatically promote
-  grain agents pair <task>     create a durable driver/navigator task graph
-  grain agents plan <task>     create independently reviewed implementation plan
-  grain agents swarm <task>    run parallel scouts and an isolated writer
-  grain agents review-panel <task> run correctness, security, test, and performance panel
-  grain agents repair-loop <task> run bounded evidence-gated repair attempts
-  grain agents research <task> create a read-only research and critique graph
-  grain agents show <id>       inspect agent authority, dependencies, and state
-  grain agents execute <id>    run ready tasks with durable leases and recovery
-  grain agents merge <id>      apply a fully reviewed verified driver patch
-  grain agents watch <id>      interactive graph controls: select, steer, cancel, refresh
-  grain agents dashboard <id>  show graph, leases, recovery, and mailbox state
-  grain agents cancel <id> <task-id> request cooperative cancellation
-  grain wiki build             build/update repository wiki provenance
-  grain wiki search <query>    search repository wiki
-  grain wiki verify            fail on stale or invalid wiki sources
-  grain wiki serve [port]      serve read-only wiki on localhost
-  grain config                 show current config
-  grain config set provider <name>         set provider
-  grain config set model <id>              set model override
-  grain config set key <KEY> <value>       save API key to ~/.grain/.env
-  grain config set engram_db <path>        set engram database path
-  grain config reset                       restore defaults
+Inside Grain, type ${bold('/help')} for plans, files, diffs, wiki, history, agents,
+attachments, models, settings, and themes. Grain asks before every write or
+risky action by default.
 
-${bold('PROVIDERS')}
-  bedrock     AWS Bedrock (Haiku/Sonnet/Opus — smart routing)
-  anthropic   Direct Anthropic API  ANTHROPIC_API_KEY
-  openrouter  OpenRouter            OPENROUTER_API_KEY
-  groq        Groq                  GROQ_API_KEY
-  ollama      Local Ollama          no key needed
+${bold('AUTOMATION')}
+  grain -p "task" --yes             non-interactive script/CI task
+  --provider <name> --model <id>   one-run override
+  --attach <path>                  attach text/code/image material
 
-${bold('EXAMPLES')}
-  grain "explain the architecture of this project"
-  grain --yes "add unit tests for src/parser.ts"
-  grain --provider anthropic "refactor this to use async/await"
-  grain --provider openrouter --model pool "fix and test this repo"
-  grain --provider groq --model qwen/qwen3-32b "fix and test this repo"
-  grain config set key ANTHROPIC_API_KEY sk-ant-abc123
-  grain config set provider anthropic
-
-${bold('CONFIG')}    ~/.grain/config.json
-${bold('KEYS')}      ~/.grain/.env       ${dim('(auto-loaded, never exported to shell)')}
-${bold('SKILLS')}    ~/.grain/skills/
-
-${bold('grain skills')}               List all skills
-${bold('grain skills view <name>')}   Show a skill's content
-${bold('grain skills add <name>')}    Create a new skill (interactive)
-${bold('grain skills delete <name>')} Remove a skill
-${bold('SESSIONS')}  ~/.grain/sessions.json
+Legacy expert commands (${dim('runs, wiki, agents, lab, config')}) remain available
+for scripts and diagnostics.
 `);
 }
 
@@ -1009,8 +944,9 @@ async function main(): Promise<void> {
     return;
   }
 
-  // Startup: show welcome on first ever run
-  if (!parsed.prompt) showWelcomeIfNeeded();
+  // The workspace owns first-run guidance. Keep the legacy banner only for
+  // non-interactive print mode, where there is no conversational setup.
+  if (parsed.printMode && !parsed.prompt) showWelcomeIfNeeded();
 
   // Silently ensure engram is running (non-blocking)
   ensureEngramRunning().catch(() => { /* never fails grain */ });
@@ -1034,6 +970,7 @@ async function main(): Promise<void> {
       allowDestructive: parsed.allowDestructive,
       benchmark: parsed.tbBridge,
       attachments: parsed.attachments,
+      workspace: !parsed.printMode,
     });
 
     // Signal done to TB bridge

@@ -8,9 +8,11 @@ import type { Message } from '../providers/types.js';
 const DB_DIR = process.env.GRAIN_HOME || join(homedir(), '.grain');
 const DB_PATH = join(DB_DIR, 'sessions.json');
 
-interface SessionRecord {
+export interface SessionRecord {
   id: string;
   title: string | null;
+  /** Stable project identity; absent records are retained as legacy global sessions. */
+  workspace?: string;
   messages: Array<{ id: string; role: string; content_json: string; created_at: string }>;
   created_at: string;
   updated_at: string;
@@ -60,12 +62,21 @@ function saveStore() {
   }
 }
 
-export async function createSession(title?: string): Promise<string> {
+export function workspaceKey(cwd = process.cwd()): string {
+  const normalized = cwd.replaceAll('\\', '/');
+  // Preserve a Windows drive root while treating every other trailing slash
+  // as cosmetic, so the same repository always resumes the same session.
+  if (/^[A-Za-z]:\/$/u.test(normalized)) return normalized;
+  return normalized.replace(/\/+$/u, '') || '/';
+}
+
+export async function createSession(title?: string, workspace?: string): Promise<string> {
   const id = randomUUID();
   const s = getStore();
   s.sessions.push({
     id,
     title: title || null,
+    workspace: workspace ? workspaceKey(workspace) : undefined,
     messages: [],
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
@@ -134,12 +145,21 @@ export async function getMessages(sessionId: string): Promise<Message[]> {
   }));
 }
 
-export async function getLastSession(): Promise<string | null> {
+export async function getLastSession(workspace?: string): Promise<string | null> {
   const s = getStore();
-  if (s.sessions.length === 0) return null;
+  const key = workspace ? workspaceKey(workspace) : undefined;
+  const candidates = key ? s.sessions.filter(session => session.workspace === key) : s.sessions;
+  if (candidates.length === 0) return null;
   // Sort by updated_at descending
-  const sorted = [...s.sessions].sort((a, b) =>
+  const sorted = [...candidates].sort((a, b) =>
     new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()
   );
   return sorted[0].id;
+}
+
+export async function listSessions(workspace?: string): Promise<Pick<SessionRecord, 'id' | 'title' | 'workspace' | 'updated_at'>[]> {
+  const key = workspace ? workspaceKey(workspace) : undefined;
+  const sessions = getStore().sessions.filter(session => !key || session.workspace === key);
+  return [...sessions].sort((a, b) => Date.parse(b.updated_at) - Date.parse(a.updated_at))
+    .map(({ id, title, workspace: key, updated_at }) => ({ id, title, workspace: key, updated_at }));
 }
