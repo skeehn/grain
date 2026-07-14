@@ -29,7 +29,7 @@ export async function executeSemanticSearch(input: {
   return new Promise((resolve) => {
     const proc = spawn(
       engramBin,
-      ['-d', dbPath, 'search', input.query, '--limit', limit.toString()],
+      ['-d', dbPath, 'search', input.query, '--top-k', limit.toString()],
       {
         stdio: ['pipe', 'pipe', 'pipe'],
         timeout: 10000,

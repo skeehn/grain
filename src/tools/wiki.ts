@@ -1,8 +1,8 @@
 import type { ToolResult } from '../providers/types.js';
-import { WikiEngine } from '../wiki/index.js';
+import { WikiEngine, semanticSearch } from '../wiki/index.js';
 
 export const wikiSearchTool = {
-  name: 'wiki_search', description: 'Search the repository wiki with provenance-aware lexical ranking.',
+  name: 'wiki_search', description: 'Search the repository wiki. Fuses provenance-aware lexical ranking with engram semantic (meaning-based) recall when the memory server is running.',
   input_schema: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] },
 };
 export const wikiGetTool = {
@@ -16,8 +16,33 @@ export const wikiProposeTool = {
 
 export async function executeWikiSearch(input: { query: string }): Promise<ToolResult> {
   try {
-    const pages = new WikiEngine().search(input.query);
-    return { content: pages.length ? pages.map(page => `${page.id}\t${page.title}\t${page.status}\t${page.path}`).join('\n') : 'No wiki results.' };
+    const engine = new WikiEngine();
+    const lexical = engine.search(input.query);
+    const order: string[] = [];
+    const seen = new Map<string, { title: string; status: string; path: string; how: string }>();
+    for (const page of lexical) {
+      if (!seen.has(page.id)) order.push(page.id);
+      seen.set(page.id, { title: page.title, status: page.status, path: page.path, how: 'lexical' });
+    }
+    // Best-effort semantic recall via engram; never fails the lexical result.
+    try {
+      const hits = await semanticSearch(input.query, engine.projectKey());
+      for (const hit of hits) {
+        const existing = seen.get(hit.pageId);
+        if (existing) { existing.how = 'lexical+semantic'; continue; }
+        const page = engine.get(hit.pageId);
+        if (!page) continue;
+        order.push(hit.pageId);
+        seen.set(hit.pageId, { title: page.title, status: page.status, path: page.path, how: 'semantic' });
+      }
+    } catch { /* engram down — lexical results stand */ }
+
+    if (order.length === 0) return { content: 'No wiki results.' };
+    const lines = order.map(id => {
+      const p = seen.get(id)!;
+      return `${id}\t${p.title}\t${p.status}\t${p.path}\t(${p.how})`;
+    });
+    return { content: lines.join('\n') };
   } catch (error: any) { return { content: `Wiki search failed: ${error.message}`, is_error: true }; }
 }
 export async function executeWikiGet(input: { id: string }): Promise<ToolResult> {

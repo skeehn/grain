@@ -44,6 +44,19 @@ function parse(path: string, markdown: string): WikiPage {
 export class WikiEngine {
   constructor(private fs: WorkspaceFS = getWorkspaceFS()) {}
 
+  /** Stable per-repository namespace, shared with the engram bridge + catalog. */
+  projectKey(): string { return sha(this.fs.root).slice(0, 16); }
+
+  /**
+   * Mirror every wiki page into engram (semantic memory) and turn `[[links]]`
+   * into graph edges. Best-effort — returns { ok:false } when engram is down,
+   * never throws, never blocks the wiki.
+   */
+  async sync(): Promise<import('./engram-bridge.js').SyncResult> {
+    const { syncPages } = await import('./engram-bridge.js');
+    return syncPages(this.pages(), this.projectKey());
+  }
+
   pages(): WikiPage[] {
     if (!existsSync(this.fs.resolve(WIKI_DIR))) return [];
     return this.fs.list(WIKI_DIR).filter(path => path.endsWith('.md')).map(path => parse(path, this.fs.readRange(path, 1, Number.MAX_SAFE_INTEGER).content));
