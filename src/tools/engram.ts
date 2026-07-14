@@ -131,7 +131,7 @@ async function statsHttp(): Promise<ToolResult> {
 async function graphHttp(id: string, depth = 1): Promise<ToolResult> {
   const g: any = await httpGet(`/graph/${id}${qs({ depth })}`);
   const nodes = (g.nodes as any[]).map(n => `  ${n.id}: ${n.body.slice(0, 60)}`).join('\n');
-  const edges = (g.edges as any[]).map(e => `  ${e.from} --[${e.edge_type}]--> ${e.to}`).join('\n');
+  const edges = (g.edges as any[]).map(e => `  ${e.from ?? e.source} --[${e.edge_type}]--> ${e.to ?? e.target}`).join('\n');
   return {
     content:
       `Graph around ${id} (depth=${depth}):\n\nNodes (${g.nodes.length}):\n${nodes}\n\nEdges (${g.edges.length}):\n${edges || '  (none)'}`,

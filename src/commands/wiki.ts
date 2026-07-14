@@ -5,6 +5,15 @@ export async function handleWikiCommand(subcommand = 'search', argument?: string
   if (subcommand === 'build') {
     const page = wiki.build();
     console.log(`Built ${page.path} with ${page.sources.length} source references.`);
+    const sync = await wiki.sync();
+    if (sync.ok) console.log(`Synced ${sync.indexed} page(s), ${sync.edges} link edge(s) to engram memory.`);
+    return;
+  }
+  if (subcommand === 'sync') {
+    const sync = await wiki.sync();
+    console.log(sync.ok
+      ? `Synced ${sync.indexed} wiki page(s) and ${sync.edges} [[link]] edge(s) into engram memory.`
+      : 'engram memory server not reachable — nothing synced (wiki still works offline).');
     return;
   }
   if (subcommand === 'search') {
