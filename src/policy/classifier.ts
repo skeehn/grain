@@ -9,6 +9,10 @@ const WRITES = new Set(['write', 'patch', 'multi_edit', 'plan', 'wiki_propose_up
 const NETWORK = /\b(curl|wget|ssh|scp|rsync|npm\s+publish|git\s+push|gh\s+pr|docker\s+push)\b/i;
 const DESTRUCTIVE = /(^|[;&|]\s*|\b)(rm|rmdir|shred|mkfs|dd)\b|git\s+(reset\s+--hard|clean|checkout\s+--)|DROP\s+(TABLE|DATABASE)|truncate\s+/i;
 const INDIRECT = /\$\(|`|>\s*\/|\beval\b|\bsource\b/i;
+// Privilege escalation and fork bombs stay destructive even inside otherwise
+// "safe" compound commands, so the compound-command default below can't run them.
+const PRIVILEGE = /\b(sudo|doas)\b/i;
+const FORK_BOMB = /\(\s*\)\s*\{[^}]*\|[^}]*&\s*\}/;
 
 export function classifyTool(name: string, input: any): ToolRisk {
   if (/^mcp__[^_]+__(resource_read|prompt_get)$/.test(name)) return 'read_only';
@@ -24,11 +28,15 @@ export function classifyTool(name: string, input: any): ToolRisk {
   }
   if (name === 'bash') {
     const command = String(input?.command || '');
-    if (DESTRUCTIVE.test(command) || INDIRECT.test(command)) return 'destructive';
+    if (DESTRUCTIVE.test(command) || INDIRECT.test(command) || PRIVILEGE.test(command) || FORK_BOMB.test(command)) return 'destructive';
     if (NETWORK.test(command)) return 'network';
     if (/\b(mv|cp|mkdir|touch|chmod|chown|git\s+(add|commit)|sed\s+-i)\b|(^|\s)>[^>]/i.test(command)) return 'workspace_write';
     if (/^[\w./-]+(?:\s+[\w@%+=:,./-]+)*\s*$/.test(command)) return 'read_only';
-    return 'destructive';
+    // Compound/piped commands (|, ;, &&, globs) that matched NONE of the
+    // dangerous patterns above — find|wc, sort|uniq, awk, jq pipelines — are
+    // ordinary workspace work: allowed under --yes, ask otherwise. (The old
+    // default of 'destructive' denied every pipeline in non-interactive mode.)
+    return 'workspace_write';
   }
   return 'destructive';
 }
