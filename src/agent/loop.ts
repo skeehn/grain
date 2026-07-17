@@ -9,6 +9,8 @@ import { getSystemPrompt } from '../system-prompt.js';
 import { getModelCapabilities, packContext } from '../context/index.js';
 import { getSessionStats, recordUsage } from '../tui/status.js';
 import { retrieveCodeContext } from '../tools/code-index.js';
+import { executeBash } from '../tools/bash.js';
+import { detectVerifyCommand } from './verify.js';
 import { LearningLedger } from '../learning/index.js';
 import { loadConfig, saveConfig } from '../config.js';
 import { createSession, addMessage, getMessages, getLastSession } from '../session/store.js';
@@ -335,6 +337,8 @@ export async function agentLoop(opts: AgentOpts): Promise<void> {
   const sessionErrors: string[] = []; // collected for reflection
   const allToolsUsed: string[] = [];   // accumulated across all turns for reflection
   const allFilesChanged: string[] = []; // accumulated across all turns for reflection
+  let verifyAttempts = 0;               // bounded auto-verify-then-fix cycles on finish
+  const MAX_VERIFY_ATTEMPTS = 3;
 
   while (turnCount < turnLimit) {
     turnCount++;
@@ -567,6 +571,31 @@ export async function agentLoop(opts: AgentOpts): Promise<void> {
               content: 'finish requires at least one concrete verification artifact or command result', is_error: true });
             continue;
           }
+          // Automatic verification: if this task edited code, the HARNESS runs
+          // the project's fast check (typecheck/compile) before accepting the
+          // finish, and feeds any failures back so the model self-corrects
+          // instead of declaring a broken change done. Bounded, skipped in
+          // benchmark mode or when GRAIN_NO_VERIFY is set.
+          if (allFilesChanged.length > 0 && !opts.benchmark && !process.env.GRAIN_NO_VERIFY && verifyAttempts < MAX_VERIFY_ATTEMPTS) {
+            const verify = detectVerifyCommand(process.cwd());
+            if (verify) {
+              verifyAttempts++;
+              renderer.tool('verify', { _streaming: true });
+              renderer.dim(`  → ${verify.label}`);
+              const res = await executeBash({ command: verify.command, timeout: 180 }, process.cwd());
+              renderer.result(res.content, res.is_error);
+              if (res.is_error) {
+                opts.onEvent?.({ type: 'verification', passed: false, detail: verify.label });
+                journal.append('verification_completed', { turn: turnCount, passed: false, check: verify.label });
+                toolResults.push({ type: 'tool_result', tool_use_id: block.id,
+                  content: `Not done yet — automatic verification failed (${verify.label}). Fix these problems, then finish:\n\n${res.content.slice(0, 4000)}`,
+                  is_error: true });
+                continue; // loop back to fix instead of finishing
+              }
+              journal.append('verification_completed', { turn: turnCount, passed: true, check: verify.label });
+            }
+          }
+
           const msg = block.input?.result || block.input?.message || 'Task complete.';
           renderer.success(`✓ ${msg}`);
           opts.onEvent?.({ type: 'verification', passed: true, detail: String(msg) });
