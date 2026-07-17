@@ -6,6 +6,8 @@ export interface SubprocessResult {
   exitCode: number;
 }
 
+const CLAUDE_CODE_TIMEOUT_MS = 180_000; // a hung `claude -p` must not block the parent forever
+
 export async function delegateToClaudeCode(prompt: string): Promise<SubprocessResult> {
   return new Promise((resolve, reject) => {
     // stream-json in print mode requires --verbose or the CLI errors out
@@ -16,6 +18,8 @@ export async function delegateToClaudeCode(prompt: string): Promise<SubprocessRe
     let output = '';
     let stderr = '';
     let buffer = '';
+    let timedOut = false;
+    const killTimer = setTimeout(() => { timedOut = true; proc.kill('SIGTERM'); }, CLAUDE_CODE_TIMEOUT_MS);
 
     const parseLine = (line: string) => {
       if (!line.trim()) return;
@@ -48,11 +52,17 @@ export async function delegateToClaudeCode(prompt: string): Promise<SubprocessRe
     });
 
     proc.on('close', (code) => {
+      clearTimeout(killTimer);
       parseLine(buffer);
+      if (timedOut) {
+        resolve({ output: `${output || stderr}\n[claude-code delegation timed out after ${Math.round(CLAUDE_CODE_TIMEOUT_MS / 1000)}s]`, exitCode: 124 });
+        return;
+      }
       resolve({ output: output || stderr, exitCode: code || 0 });
     });
 
     proc.on('error', (err) => {
+      clearTimeout(killTimer);
       reject(new Error(`Failed to spawn claude: ${err.message}`));
     });
   });
