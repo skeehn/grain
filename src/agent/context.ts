@@ -4,22 +4,44 @@ import { join } from 'path';
 import type { Message, ContentBlock } from '../providers/types.js';
 import { loadConfig } from '../config.js';
 
+// Fallback input budget when the caller doesn't know the model's real window.
 export const MAX_TOKENS = 180000;
+// Rough per-image token cost (vision blocks are otherwise invisible to chars/4).
+const IMAGE_TOKENS = 1500;
+// Compact once the estimate reaches this fraction of the usable input budget.
+const COMPACT_AT = 0.8;
 
 export function countTokens(messages: Message[]): number {
   let chars = 0;
+  let images = 0;
   for (const msg of messages) {
     for (const block of msg.content) {
       if (block.type === 'text') chars += block.text.length;
-      else if (block.type === 'tool_result') chars += block.content.length;
+      else if (block.type === 'tool_result') chars += (typeof block.content === 'string' ? block.content : JSON.stringify(block.content ?? '')).length;
       else if (block.type === 'tool_use') chars += JSON.stringify(block.input).length + block.name.length;
+      else if (block.type === 'image') images += 1;
     }
   }
-  return Math.ceil(chars / 4);
+  // chars/4 is a loose lower bound for code/tool-heavy content; images add a
+  // fixed cost so vision turns aren't undercounted to zero.
+  return Math.ceil(chars / 4) + images * IMAGE_TOKENS;
 }
 
-export function needsCompaction(messages: Message[]): boolean {
-  return countTokens(messages) > MAX_TOKENS * 0.8;
+/**
+ * Whether history should be compacted for the given model input budget.
+ * `budgetTokens` is the model's usable input window (contextWindow minus the
+ * output reservation); `overheadTokens` accounts for the per-turn system
+ * prompt + skills that live outside `messages`. Falls back to MAX_TOKENS so
+ * callers that don't know the window still get sane behavior — critical for
+ * small-window models (e.g. 32K) where the old fixed 144K threshold never fired.
+ */
+export function needsCompaction(
+  messages: Message[],
+  budgetTokens: number = MAX_TOKENS,
+  overheadTokens = 0,
+): boolean {
+  const budget = budgetTokens > 0 ? budgetTokens : MAX_TOKENS;
+  return countTokens(messages) + overheadTokens > budget * COMPACT_AT;
 }
 
 export function compact(messages: Message[]): Message[] {
@@ -68,7 +90,8 @@ export function compact(messages: Message[]): Message[] {
           const cmd = (block.input?.command || '').slice(0, 80);
           if (cmd) commandsRun.push(cmd);
         } else if (block.name === 'finish') {
-          const m = block.input?.message || '';
+          // finish carries `result` (not `message`) — read both for safety.
+          const m = block.input?.result || block.input?.message || '';
           if (m) keyDecisions.push(`COMPLETED: ${m}`);
         }
       } else if (block.type === 'tool_result' && (block as any).is_error) {
@@ -91,12 +114,20 @@ export function compact(messages: Message[]): Message[] {
   if (orphanText) parts.push(orphanText);
   parts.push('[Continue from the recent messages below]');
 
-  const summaryMessage: Message = {
-    role: 'user',
-    content: [{ type: 'text', text: parts.join('\n') }],
-  };
+  const summaryText = parts.join('\n');
 
-  return [summaryMessage, ...toKeep];
+  // Anthropic requires alternating roles: a `user` summary followed by another
+  // `user` turn 400s. After orphan-stripping, if kept history still starts with
+  // a user turn, fold the summary into it instead of prepending a second user
+  // message. If nothing is kept, the summary stands alone.
+  if (toKeep.length === 0) {
+    return [{ role: 'user', content: [{ type: 'text', text: summaryText }] }];
+  }
+  if (toKeep[0].role === 'user') {
+    const [first, ...rest] = toKeep;
+    return [{ ...first, content: [{ type: 'text', text: summaryText }, ...first.content] }, ...rest];
+  }
+  return [{ role: 'user', content: [{ type: 'text', text: summaryText }] }, ...toKeep];
 }
 
 const ENGRAM_HTTP = 'http://localhost:7474';

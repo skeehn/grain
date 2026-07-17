@@ -15,7 +15,37 @@ describe('countTokens / needsCompaction', () => {
     expect(countTokens(msgs)).toBe(100);
     expect(needsCompaction(msgs)).toBe(false);
   });
+
+  test('counts image blocks (otherwise invisible to chars/4)', () => {
+    const withImage: Message = { role: 'user', content: [
+      { type: 'text', text: 'a'.repeat(400) },
+      { type: 'image', media_type: 'image/png', data: 'x' } as any,
+    ] };
+    // 100 (text) + 1500 (one image)
+    expect(countTokens([withImage])).toBe(1600);
+  });
+
+  test('threshold follows the model budget, not a fixed 180K', () => {
+    // ~50K-token history: fine for a 1M window, must compact for a 32K one.
+    const big = [user('a'.repeat(200_000))]; // 50K tokens
+    expect(needsCompaction(big, 1_048_576)).toBe(false);
+    expect(needsCompaction(big, 32_768)).toBe(true);
+  });
+
+  test('system-prompt overhead counts toward the budget', () => {
+    const msgs = [user('a'.repeat(400))]; // 100 tokens
+    // budget 1000 → threshold 800; 100 alone is fine, +900 overhead trips it.
+    expect(needsCompaction(msgs, 1000, 0)).toBe(false);
+    expect(needsCompaction(msgs, 1000, 900)).toBe(true);
+  });
 });
+
+// No two adjacent messages may share a role (Anthropic 400s otherwise).
+function assertAlternatingRoles(msgs: Message[]): void {
+  for (let i = 1; i < msgs.length; i++) {
+    expect(msgs[i].role).not.toBe(msgs[i - 1].role);
+  }
+}
 
 describe('compact', () => {
   test('short histories pass through untouched', () => {
@@ -31,6 +61,20 @@ describe('compact', () => {
     const out = compact(msgs);
     expect(out.length).toBeLessThan(msgs.length);
     expect(out[0].role).toBe('user');
+    expect((out[0].content[0] as any).text).toContain('CONTEXT SUMMARY');
+    // The summary (user) must not sit next to another user turn → fold, not stack.
+    assertAlternatingRoles(out);
+  });
+
+  test('never emits two consecutive user messages when kept history starts with a user turn', () => {
+    // Alternating user/assistant, cut lands so the first kept turn is a plain
+    // user message — the exact shape that used to stack two user turns and 400.
+    const msgs: Message[] = [];
+    for (let i = 0; i < 30; i++) {
+      msgs.push(user(`q${i}`), assistant(`a${i}`));
+    }
+    const out = compact(msgs);
+    assertAlternatingRoles(out);
     expect((out[0].content[0] as any).text).toContain('CONTEXT SUMMARY');
   });
 
