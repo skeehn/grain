@@ -44,6 +44,20 @@ export function needsCompaction(
   return countTokens(messages) + overheadTokens > budget * COMPACT_AT;
 }
 
+// A single oversized tool_result (a big file read or command dump) otherwise
+// stays verbatim in the RECENT window that compaction never touches, and is
+// re-sent every turn. Bound what's STORED in history to head+tail; the model
+// already saw the full output when it ran, and can re-read a specific range.
+const MAX_TOOL_RESULT_CHARS = 48_000; // ~12k tokens
+
+export function boundToolResult(content: string): string {
+  if (content.length <= MAX_TOOL_RESULT_CHARS) return content;
+  const head = content.slice(0, Math.floor(MAX_TOOL_RESULT_CHARS * 0.7));
+  const tail = content.slice(-Math.floor(MAX_TOOL_RESULT_CHARS * 0.25));
+  const trimmed = content.length - head.length - tail.length;
+  return `${head}\n\n… [${trimmed} chars trimmed from the middle to save context — re-read a specific range if you need it] …\n\n${tail}`;
+}
+
 export function compact(messages: Message[]): Message[] {
   const KEEP_RECENT = 20;
   if (messages.length <= KEEP_RECENT) return messages;
