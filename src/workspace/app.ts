@@ -7,6 +7,8 @@ import { listSessions, workspaceKey } from '../session/store.js';
 import * as renderer from '../tui/renderer.js';
 import { resolveTheme, type GrainThemeName } from '../tui/theme.js';
 import { getSessionStats, statusLineText } from '../tui/status.js';
+import { interactiveSelect } from '../tui/select.js';
+import { catalogWithCurrent, nextModel } from '../tui/models.js';
 import { executeWorkspaceScan } from '../tools/workspace.js';
 import { executeGit } from '../tools/git.js';
 import { setToolCwd } from '../tools/index.js';
@@ -19,6 +21,8 @@ export interface WorkspaceOptions { prompt?: string; model?: string; provider?: 
 export interface ComposerInput { command?: string; argument: string; attachments: string[]; }
 
 const HELP = [
+  '/                     open the command palette',
+  '/model                switch model (opens selector · /model next to cycle)',
   '/plan                 explain the approach before changing work',
   '/mode ask|plan|execute choose how Grain works',
   '/files                inspect this repository',
@@ -26,7 +30,6 @@ const HELP = [
   '/wiki [build|verify]  use repository knowledge',
   '/history              resume-aware session history',
   '/agents <mode> <task> create a durable task graph',
-  '/model <name>         select a model for this workspace',
   '/theme <name>         field, studio, arcade, or system',
   '/settings             show connection and workspace settings',
   '@path                 attach a file to your next message',
@@ -55,8 +58,55 @@ function attachmentPreview(paths: string[]): string[] {
   });
 }
 
-async function handleCommand(command: ComposerInput, state: { mode: WorkspaceMode; model?: string }): Promise<'continue' | 'exit'> {
+type WorkspaceState = { mode: WorkspaceMode; model?: string };
+
+// Commands surfaced in the "/" palette (name → one-line description).
+const PALETTE_COMMANDS: Array<{ name: string; desc: string }> = [
+  { name: 'model', desc: 'switch the model (opens selector)' },
+  { name: 'plan', desc: 'explain the approach before changing work' },
+  { name: 'mode', desc: 'ask · plan · execute' },
+  { name: 'files', desc: 'inspect this repository' },
+  { name: 'diff', desc: 'show changed files from the latest run' },
+  { name: 'wiki', desc: 'use repository knowledge' },
+  { name: 'history', desc: 'resume-aware session history' },
+  { name: 'agents', desc: 'create a durable task graph' },
+  { name: 'theme', desc: 'field · studio · arcade · system' },
+  { name: 'settings', desc: 'connection and workspace settings' },
+  { name: 'help', desc: 'show all controls' },
+  { name: 'exit', desc: 'leave Grain' },
+];
+
+/** Persist a model choice (provider + id) and reflect it in the live session. */
+function applyModel(state: WorkspaceState, provider: string, model: string): void {
+  const cfg = loadConfig();
+  saveConfig({ ...cfg, provider, model });
+  state.model = model;
+  getSessionStats().provider = provider;
+  getSessionStats().model = model;
+  renderer.success(`Model → ${provider} / ${model}`);
+}
+
+async function openModelSelector(state: WorkspaceState): Promise<void> {
+  const cfg = loadConfig();
+  const choice = await interactiveSelect({
+    title: 'Select model',
+    items: catalogWithCurrent(cfg.provider, state.model || cfg.model || '').map(c => ({ label: c.label, hint: c.hint, value: c, current: c.current })),
+  });
+  if (choice) applyModel(state, choice.provider, choice.model);
+}
+
+async function openCommandPalette(state: WorkspaceState): Promise<'continue' | 'exit'> {
+  const choice = await interactiveSelect({
+    title: 'Commands',
+    items: PALETTE_COMMANDS.map(c => ({ label: `/${c.name}`, hint: c.desc, value: c.name })),
+  });
+  if (!choice) return 'continue';
+  return handleCommand({ command: choice, argument: '', attachments: [] }, state);
+}
+
+async function handleCommand(command: ComposerInput, state: WorkspaceState): Promise<'continue' | 'exit'> {
   switch (command.command) {
+    case '': return openCommandPalette(state); // bare "/" opens the palette
     case 'help': renderer.info(`\n${HELP}`); return 'continue';
     case 'exit': case 'quit': return 'exit';
     case 'plan': state.mode = 'plan'; renderer.success('Plan mode is on. Grain will explain the approach before changing work.'); return 'continue';
@@ -66,7 +116,14 @@ async function handleCommand(command: ComposerInput, state: { mode: WorkspaceMod
       renderer.success(`Mode: ${state.mode}.${state.mode === 'execute' ? ' Tool approvals are now automatic.' : ''}`);
       return 'continue';
     }
-    case 'model': if (!command.argument) renderer.info('Usage: /model <name>'); else { state.model = command.argument; renderer.success(`Model: ${state.model}.`); } return 'continue';
+    case 'models':
+    case 'model': {
+      const cfg = loadConfig();
+      if (command.argument === 'next') { const n = nextModel(cfg.provider, state.model || cfg.model || ''); applyModel(state, n.provider, n.model); return 'continue'; }
+      if (command.argument) { applyModel(state, cfg.provider, command.argument); return 'continue'; }
+      await openModelSelector(state);
+      return 'continue';
+    }
     case 'theme': {
       const theme = command.argument as GrainThemeName;
       if (!['field', 'studio', 'arcade', 'system'].includes(theme)) { renderer.info('Usage: /theme field|studio|arcade|system'); return 'continue'; }
@@ -115,7 +172,7 @@ export async function runWorkspace(options: WorkspaceOptions = {}): Promise<void
     if (input === null) return;
     const composer = parseComposerInput(input);
     input = undefined;
-    if (composer.command) { if (await handleCommand(composer, state) === 'exit') return; workspaceHeader(state.mode); continue; }
+    if (composer.command !== undefined) { if (await handleCommand(composer, state) === 'exit') return; workspaceHeader(state.mode); continue; }
     if (!composer.argument) {
       if (composer.attachments.length) renderer.info('Attachments need a message. Add what you want Grain to do with them.');
       continue;
