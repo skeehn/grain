@@ -12,6 +12,7 @@ import { retrieveCodeContext } from '../tools/code-index.js';
 import { executeBash } from '../tools/bash.js';
 import { detectVerifyCommand } from './verify.js';
 import { newChangeset } from './checkpoint.js';
+import { drainPendingScreenshots, hasPendingScreenshots } from '../tools/screenshot.js';
 import { LearningLedger } from '../learning/index.js';
 import { loadConfig, saveConfig } from '../config.js';
 import { createSession, addMessage, getMessages, getLastSession } from '../session/store.js';
@@ -694,6 +695,21 @@ export async function agentLoop(opts: AgentOpts): Promise<void> {
       addMessage(sessionId, 'assistant', assistantBlocks);
 
       if (toolResults.length > 0) {
+        // If a screenshot was captured this turn and the model can see images,
+        // attach the PNG(s) to this tool-results turn so the design → critique
+        // → iterate loop actually shows the UI to the model.
+        if (hasPendingScreenshots()) {
+          const shots = drainPendingScreenshots();
+          if (capabilities.supportsImages) {
+            for (const shot of shots) {
+              try {
+                toolResults.push({ type: 'image', media_type: shot.mediaType, data: readFileSync(shot.path).toString('base64'), name: 'screenshot' } as any);
+              } catch { /* file vanished — skip */ }
+            }
+          } else if (shots.length) {
+            renderer.info('Screenshot captured, but the current model can\'t see images — switch to a vision model (e.g. /model claude…) to critique it.');
+          }
+        }
         messages.push({ role: 'user', content: toolResults });
         addMessage(sessionId, 'user', toolResults);
       }
