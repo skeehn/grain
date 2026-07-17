@@ -1,5 +1,6 @@
 import AnthropicBedrock from '@anthropic-ai/bedrock-sdk';
 import type { Provider, Message, Tool, StreamEvent, ContentBlock } from './types.js';
+import { applyToolCache, applyHistoryCache, cachedSystem } from './cache.js';
 
 const DEFAULT_MODEL = 'us.anthropic.claude-sonnet-4-5-20250929-v1:0';
 
@@ -34,6 +35,11 @@ export class BedrockProvider implements Provider {
       input_schema: t.input_schema as any,
     }));
 
+    // Prompt caching (works on Bedrock's Messages endpoint) — see cache.ts.
+    applyToolCache(apiTools);
+    applyHistoryCache(apiMessages);
+    const cachedSys = cachedSystem(system);
+
     // Retry with exponential backoff on rate limits (429)
     const MAX_RETRIES = 4;
     let lastError: any;
@@ -51,7 +57,7 @@ export class BedrockProvider implements Provider {
         const stream = this.client.messages.stream({
           model: this.model,
           max_tokens: 16384,
-          system,
+          system: cachedSys,
           messages: apiMessages,
           tools: apiTools,
         });
