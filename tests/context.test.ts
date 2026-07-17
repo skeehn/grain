@@ -111,3 +111,19 @@ describe('compact', () => {
     }
   });
 });
+
+import { boundToolResult } from '../src/agent/context.js';
+
+describe('boundToolResult', () => {
+  test('leaves small results untouched', () => {
+    expect(boundToolResult('small output')).toBe('small output');
+  });
+  test('trims a huge result to head+tail with a marker', () => {
+    const huge = 'A'.repeat(30_000) + 'MIDDLE' + 'B'.repeat(30_000);
+    const out = boundToolResult(huge);
+    expect(out.length).toBeLessThan(huge.length);
+    expect(out).toContain('trimmed from the middle');
+    expect(out.startsWith('A')).toBe(true);  // head preserved
+    expect(out.endsWith('B')).toBe(true);     // tail preserved
+  });
+});

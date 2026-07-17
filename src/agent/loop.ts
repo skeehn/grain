@@ -15,7 +15,7 @@ import { newChangeset } from './checkpoint.js';
 import { LearningLedger } from '../learning/index.js';
 import { loadConfig, saveConfig } from '../config.js';
 import { createSession, addMessage, getMessages, getLastSession } from '../session/store.js';
-import { needsCompaction, compact, engramRetrieve, engramStore } from './context.js';
+import { needsCompaction, compact, engramRetrieve, engramStore, boundToolResult } from './context.js';
 import * as renderer from '../tui/renderer.js';
 import { getSkillManager } from '../skills/manager.js';
 import type { SkillMatch } from '../skills/types.js';
@@ -442,10 +442,17 @@ export async function agentLoop(opts: AgentOpts): Promise<void> {
 
     try {
       const STREAM_TIMEOUT = 90000; // 90s inactivity (large files take time)
+      // Flatten to real payload text (not JSON) so the manifest's token estimate
+      // reflects what the model actually receives, not quote/escape inflation.
+      const conversationText = messages.map(m => m.content.map(b =>
+        b.type === 'text' ? b.text
+        : b.type === 'tool_result' ? String((b as any).content ?? '')
+        : b.type === 'tool_use' ? `${(b as any).name} ${JSON.stringify((b as any).input)}`
+        : '').join(' ')).join('\n');
       const packed = packContext(capabilities, [
         { id: `system-${turnCount}`, kind: 'instruction', content: system, priority: 100, required: true,
           source: 'grain-system-prompt' },
-        { id: `conversation-${turnCount}`, kind: 'conversation', content: JSON.stringify(messages), priority: 90,
+        { id: `conversation-${turnCount}`, kind: 'conversation', content: conversationText, priority: 90,
           required: true, source: `session:${sessionId}` },
       ], TOOLS);
       journal.append('model_requested', { turn: turnCount, message_count: messages.length,
@@ -660,7 +667,7 @@ export async function agentLoop(opts: AgentOpts): Promise<void> {
         toolResults.push({
           type: 'tool_result',
           tool_use_id: block.id,
-          content: resultContent,
+          content: boundToolResult(resultContent), // cap what's kept in history
           is_error: result.is_error,
         });
       }
