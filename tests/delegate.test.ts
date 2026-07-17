@@ -13,7 +13,8 @@ describe('delegate child tool set', () => {
     for (const essential of ['read', 'write', 'bash', 'grep', 'finish']) {
       expect(names).toContain(essential);
     }
-    // exactly the parent set minus the two delegation tools
-    expect(getChildTools().length).toBe(TOOLS.length - 2);
+    // parent set minus the delegation/orchestration tools children can't use
+    expect(names).not.toContain('run_agents');
+    expect(getChildTools().length).toBe(TOOLS.length - 3);
   });
 });
