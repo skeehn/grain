@@ -1,4 +1,6 @@
 import type { Provider, Message, Tool, StreamEvent } from './types.js';
+import { loadConfig } from '../config.js';
+import { getModelCapabilities } from '../context/index.js';
 
 export const OPENROUTER_POOL_MODEL = 'poolside/laguna-xs-2.1';
 const DEFAULT_MODEL = 'anthropic/claude-sonnet-4';
@@ -101,6 +103,11 @@ export class OpenRouterProvider implements Provider {
       stream_options: { include_usage: true },
       max_tokens: this.options.maxTokens ?? 16_384,
     };
+    // Reasoning effort for models that support it (OpenRouter ignores it otherwise).
+    const effort = loadConfig().effort;
+    if (effort && getModelCapabilities(this.name, this.model).supportsReasoning) {
+      body.reasoning = { effort };
+    }
     if (tools.length) body.tools = tools.map(tool => ({
       type: 'function',
       function: { name: tool.name, description: tool.description, parameters: tool.input_schema },
