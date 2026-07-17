@@ -38,6 +38,33 @@ export function bayerDither(width: number, phase = 0, level = 32): string {
   return Array.from({ length: width }, (_, x) => row[(x + Math.floor(phase / 8)) % 8] < threshold ? '█' : '░').join('');
 }
 
+const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
+
+/**
+ * Tasteful animated launch banner: two Bayer-dither strips sweep and "resolve"
+ * around the GRAIN wordmark, then settle. Skips the animation (prints the
+ * settled frame once) when not a TTY or reduced-motion is set, so CI/pipes and
+ * accessibility preferences are respected.
+ */
+export async function launchBanner(subtitle = 'repository agent · memory in the loop'): Promise<void> {
+  const width = Math.min(48, Math.max(28, (process.stdout.columns || 80) - 4));
+  const wordmark = `${tone.grain('▚ GRAIN')}  ${tone.quiet(subtitle)}`;
+  const frame = (phase: number, level: number) =>
+    `${tone.grain(bayerDither(width, phase, level))}\n${wordmark}\n${tone.grain(bayerDither(width, -phase, level))}\n`;
+
+  if (!motion) { sink().write(`\n${frame(2, 10)}\n`); return; }
+
+  sink().write('\n');
+  // Sweep in (rising density) then out (falling) so it reads as a resolve.
+  const steps = [2, 6, 12, 20, 30, 22, 14, 8, 5];
+  for (let i = 0; i < steps.length; i++) {
+    if (i > 0) sink().write('\x1b[3A'); // redraw the 3-line band in place
+    sink().write(frame(i, steps[i]));
+    await sleep(45);
+  }
+  sink().write('\n');
+}
+
 export function banner(subtitle = 'coding agent · memory in the loop'): void {
   const width = Math.min(64, Math.max(36, (process.stdout.columns || 80) - 4));
   const line = '─'.repeat(width);
