@@ -98,6 +98,9 @@ async function handleCommand(command: ComposerInput, state: { mode: WorkspaceMod
 /** The day-to-day Grain entry point: a repository-scoped conversational workspace. */
 export async function runWorkspace(options: WorkspaceOptions = {}): Promise<void> {
   setToolCwd(process.cwd());
+  // Animated dither launch banner on a fresh interactive start (not when a task
+  // was passed on the command line — that user wants to get straight to work).
+  if (!options.prompt && process.stdout.isTTY) await renderer.launchBanner();
   await ensureWorkspaceSetup({ prompt: renderer.userPrompt, info: renderer.info, open: openProviderPage });
   const state: { mode: WorkspaceMode; model?: string; approvedRisks: Set<string> } = { mode: 'ask', model: options.model, approvedRisks: new Set() };
   const queuedAttachments = [...(options.attachments || [])];
