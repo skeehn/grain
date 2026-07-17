@@ -211,6 +211,14 @@ export async function executeBash(
   input: { command: string; timeout?: number },
   cwd?: string,
 ): Promise<ToolResult> {
+  // A weak model can emit a malformed tool call with a missing/empty command;
+  // without this guard the shell would run the literal string "undefined"
+  // (or an empty line) and report a confusing "command not found".
+  const command = typeof input?.command === 'string' ? input.command.trim() : '';
+  if (!command || command === 'undefined') {
+    return { content: 'bash requires a non-empty "command" string.', is_error: true };
+  }
+  input = { ...input, command };
   const timeoutMs = (input.timeout ?? 60) * 1000;
 
   // ── TB bridge: proxy to container via JSON-line protocol ──────────────────

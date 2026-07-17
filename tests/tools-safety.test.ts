@@ -16,4 +16,12 @@ describe('bounded shell inspection', () => {
     expect(result.is_error).not.toBe(true);
     expect(result.content).toContain('grain');
   });
+
+  test('rejects an empty or undefined command instead of running "undefined"', async () => {
+    for (const bad of [{}, { command: '' }, { command: '   ' }, { command: 'undefined' }]) {
+      const result = await executeBash(bad as any, process.cwd());
+      expect(result.is_error).toBe(true);
+      expect(result.content).toContain('non-empty');
+    }
+  });
 });
