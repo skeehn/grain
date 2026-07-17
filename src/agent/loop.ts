@@ -139,7 +139,9 @@ async function runReflection(
   try {
     const spin = renderer.spinner('Reflecting...');
     let stopped = false;
-    for await (const event of provider.stream(messages, 'You are a concise technical learning extractor.', [])) {
+    // Best-effort, but a stalled stream must not hang the process after the
+    // task already succeeded — bound it by inactivity like the main loop.
+    for await (const event of withInactivityTimeout(provider.stream(messages, 'You are a concise technical learning extractor.', []), 60000)) {
       if (event.type === 'text_delta') {
         if (!stopped) { spin.stop(); stopped = true; }
         raw += event.text;
@@ -661,6 +663,20 @@ export async function agentLoop(opts: AgentOpts): Promise<void> {
 
     } catch (err: any) {
       if (!spinnerStopped) spin.stop();
+
+      // Ctrl-C at an in-loop prompt (renderer.userPrompt rejects with 'SIGINT')
+      // is a user cancellation, not a provider failure — clean up and exit
+      // without polluting engram/journal with a bogus provider_error.
+      if (err?.message === 'SIGINT') {
+        destroyShell();
+        closeMcpClients();
+        journal.transition('cancelled');
+        renderer.newLine();
+        renderer.info('Cancelled.');
+        if (opts.oneShot) throw err; // let cli.ts print the top-level goodbye
+        return;
+      }
+
       if (!opts.oneShot) renderer.error(err.message);
       await engramStore(`Error: ${err.message}`, ['error']);
       journal.append(/parse|protocol|malformed/i.test(err.message) ? 'protocol_error' : 'provider_error', { error: err.message, turn: turnCount });
