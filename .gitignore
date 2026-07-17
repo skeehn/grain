@@ -33,3 +33,6 @@ coverage/
 # IDE
 .vscode/
 .idea/
+
+# nested site repo (separate project)
+grain-site/

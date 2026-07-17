@@ -209,6 +209,24 @@ export function parseArgs(argv: string[]): ParsedArgs {
   return result;
 }
 
+/**
+ * Validate a parsed run invocation (the agent path, not sub-commands).
+ * Returns a user-facing error string when the invocation cannot run, else null.
+ * Kept pure so it is unit-testable and so bad flags fail fast with a clear
+ * message instead of surfacing as a deep provider/SDK error mid-stream.
+ */
+export function validateInvocation(parsed: ParsedArgs): string | null {
+  if (parsed.provider && !VALID_PROVIDERS.includes(parsed.provider as any)) {
+    return `Invalid provider "${parsed.provider}". Valid: ${VALID_PROVIDERS.join(', ')}`;
+  }
+  // In print/automation mode there is no conversational prompt to fall back on,
+  // so an empty task is a usage error rather than an empty agent run.
+  if (parsed.printMode && !parsed.prompt?.trim()) {
+    return 'No task provided. Usage: grain -p "your task" --yes';
+  }
+  return null;
+}
+
 // ─── Interactive prompt helper ────────────────────────────────────────────────
 
 function ask(question: string): Promise<string> {
@@ -695,16 +713,6 @@ async function testBedrockConnection(): Promise<{ ok: boolean; error?: string }>
 
 // ─── First-run welcome ────────────────────────────────────────────────────────
 
-function showWelcomeIfNeeded(): void {
-  const flag = join(getConfigDir(), '.welcomed');
-  if (existsSync(flag)) return;
-  try { writeFileSync(flag, new Date().toISOString()); } catch { /* ignore */ }
-
-  renderer.banner(`v${GRAIN_VERSION} · coding agent · memory in the loop`);
-  console.log(`Run ${c.cyan}grain init${c.reset} to set up your provider and API keys.`);
-  console.log(`Run ${c.cyan}grain --help${c.reset} for all commands.\n`);
-}
-
 // ─── Engram handler ───────────────────────────────────────────────────────────
 
 const ENGRAM_API = 'http://localhost:7474';
@@ -944,9 +952,10 @@ async function main(): Promise<void> {
     return;
   }
 
-  // The workspace owns first-run guidance. Keep the legacy banner only for
-  // non-interactive print mode, where there is no conversational setup.
-  if (parsed.printMode && !parsed.prompt) showWelcomeIfNeeded();
+  // Fail fast on an unrunnable invocation (bad --provider, empty print task)
+  // with a clear message instead of a deep mid-stream provider error.
+  const invalid = validateInvocation(parsed);
+  if (invalid) { renderer.error(invalid); process.exit(1); }
 
   // Silently ensure engram is running (non-blocking)
   ensureEngramRunning().catch(() => { /* never fails grain */ });

@@ -16,14 +16,25 @@ export async function runTui(options: TuiAppOptions = {}): Promise<void> {
   const alternate = options.alternateScreen !== false; let closed = false; let cancelArmed = false;
   const journal = RunJournal.open(runId); const engine = new RunEngine(journal);
   const render = () => {
-    capabilities = detectTerminalCapabilities();
-    const events = readRunEvents(runId); renderer.render(layoutRun(projectRun(events), capabilities, theme, tick++));
+    // A render/projection error must never escape the interval callback —
+    // an uncaught throw here would crash the process and strand the terminal
+    // in raw mode + alternate screen with the cursor hidden.
+    try {
+      capabilities = detectTerminalCapabilities();
+      const events = readRunEvents(runId); renderer.render(layoutRun(projectRun(events), capabilities, theme, tick++));
+    } catch { /* transient read/layout error — try again next tick */ }
   };
   const cleanup = () => {
     if (closed) return; closed = true; clearInterval(timer); process.stdout.off('resize', resize);
-    process.stdin.off('data', input); process.stdin.setRawMode(false); process.stdin.pause();
+    process.stdin.off('data', input);
+    try { process.stdin.setRawMode(false); } catch { /* stdin may already be closed */ }
+    process.stdin.pause();
+    process.off('SIGINT', onSignal); process.off('SIGTERM', onSignal); process.off('exit', cleanup);
     process.stdout.write(`\x1b[0m\x1b[?25h${capabilities.mouse ? '\x1b[?1000l\x1b[?1006l' : ''}${alternate ? '\x1b[?1049l' : '\n'}`);
   };
+  // Restore the terminal on any exit path the key handler can't see: a SIGTERM,
+  // an uncaught crash (via 'exit'), or a SIGINT that arrives outside raw mode.
+  const onSignal = () => { cleanup(); process.exit(130); };
   const resize = () => { capabilities = detectTerminalCapabilities(); renderer = new DifferentialRenderer(capabilities); process.stdout.write('\x1b[2J'); render(); };
   const input = (data: Buffer) => {
     const key = data.toString('utf8');
@@ -51,6 +62,11 @@ export async function runTui(options: TuiAppOptions = {}): Promise<void> {
   if (alternate) process.stdout.write('\x1b[?1049h');
   process.stdout.write(`\x1b[2J\x1b[?25l${capabilities.mouse ? '\x1b[?1000h\x1b[?1006h' : ''}`);
   process.stdin.setRawMode(true); process.stdin.resume(); process.stdin.on('data', input); process.stdout.on('resize', resize);
+  process.on('SIGINT', onSignal); process.on('SIGTERM', onSignal); process.on('exit', cleanup);
   const timer = setInterval(render, capabilities.reducedMotion ? 500 : 125); render();
-  await new Promise<void>(resolve => { const done = setInterval(() => { if (closed) { clearInterval(done); resolve(); } }, 50); });
+  try {
+    await new Promise<void>(resolve => { const done = setInterval(() => { if (closed) { clearInterval(done); resolve(); } }, 50); });
+  } finally {
+    cleanup();
+  }
 }

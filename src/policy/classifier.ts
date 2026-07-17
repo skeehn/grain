@@ -1,6 +1,10 @@
 import type { PolicyContext, ToolPolicyResult, ToolRisk } from './types.js';
 
-const READ_ONLY = new Set(['read', 'grep', 'workspace_scan', 'repo_map', 'inspect', 'search', 'run_tests', 'test_fix_loop', 'wiki_search', 'wiki_get']);
+// `ask_user` is a user-interaction prompt with no workspace/network side effects —
+// it must never require approval (that would ask the user to approve being asked),
+// and must not be policy-denied in non-interactive mode where it returns a graceful
+// "user input required" result on its own.
+const READ_ONLY = new Set(['read', 'grep', 'workspace_scan', 'repo_map', 'inspect', 'search', 'run_tests', 'test_fix_loop', 'wiki_search', 'wiki_get', 'ask_user']);
 const WRITES = new Set(['write', 'patch', 'multi_edit', 'plan', 'wiki_propose_update']);
 const NETWORK = /\b(curl|wget|ssh|scp|rsync|npm\s+publish|git\s+push|gh\s+pr|docker\s+push)\b/i;
 const DESTRUCTIVE = /(^|[;&|]\s*|\b)(rm|rmdir|shred|mkfs|dd)\b|git\s+(reset\s+--hard|clean|checkout\s+--)|DROP\s+(TABLE|DATABASE)|truncate\s+/i;

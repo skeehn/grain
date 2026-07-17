@@ -18,4 +18,11 @@ describe('tool approval policy', () => {
     expect(decidePolicy('write', {}, { ...base, benchmark: true }).decision).toBe('allow');
     expect(decidePolicy('bash', { command: 'git push' }, { ...base, benchmark: true }).decision).toBe('deny');
   });
+  test('ask_user is read-only and never requires approval or is denied', () => {
+    // Asking the user a question has no side effects — approving it would be
+    // absurd, and denying it in non-interactive mode breaks the clarify path.
+    expect(classifyTool('ask_user', { question: 'which db?' })).toBe('read_only');
+    expect(decidePolicy('ask_user', { question: 'which db?' }, { ...base, interactive: false }).decision).toBe('allow');
+    expect(decidePolicy('ask_user', { question: 'which db?' }, { ...base, interactive: true }).decision).toBe('allow');
+  });
 });
