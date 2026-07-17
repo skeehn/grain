@@ -49,6 +49,11 @@ export type AgentWorkspaceEvent =
 
 const MAX_TURNS = 30; // Safety limit to prevent infinite loops
 
+// Skills are re-injected on the first turn of every REPL message (fresh context
+// each turn), but the "Skills loaded" line only needs to be shown once per
+// process — repeating it on every message is pure noise in an interactive session.
+let skillsAnnounced = false;
+
 /** Builds a user message while preserving attachment context for every turn. */
 function buildUserContent(prompt: string, attachments: GrainAttachment[], supportsImages: boolean): ContentBlock[] {
   const attachmentContext = attachments.length ? `\n\nAttached material:\n${attachments.map(item => `- ${item.name} (${item.mediaType}, ${item.bytes} bytes) at ${item.storedPath}${item.kind === 'image' && !supportsImages ? ' — image retained; selected provider cannot receive vision input.' : ''}`).join('\n')}` : '';
@@ -343,9 +348,12 @@ export async function agentLoop(opts: AgentOpts): Promise<void> {
       const mdContext = await skillManager.getMarkdownContext(lastUserText);
       if (mdContext) {
         system += `\n\n${mdContext}`;
-        const mdTotal = (await skillManager.listMarkdownSkills()).length;
-        const mdShown = (mdContext.match(/^### /gm) ?? []).length;
-        renderer.info(`💡 Skills: ${mdShown} of ${mdTotal} md loaded`);
+        if (!skillsAnnounced) {
+          const mdTotal = (await skillManager.listMarkdownSkills()).length;
+          const mdShown = (mdContext.match(/^### /gm) ?? []).length;
+          renderer.info(`💡 Skills: ${mdShown} of ${mdTotal} md loaded`);
+          skillsAnnounced = true;
+        }
       }
     }
 

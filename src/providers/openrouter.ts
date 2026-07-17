@@ -4,6 +4,33 @@ export const OPENROUTER_POOL_MODEL = 'poolside/laguna-xs-2.1';
 const DEFAULT_MODEL = 'anthropic/claude-sonnet-4';
 const BASE_URL = 'https://openrouter.ai/api/v1/chat/completions';
 const STREAM_IDLE_TIMEOUT_MS = 90_000;
+// Free/community models throttle constantly (429) and upstream providers flap
+// (502/503). Retry a bounded number of times BEFORE any content has streamed,
+// honoring the provider's Retry-After when it's short enough to be worth waiting.
+const MAX_TRANSIENT_RETRIES = 3;
+const MAX_RETRY_WAIT_MS = 30_000;
+
+const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
+
+/** Retry delay (ms) from a 429/503 — Retry-After header or OpenRouter's
+ *  `retry_after_seconds` body field. Null when the response gives no hint. */
+export function parseRetryAfterMs(res: Response, bodyText: string): number | null {
+  const header = res.headers.get('retry-after');
+  if (header) { const s = Number(header); if (Number.isFinite(s)) return Math.max(0, s * 1000); }
+  const m = bodyText.match(/"retry_after_seconds(?:_raw)?"\s*:\s*([\d.]+)/);
+  if (m) return Math.max(0, Math.round(Number(m[1]) * 1000));
+  return null;
+}
+
+/** Collapse a raw provider error body into a short human message — never dump
+ *  the full 2KB JSON (which also risks leaking keys/PII into logs/engram). */
+export function summarizeProviderError(name: string, status: number, bodyText: string): string {
+  const raw = bodyText.match(/"raw"\s*:\s*"([^"]{0,180})/)?.[1];
+  const msg = bodyText.match(/"message"\s*:\s*"([^"]{0,180})/)?.[1];
+  const hint = (raw || msg || bodyText.slice(0, 160)).trim();
+  if (status === 429) return `${name} rate-limited (429). ${hint} — try again shortly or switch model with /model <name>.`.trim();
+  return `${name} API error ${status}: ${hint}`.trim();
+}
 
 export interface OpenAICompatibleOptions {
   name: string;
@@ -87,19 +114,29 @@ export class OpenRouterProvider implements Provider {
     };
 
     try {
-      refreshTimeout();
-      const response = await fetch(this.options.baseUrl, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${this.apiKey}`,
-          ...this.options.headers,
-        },
-        body: JSON.stringify(body),
-        signal: controller.signal,
-      });
-      if (!response.ok) {
-        yield { type: 'error', error: `${this.options.displayName} API error ${response.status}: ${(await response.text()).slice(0, 2_000)}` };
+      let response: Response;
+      for (let attempt = 0; ; attempt++) {
+        refreshTimeout();
+        response = await fetch(this.options.baseUrl, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${this.apiKey}`,
+            ...this.options.headers,
+          },
+          body: JSON.stringify(body),
+          signal: controller.signal,
+        });
+        if (response.ok) break;
+        const bodyText = (await response.text()).slice(0, 2_000);
+        const transient = response.status === 429 || response.status === 502 || response.status === 503;
+        if (transient && attempt < MAX_TRANSIENT_RETRIES) {
+          // Honor Retry-After when short; otherwise exponential backoff.
+          const backoff = parseRetryAfterMs(response, bodyText) ?? Math.min(MAX_RETRY_WAIT_MS, 1000 * 2 ** attempt);
+          if (backoff <= MAX_RETRY_WAIT_MS) { await sleep(backoff); continue; }
+        }
+        if (timer) clearTimeout(timer);
+        yield { type: 'error', error: summarizeProviderError(this.options.displayName, response.status, bodyText) };
         return;
       }
       const reader = response.body?.getReader();
