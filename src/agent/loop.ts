@@ -382,8 +382,16 @@ export async function agentLoop(opts: AgentOpts): Promise<void> {
       }
     }
 
-    // Context compaction
-    if (needsCompaction(messages)) {
+    // Context compaction — budget-aware, keyed to the model's REAL input window
+    // (not a fixed 180K). Big-context models (1M) now use their window; small
+    // ones (e.g. 32K ollama/vllm) actually compact before overflow instead of
+    // never triggering. `system` (prompt + skills) is counted as overhead since
+    // it lives outside `messages` but still consumes the window.
+    const capabilities = getModelCapabilities(provider.name, provider.model);
+    const outputReserve = Math.min(capabilities.maxOutputTokens, Math.max(512, Math.floor(capabilities.contextWindow * 0.2)));
+    const inputBudget = Math.max(4096, capabilities.contextWindow - outputReserve);
+    const systemOverhead = Math.ceil(system.length / 4);
+    if (needsCompaction(messages, inputBudget, systemOverhead)) {
       messages = compact(messages);
       renderer.warn('Context compacted.');
     }
@@ -401,7 +409,6 @@ export async function agentLoop(opts: AgentOpts): Promise<void> {
 
     try {
       const STREAM_TIMEOUT = 90000; // 90s inactivity (large files take time)
-      const capabilities = getModelCapabilities(provider.name, provider.model);
       const packed = packContext(capabilities, [
         { id: `system-${turnCount}`, kind: 'instruction', content: system, priority: 100, required: true,
           source: 'grain-system-prompt' },

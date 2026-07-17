@@ -18,7 +18,13 @@ export function getModelCapabilities(provider: string, model: string): ModelCapa
     };
   }
   if (provider === 'openrouter') {
-    return { ...base, contextWindow: normalized.includes('laguna') ? 262_144 : DEFAULT_CONTEXT,
+    // Match the big-context coding models so compaction uses their real window
+    // instead of the 128K default (wasting >80% of a 1M window otherwise).
+    const contextWindow =
+      normalized.includes('qwen3-coder') || normalized.includes('nemotron-3') ? 1_048_576 :
+      normalized.includes('laguna') || normalized.includes('qwen3-next') ? 262_144 :
+      DEFAULT_CONTEXT;
+    return { ...base, contextWindow,
       supportsParallelTools: true, supportsReasoning: normalized.includes('nemotron'), supportsStructuredOutput: true };
   }
   if (provider === 'anthropic' || provider === 'bedrock') {
