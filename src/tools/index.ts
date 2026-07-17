@@ -1,5 +1,6 @@
-import { join } from 'path';
+import { join, resolve, isAbsolute } from 'path';
 import { homedir } from 'os';
+import { snapshotBeforeEdit } from '../agent/checkpoint.js';
 import type { ExecutableTool, Tool, ToolResult } from '../providers/types.js';
 import { bashTool, executeBash, destroyShell, setBashOutputSink } from './bash.js';
 import { readTool, executeRead } from './read.js';
@@ -152,5 +153,13 @@ export async function executeTool(name: string, input: any): Promise<ToolResult>
   if (!executor) {
     return { content: `Unknown tool: ${name}`, is_error: true };
   }
+  // Snapshot a file's pre-edit state so a whole task can be reverted with /undo.
+  if (name === 'write' || name === 'patch') {
+    if (input?.path) snapshotBeforeEdit(resolvePath(input.path));
+  } else if (name === 'multi_edit' && Array.isArray(input?.edits)) {
+    for (const edit of input.edits) if (edit?.path) snapshotBeforeEdit(resolvePath(edit.path));
+  }
   return executor(input);
 }
+
+function resolvePath(p: string): string { return isAbsolute(p) ? p : resolve(_toolCwd, p); }

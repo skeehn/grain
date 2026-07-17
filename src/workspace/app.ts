@@ -9,6 +9,7 @@ import { resolveTheme, type GrainThemeName } from '../tui/theme.js';
 import { getSessionStats, statusLineText } from '../tui/status.js';
 import { interactiveSelect } from '../tui/select.js';
 import { catalogWithCurrent, nextModel } from '../tui/models.js';
+import { undoLast, changedFileCount } from '../agent/checkpoint.js';
 import { executeWorkspaceScan } from '../tools/workspace.js';
 import { executeGit } from '../tools/git.js';
 import { setToolCwd } from '../tools/index.js';
@@ -31,6 +32,7 @@ const HELP = [
   '/history              resume-aware session history',
   '/agents <mode> <task> create a durable task graph',
   '/theme <name>         field, studio, arcade, or system',
+  '/undo                 revert the last task’s file changes',
   '/settings             show connection and workspace settings',
   '@path                 attach a file to your next message',
   '/exit                 leave Grain',
@@ -71,6 +73,7 @@ const PALETTE_COMMANDS: Array<{ name: string; desc: string }> = [
   { name: 'history', desc: 'resume-aware session history' },
   { name: 'agents', desc: 'create a durable task graph' },
   { name: 'theme', desc: 'field · studio · arcade · system' },
+  { name: 'undo', desc: 'revert the last task’s file changes' },
   { name: 'settings', desc: 'connection and workspace settings' },
   { name: 'help', desc: 'show all controls' },
   { name: 'exit', desc: 'leave Grain' },
@@ -139,6 +142,12 @@ async function handleCommand(command: ComposerInput, state: WorkspaceState): Pro
       renderer.info(sessions.length ? sessions.slice(0, 8).map(session => `${session.id.slice(0, 8)}  ${session.title || 'conversation'}  ${session.updated_at}`).join('\n') : 'No previous conversations in this repository.'); return 'continue';
     }
     case 'settings': { const config = loadConfig(); renderer.info(`Provider: ${config.provider}\nModel: ${config.model || 'auto'}\nTheme: ${config.tui?.theme || 'field'}\nWorkspace: ${process.cwd()}`); return 'continue'; }
+    case 'undo': {
+      if (changedFileCount() === 0) { renderer.info('Nothing to undo — no file changes recorded for the last task.'); return 'continue'; }
+      const { restored, deleted } = undoLast();
+      renderer.success(`Undid last task: ${restored.length} file${restored.length === 1 ? '' : 's'} restored${deleted.length ? `, ${deleted.length} new file${deleted.length === 1 ? '' : 's'} removed` : ''}.`);
+      return 'continue';
+    }
     case 'wiki': {
       if (!command.argument) { renderer.info('Usage: /wiki build | /wiki verify | /wiki search <query>'); return 'continue'; }
       const [action, ...args] = command.argument.split(/\s+/);

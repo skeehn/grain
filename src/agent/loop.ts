@@ -11,6 +11,7 @@ import { getSessionStats, recordUsage } from '../tui/status.js';
 import { retrieveCodeContext } from '../tools/code-index.js';
 import { executeBash } from '../tools/bash.js';
 import { detectVerifyCommand } from './verify.js';
+import { newChangeset } from './checkpoint.js';
 import { LearningLedger } from '../learning/index.js';
 import { loadConfig, saveConfig } from '../config.js';
 import { createSession, addMessage, getMessages, getLastSession } from '../session/store.js';
@@ -330,6 +331,10 @@ export async function agentLoop(opts: AgentOpts): Promise<void> {
     messages.push({ role: 'user', content });
     addMessage(sessionId, 'user', content);
   }
+
+  // Fresh edit-checkpoint for this task, so /undo reverts exactly this task's
+  // file changes.
+  newChangeset();
 
   // Main agent loop - fluid execution
   let turnCount = 0;
