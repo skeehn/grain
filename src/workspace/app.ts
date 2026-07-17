@@ -32,6 +32,7 @@ const HELP = [
   '/history              resume-aware session history',
   '/agents <mode> <task> create a durable task graph',
   '/theme <name>         field, studio, arcade, or system',
+  '/effort low|medium|high  reasoning effort for capable models',
   '/undo                 revert the last task’s file changes',
   '/settings             show connection and workspace settings',
   '@path                 attach a file to your next message',
@@ -73,6 +74,7 @@ const PALETTE_COMMANDS: Array<{ name: string; desc: string }> = [
   { name: 'history', desc: 'resume-aware session history' },
   { name: 'agents', desc: 'create a durable task graph' },
   { name: 'theme', desc: 'field · studio · arcade · system' },
+  { name: 'effort', desc: 'reasoning effort: low · medium · high' },
   { name: 'undo', desc: 'revert the last task’s file changes' },
   { name: 'settings', desc: 'connection and workspace settings' },
   { name: 'help', desc: 'show all controls' },
@@ -142,6 +144,11 @@ async function handleCommand(command: ComposerInput, state: WorkspaceState): Pro
       renderer.info(sessions.length ? sessions.slice(0, 8).map(session => `${session.id.slice(0, 8)}  ${session.title || 'conversation'}  ${session.updated_at}`).join('\n') : 'No previous conversations in this repository.'); return 'continue';
     }
     case 'settings': { const config = loadConfig(); renderer.info(`Provider: ${config.provider}\nModel: ${config.model || 'auto'}\nTheme: ${config.tui?.theme || 'field'}\nWorkspace: ${process.cwd()}`); return 'continue'; }
+    case 'effort': {
+      const val = command.argument as 'low' | 'medium' | 'high';
+      if (!['low', 'medium', 'high'].includes(val)) { renderer.info('Usage: /effort low|medium|high'); return 'continue'; }
+      const cfg = loadConfig(); saveConfig({ ...cfg, effort: val }); renderer.success(`Reasoning effort → ${val}.`); return 'continue';
+    }
     case 'undo': {
       if (changedFileCount() === 0) { renderer.info('Nothing to undo — no file changes recorded for the last task.'); return 'continue'; }
       const { restored, deleted } = undoLast();
@@ -174,8 +181,8 @@ export async function runWorkspace(options: WorkspaceOptions = {}): Promise<void
   let input: string | null | undefined = options.prompt;
   while (true) {
     if (input === undefined) {
-      // Pi-style status line (tokens · context% · mode · model) above the prompt.
-      renderer.statusLine(statusLineText(getSessionStats(), state.mode));
+      // Pi-style status line (tokens · context% · mode · model · effort) above the prompt.
+      renderer.statusLine(statusLineText(getSessionStats(), state.mode, loadConfig().effort));
       input = await renderer.userPrompt('◇ ');
     }
     if (input === null) return;

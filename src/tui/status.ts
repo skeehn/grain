@@ -52,12 +52,13 @@ export function fmtContext(stats: SessionStats): string {
  *   ↑340k ↓78k · 37.7%/262k · execute · openrouter poolside/laguna-m.1:free
  * Returns the plain string; the renderer applies color.
  */
-export function statusLineText(stats: SessionStats, mode?: string): string {
+export function statusLineText(stats: SessionStats, mode?: string, effort?: string): string {
   const parts = [`↑${fmtTokens(stats.upTokens)} ↓${fmtTokens(stats.downTokens)}`];
   const ctx = fmtContext(stats);
   if (ctx) parts.push(ctx);
   if (mode) parts.push(mode);
   const model = stats.model ? `${stats.provider} ${stats.model}` : '';
   if (model) parts.push(model);
+  if (effort) parts.push(effort);
   return parts.join(' · ');
 }

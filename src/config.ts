@@ -11,6 +11,8 @@ export interface GrainConfig {
   model: string | null;
   engram_db: string;
   max_tokens: number;
+  /** Reasoning effort for models that support it (OpenRouter `reasoning.effort`). */
+  effort?: 'low' | 'medium' | 'high';
   plugins?: PluginsConfig;
   vllm?: {
     endpoint?: string;
