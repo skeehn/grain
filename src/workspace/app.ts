@@ -6,6 +6,7 @@ import { listRuns } from '../kernel/index.js';
 import { listSessions, workspaceKey } from '../session/store.js';
 import * as renderer from '../tui/renderer.js';
 import { resolveTheme, type GrainThemeName } from '../tui/theme.js';
+import { getSessionStats, statusLineText } from '../tui/status.js';
 import { executeWorkspaceScan } from '../tools/workspace.js';
 import { executeGit } from '../tools/git.js';
 import { setToolCwd } from '../tools/index.js';
@@ -103,7 +104,11 @@ export async function runWorkspace(options: WorkspaceOptions = {}): Promise<void
   workspaceHeader(state.mode);
   let input: string | null | undefined = options.prompt;
   while (true) {
-    if (input === undefined) input = await renderer.userPrompt('\n◇ ');
+    if (input === undefined) {
+      // Pi-style status line (tokens · context% · mode · model) above the prompt.
+      renderer.statusLine(statusLineText(getSessionStats(), state.mode));
+      input = await renderer.userPrompt('◇ ');
+    }
     if (input === null) return;
     const composer = parseComposerInput(input);
     input = undefined;

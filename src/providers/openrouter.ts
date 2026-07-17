@@ -133,7 +133,11 @@ export class OpenRouterProvider implements Provider {
         if (transient && attempt < MAX_TRANSIENT_RETRIES) {
           // Honor Retry-After when short; otherwise exponential backoff.
           const backoff = parseRetryAfterMs(response, bodyText) ?? Math.min(MAX_RETRY_WAIT_MS, 1000 * 2 ** attempt);
-          if (backoff <= MAX_RETRY_WAIT_MS) { await sleep(backoff); continue; }
+          if (backoff <= MAX_RETRY_WAIT_MS) {
+            yield { type: 'retry', attempt: attempt + 1, max: MAX_TRANSIENT_RETRIES, seconds: Math.round(backoff / 1000) };
+            await sleep(backoff);
+            continue;
+          }
         }
         if (timer) clearTimeout(timer);
         yield { type: 'error', error: summarizeProviderError(this.options.displayName, response.status, bodyText) };

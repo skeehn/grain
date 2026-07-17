@@ -7,6 +7,7 @@ import { classifyTaskComplexity, routeModel, explainRouting, resolveModelAlias, 
 import { trackToolCall, getContextSummary } from './context-tracker.js';
 import { getSystemPrompt } from '../system-prompt.js';
 import { getModelCapabilities, packContext } from '../context/index.js';
+import { getSessionStats, recordUsage } from '../tui/status.js';
 import { LearningLedger } from '../learning/index.js';
 import { loadConfig, saveConfig } from '../config.js';
 import { createSession, addMessage, getMessages, getLastSession } from '../session/store.js';
@@ -240,6 +241,14 @@ export async function agentLoop(opts: AgentOpts): Promise<void> {
   const provider = getProvider(providerName, modelName);
   renderer.info(`Using ${provider.name} / ${provider.model}`);
 
+  // Seed the status line with the active model + its window.
+  {
+    const stats = getSessionStats();
+    stats.provider = provider.name;
+    stats.model = provider.model;
+    stats.contextWindow = getModelCapabilities(provider.name, provider.model).contextWindow;
+  }
+
   const journal = RunJournal.create({ task: opts.prompt || 'interactive session', cwd: process.cwd(),
     provider: provider.name, model: provider.model, policy_profile: opts.benchmark ? 'benchmark' : 'default' });
   journal.transition('running');
@@ -470,6 +479,10 @@ export async function agentLoop(opts: AgentOpts): Promise<void> {
           throw new Error(event.error);
         } else if (event.type === 'usage') {
           journal.append('usage_recorded', { turn: turnCount, ...event });
+          recordUsage(getSessionStats(), event);
+        } else if (event.type === 'retry') {
+          if (!spinnerStopped) { spin.stop(); spinnerStopped = true; }
+          renderer.retryNotice(event.attempt, event.max, event.seconds);
         }
       }
 

@@ -19,6 +19,8 @@ const tone = {
   quiet: (s: string) => color ? chalk.hex('#817D73')(s) : s,
   danger: (s: string) => color ? chalk.hex('#E06C75')(s) : s,
   warning: (s: string) => color ? chalk.hex('#E5B567')(s) : s,
+  ok: (s: string) => color ? chalk.hex('#88A678')(s) : s,   // success green
+  run: (s: string) => color ? chalk.hex('#5F9BD6')(s) : s,  // running blue
 };
 
 export interface SpinnerHandle { stop(): void }
@@ -53,20 +55,37 @@ function stopCurrent(): void {
 export function streamText(text: string): void { stopCurrent(); sink().write(tone.text(text)); }
 export const stream = streamText;
 
+// Timing for the tool box footer — set on toolStart, read on toolResult.
+let toolStartedAt = 0;
+
+/** Human elapsed: 340 → "0.3s", 12_400 → "12.4s", 92_000 → "1m32s". */
+function fmtElapsed(ms: number): string {
+  if (ms < 1000) return `${(ms / 1000).toFixed(1)}s`;
+  if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`;
+  const m = Math.floor(ms / 60_000);
+  return `${m}m${Math.round((ms % 60_000) / 1000)}s`;
+}
+
 export function toolStart(name: string, input: any): void {
   stopCurrent();
-  const detail = input?._streaming ? 'running' : summarizeInput(name, input);
-  sink().write(`\n${tone.grain('◆')} ${chalk.bold(name)} ${detail ? tone.quiet(`· ${detail}`) : ''}\n`);
+  toolStartedAt = Date.now();
+  const detail = input?._streaming ? '' : summarizeInput(name, input);
+  // Blue left-bar header — the "running" state of the box.
+  sink().write(`\n${tone.run('▌')} ${chalk.bold(name)}${detail ? ` ${tone.quiet(detail)}` : ''}\n`);
 }
 export const tool = toolStart;
 
 export function toolResult(output: string, isError = false): void {
-  const max = Math.max(6, Math.min(18, Math.floor((process.stdout.rows || 30) * .45)));
-  const lines = output.split('\n');
+  const max = Math.max(8, Math.min(20, Math.floor((process.stdout.rows || 30) * .45)));
+  const lines = output.replace(/\s+$/, '').split('\n');
   const shown = lines.slice(0, max);
-  if (lines.length > max) shown.push(`… ${lines.length - max} more lines`);
-  const paint = isError ? tone.danger : tone.quiet;
-  sink().write(shown.map(line => paint(`  ${line}`)).join('\n') + `\n${tone.grain(isError ? '×' : '·')} ${isError ? 'tool failed' : 'done'}\n`);
+  const bar = isError ? tone.danger : tone.ok;
+  const body = shown.map(line => `${bar('▏')} ${tone.quiet(line)}`).join('\n');
+  const hidden = lines.length > max ? `\n${bar('▏')} ${tone.quiet(`… ${lines.length - max} more line${lines.length - max === 1 ? '' : 's'}`)}` : '';
+  const elapsed = toolStartedAt ? ` ${tone.quiet(fmtElapsed(Date.now() - toolStartedAt))}` : '';
+  const footer = isError ? `${tone.danger('▙ ✗ failed')}${elapsed}` : `${tone.ok('▙ ✓ done')}${elapsed}`;
+  sink().write(`${body}${hidden}\n${footer}\n`);
+  toolStartedAt = 0;
 }
 export function result(output: unknown, isError?: boolean): void {
   toolResult(typeof output === 'string' ? output : JSON.stringify(output, null, 2), isError);
@@ -78,6 +97,23 @@ export function warn(message: string): void { process.stderr.write(`${tone.warni
 export function error(message: string): void { process.stderr.write(`${tone.danger('×')} ${message}\n`); }
 export function info(message: string): void { sink().write(`${tone.quiet('·')} ${message}\n`); }
 export function dim(message: string): void { sink().write(`${tone.quiet(message)}\n`); }
+
+/**
+ * Pi-style status line: token/context/model, drawn as a full-width rule with a
+ * dim caption. Shown just above the input prompt so it's always in view without
+ * the complexity (and readline conflicts) of a scroll-region sticky bar.
+ */
+export function statusLine(text: string): void {
+  if (!text) return;
+  const width = Math.max(24, Math.min(process.stdout.columns || 80, 120));
+  const caption = text.length > width - 2 ? `${text.slice(0, width - 3)}…` : text;
+  sink().write(`${tone.quiet('─'.repeat(width))}\n${tone.quiet(caption)}\n`);
+}
+
+/** Retry countdown surfaced from a provider transient-error retry. */
+export function retryNotice(attempt: number, max: number, seconds: number): void {
+  sink().write(`${tone.warning('↻')} ${tone.quiet(`retrying (${attempt}/${max}) in ${seconds}s…`)}\n`);
+}
 
 const stateGlyph: Record<string, string> = {
   pending: '○', ready: '◇', running: '◈', waiting: '◌', succeeded: '◆', failed: '×', cancelled: '—', needs_reconciliation: '△',
