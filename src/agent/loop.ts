@@ -8,6 +8,7 @@ import { trackToolCall, getContextSummary } from './context-tracker.js';
 import { getSystemPrompt } from '../system-prompt.js';
 import { getModelCapabilities, packContext } from '../context/index.js';
 import { getSessionStats, recordUsage } from '../tui/status.js';
+import { retrieveCodeContext } from '../tools/code-index.js';
 import { LearningLedger } from '../learning/index.js';
 import { loadConfig, saveConfig } from '../config.js';
 import { createSession, addMessage, getMessages, getLastSession } from '../session/store.js';
@@ -384,11 +385,21 @@ export async function agentLoop(opts: AgentOpts): Promise<void> {
         }
       }
 
-      // Engram context
+      // Engram context (facts/memory)
       const engramContext = await engramRetrieve(lastUserText);
       if (engramContext.trim()) {
         system += `\n\nRelevant context from memory:\n${engramContext}`;
       }
+
+      // Native code retrieval — pull the most relevant repo locations for the
+      // task so the model starts oriented on a large codebase instead of
+      // grepping blind. Best-effort; never blocks a turn.
+      try {
+        const codeContext = retrieveCodeContext(lastUserText, 8);
+        if (codeContext.trim()) {
+          system += `\n\nRelevant code (from the repo index — read these to confirm):\n${codeContext}`;
+        }
+      } catch { /* index unavailable — fall back to tools */ }
     }
 
     // Context compaction — budget-aware, keyed to the model's REAL input window
