@@ -207,6 +207,12 @@ export const bashTool = {
   },
 };
 
+// Live-output sink for streaming a running command's stdout/stderr to the UI.
+// Kept decoupled from the renderer: the app layer sets it once at startup so
+// the tool never imports UI code.
+let bashOutputSink: ((line: string) => void) | null = null;
+export function setBashOutputSink(fn: ((line: string) => void) | null): void { bashOutputSink = fn; }
+
 export async function executeBash(
   input: { command: string; timeout?: number },
   cwd?: string,
@@ -240,7 +246,7 @@ export async function executeBash(
     session,
     input.command,
     timeoutMs,
-    (_line) => {}, // streaming lines suppressed — show result once at end
+    line => bashOutputSink?.(line), // stream live to the UI when a sink is set
   );
 
   if (exitCode !== 0 && exitCode !== 124) {
