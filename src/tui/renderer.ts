@@ -93,24 +93,50 @@ function fmtElapsed(ms: number): string {
   return `${m}m${Math.round((ms % 60_000) / 1000)}s`;
 }
 
+// Set true while a tool streams its output live so toolResult skips re-printing.
+let streamedThisTool = false;
+let streamedLines = 0;
+const STREAM_LINE_CAP = 200; // keep a noisy command from scrolling the world away
+
 export function toolStart(name: string, input: any): void {
   stopCurrent();
   toolStartedAt = Date.now();
+  streamedThisTool = false;
+  streamedLines = 0;
   const detail = input?._streaming ? '' : summarizeInput(name, input);
   // Blue left-bar header — the "running" state of the box.
   sink().write(`\n${tone.run('▌')} ${chalk.bold(name)}${detail ? ` ${tone.quiet(detail)}` : ''}\n`);
 }
 export const tool = toolStart;
 
+/** Live output line from a running tool (e.g. bash) — printed inside the box
+ *  as it arrives, so long builds/tests are watchable instead of a dead pause. */
+export function streamToolLine(line: string): void {
+  stopCurrent();
+  streamedThisTool = true;
+  if (streamedLines < STREAM_LINE_CAP) {
+    sink().write(`${tone.quiet('▏')} ${tone.quiet(line)}\n`);
+  } else if (streamedLines === STREAM_LINE_CAP) {
+    sink().write(`${tone.quiet('▏')} ${tone.quiet('… streaming (further output folded; full result below)')}\n`);
+  }
+  streamedLines++;
+}
+
 export function toolResult(output: string, isError = false): void {
+  const elapsed = toolStartedAt ? ` ${tone.quiet(fmtElapsed(Date.now() - toolStartedAt))}` : '';
+  const footer = isError ? `${tone.danger('▙ ✗ failed')}${elapsed}` : `${tone.ok('▙ ✓ done')}${elapsed}`;
+  // Output already streamed live — just close the box with the footer.
+  if (streamedThisTool) {
+    sink().write(`${footer}\n`);
+    toolStartedAt = 0; streamedThisTool = false; streamedLines = 0;
+    return;
+  }
   const max = Math.max(8, Math.min(20, Math.floor((process.stdout.rows || 30) * .45)));
   const lines = output.replace(/\s+$/, '').split('\n');
   const shown = lines.slice(0, max);
   const bar = isError ? tone.danger : tone.ok;
   const body = shown.map(line => `${bar('▏')} ${tone.quiet(line)}`).join('\n');
   const hidden = lines.length > max ? `\n${bar('▏')} ${tone.quiet(`… ${lines.length - max} more line${lines.length - max === 1 ? '' : 's'}`)}` : '';
-  const elapsed = toolStartedAt ? ` ${tone.quiet(fmtElapsed(Date.now() - toolStartedAt))}` : '';
-  const footer = isError ? `${tone.danger('▙ ✗ failed')}${elapsed}` : `${tone.ok('▙ ✓ done')}${elapsed}`;
   sink().write(`${body}${hidden}\n${footer}\n`);
   toolStartedAt = 0;
 }

@@ -1,7 +1,7 @@
 import { join } from 'path';
 import { homedir } from 'os';
 import type { ExecutableTool, Tool, ToolResult } from '../providers/types.js';
-import { bashTool, executeBash, destroyShell } from './bash.js';
+import { bashTool, executeBash, destroyShell, setBashOutputSink } from './bash.js';
 import { readTool, executeRead } from './read.js';
 import { writeTool, executeWrite } from './write.js';
 import { patchTool, executePatch } from './patch.js';
@@ -33,7 +33,7 @@ export * from './contract.js';
 // Tool execution context — set once at agent loop start
 let _toolCwd: string = process.cwd();
 export function setToolCwd(cwd: string) { _toolCwd = cwd; setWorkspaceRoot(cwd); setCodeIndexRoot(cwd); }
-export { destroyShell };
+export { destroyShell, setBashOutputSink };
 export { setQuestionJournal };
 
 // Plugin system initialization

@@ -1,7 +1,7 @@
 // Agent loop - fluid execution with streaming, error recovery, and quality control
 import type { Message, ContentBlock } from '../providers/types.js';
 import { getProvider } from '../providers/index.js';
-import { TOOLS, setToolCwd, destroyShell, registerDynamicTool, setQuestionJournal } from '../tools/index.js';
+import { TOOLS, setToolCwd, destroyShell, registerDynamicTool, setQuestionJournal, setBashOutputSink } from '../tools/index.js';
 import { closeMcpClients, discoverMcpTools } from '../mcp/index.js';
 import { classifyTaskComplexity, routeModel, explainRouting, resolveModelAlias, MODEL_CONFIGS } from '../router/index.js';
 import { trackToolCall, getContextSummary } from './context-tracker.js';
@@ -249,6 +249,10 @@ export async function agentLoop(opts: AgentOpts): Promise<void> {
     stats.model = provider.model;
     stats.contextWindow = getModelCapabilities(provider.name, provider.model).contextWindow;
   }
+
+  // Stream long-running command output live to the terminal (interactive only;
+  // in non-TTY/CI keep the single end-of-tool result to avoid noisy logs).
+  setBashOutputSink(process.stdout.isTTY ? renderer.streamToolLine : null);
 
   const journal = RunJournal.create({ task: opts.prompt || 'interactive session', cwd: process.cwd(),
     provider: provider.name, model: provider.model, policy_profile: opts.benchmark ? 'benchmark' : 'default' });
