@@ -103,6 +103,13 @@ function getLazyTools(): Tool[] {
 // Export TOOLS as a getter to ensure lazy init
 export const TOOLS: Tool[] = getLazyTools();
 
+// The tool set handed to a DELEGATED child: everything except the delegation
+// tools, so a child can never spawn its own (unbounded, depth-less) children.
+// Co-located with TOOLS to avoid a delegate.ts↔index.ts circular-init hazard.
+export function getChildTools(): Tool[] {
+  return TOOLS.filter(tool => tool && tool.name !== 'delegate' && tool.name !== 'spawn_agent');
+}
+
 const executors: Record<string, (input: any) => Promise<ToolResult>> = {
   bash: (input: any) => executeBash(input, _toolCwd),
   read: executeRead,
