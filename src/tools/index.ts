@@ -29,6 +29,7 @@ import { searchTool, executeSearch } from './search.js';
 import { askUserTool, setQuestionJournal } from './ask-user.js';
 import { codeSearchTool } from './code-search.js';
 import { setCodeIndexRoot } from './code-index.js';
+import { runAgentsTool } from './run-agents.js';
 export * from './contract.js';
 
 // Tool execution context — set once at agent loop start
@@ -97,6 +98,7 @@ function getLazyTools(): Tool[] {
     testFixLoopTool, // Run tests + return structured failures for fix loop
     planTool,        // Read/write .grain-plan.json — survives context compaction
     getSpawnAgentTool(), // Multi-agent orchestration (plugins)
+    runAgentsTool,   // Parallel worktree-isolated grain sub-agents (DAG)
     wikiSearchTool,
     wikiGetTool,
     wikiProposeTool,
@@ -111,7 +113,8 @@ export const TOOLS: Tool[] = getLazyTools();
 // tools, so a child can never spawn its own (unbounded, depth-less) children.
 // Co-located with TOOLS to avoid a delegate.ts↔index.ts circular-init hazard.
 export function getChildTools(): Tool[] {
-  return TOOLS.filter(tool => tool && tool.name !== 'delegate' && tool.name !== 'spawn_agent');
+  const forbidden = new Set(['delegate', 'spawn_agent', 'run_agents']);
+  return TOOLS.filter(tool => tool && !forbidden.has(tool.name));
 }
 
 const executors: Record<string, (input: any) => Promise<ToolResult>> = {
@@ -129,6 +132,7 @@ const executors: Record<string, (input: any) => Promise<ToolResult>> = {
   inspect: executeInspect,
   search: executeSearch,
   code_search: async input => codeSearchTool.execute(input),
+  run_agents: async input => runAgentsTool.execute(input),
   ask_user: async input => askUserTool.execute(input),
   multi_edit: executeMultiEdit,
   engram: executeEngram,

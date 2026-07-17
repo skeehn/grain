@@ -56,9 +56,14 @@ function saveStore() {
     }
     // Atomic write: a crash mid-write must not leave truncated JSON
     // (the corruption handler would then silently discard all history).
-    const tmp = DB_PATH + '.tmp';
-    writeFileSync(tmp, JSON.stringify(store, null, 2));
-    renameSync(tmp, DB_PATH);
+    // The tmp name is per-process so parallel grain instances (multi-agent
+    // worktree sub-agents share ~/.grain) don't race on a fixed tmp path and
+    // rename it out from under each other (ENOENT).
+    const tmp = `${DB_PATH}.${process.pid}.${Math.floor(performance.now())}.tmp`;
+    try {
+      writeFileSync(tmp, JSON.stringify(store, null, 2));
+      renameSync(tmp, DB_PATH);
+    } catch { /* another process may have written concurrently — history is best-effort */ }
   }
 }
 
