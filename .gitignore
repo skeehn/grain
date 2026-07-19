@@ -36,3 +36,4 @@ coverage/
 
 # nested site repo (separate project)
 grain-site/
+.gstack/
