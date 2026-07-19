@@ -1,5 +1,4 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'child_process';
-import { randomUUID } from 'crypto';
 import type { McpPrompt, McpResource, McpServerConfig, McpTool } from './types.js';
 
 interface Pending { resolve(value: any): void; reject(error: Error): void; timer: ReturnType<typeof setTimeout>; }
@@ -51,7 +50,7 @@ export class McpStdioClient {
       const abort = () => { const pending = this.pending.get(id); if (!pending) return; clearTimeout(pending.timer); this.pending.delete(id);
         this.notify('notifications/cancelled', { requestId: id, reason: 'cancelled by Grain' }); reject(new Error(`MCP ${method} cancelled`)); };
       signal?.addEventListener('abort', abort, { once: true });
-      try { this.write({ jsonrpc: '2.0', id, method, params, _meta: { invocationId: randomUUID() } }); }
+      try { this.write({ jsonrpc: '2.0', id, method, params }); }
       catch (error) { clearTimeout(timer); this.pending.delete(id); reject(error); }
     });
   }
