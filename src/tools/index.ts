@@ -151,8 +151,10 @@ const executors: Record<string, (input: any) => Promise<ToolResult>> = {
 };
 
 export function registerDynamicTool(tool: Tool, executor: (input: any) => Promise<ToolResult>): void {
-  if (TOOLS.some(existing => existing.name === tool.name)) return;
-  TOOLS.push(tool); executors[tool.name] = executor;
+  const index = TOOLS.findIndex(existing => existing.name === tool.name);
+  if (index >= 0) TOOLS[index] = tool;
+  else TOOLS.push(tool);
+  executors[tool.name] = executor;
 }
 
 export async function executeTool(name: string, input: any): Promise<ToolResult> {
