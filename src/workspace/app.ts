@@ -42,11 +42,14 @@ const HELP = [
 ].join('\n');
 
 export function parseComposerInput(value: string): ComposerInput {
+  const trimmed = value.trim();
+  if (trimmed.startsWith('/')) {
+    const [command, ...rest] = trimmed.slice(1).split(/\s+/);
+    return { command: command.toLowerCase(), argument: rest.join(' '), attachments: [] };
+  }
   const attachments: string[] = [];
   const text = value.replace(/(?:^|\s)@([^\s]+)/g, (_match, path: string) => { attachments.push(path); return ' '; }).replace(/\s{2,}/g, ' ').trim();
-  if (!text.startsWith('/')) return { argument: text, attachments };
-  const [command, ...rest] = text.slice(1).split(/\s+/);
-  return { command: command.toLowerCase(), argument: rest.join(' '), attachments };
+  return { argument: text, attachments };
 }
 
 function workspaceHeader(mode: WorkspaceMode, detail = 'ready'): void {
