@@ -26,7 +26,7 @@ import { setWorkspaceRoot } from '../workspace/index.js';
 import { wikiSearchTool, wikiGetTool, wikiProposeTool, executeWikiSearch, executeWikiGet, executeWikiPropose } from './wiki.js';
 import { inspectTool, executeInspect } from './inspect.js';
 import { searchTool, executeSearch } from './search.js';
-import { askUserTool, setQuestionJournal } from './ask-user.js';
+import { askUserTool, setQuestionJournal, setQuestionPrompt } from './ask-user.js';
 import { codeSearchTool } from './code-search.js';
 import { setCodeIndexRoot } from './code-index.js';
 import { runAgentsTool } from './run-agents.js';
@@ -37,7 +37,7 @@ export * from './contract.js';
 let _toolCwd: string = process.cwd();
 export function setToolCwd(cwd: string) { _toolCwd = cwd; setWorkspaceRoot(cwd); setCodeIndexRoot(cwd); }
 export { destroyShell, setBashOutputSink };
-export { setQuestionJournal };
+export { setQuestionJournal, setQuestionPrompt };
 
 // Plugin system initialization
 let _pluginRegistry: PluginRegistry | null = null;

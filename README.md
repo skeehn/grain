@@ -49,13 +49,14 @@ Grain connects a provider in the conversation the first time you run it.
 ## Quick start
 
 ```sh
-# Open the repository-scoped workspace
+# Open the full-screen workspace
 grain
 
 # Or begin with a task
 grain "explain the architecture of this project"
 
-# Inside Grain: /help, /plan, /files, /wiki, /history, /agents, /settings
+# Inside Grain: /help, /files, /diff, /tools, /context, /memory,
+# /history, /agents, /jobs, /settings
 # Attach context with @src/auth.ts or @screenshot.png
 
 # Run Poolside Laguna XS 2.1 through OpenRouter
@@ -73,15 +74,26 @@ grain update
 grain                         open the workspace
 grain "task"                  open the workspace with a task
 grain update                  update Grain
+grain --classic               use the line-oriented compatibility UI
 
 # Inside the workspace
 /help                         discover controls
-/plan                         plan before changing work
-/files /diff /wiki /history   inspect the repository and prior work
-/agents /settings /theme      access advanced capabilities
+/mode ask|plan|execute        choose approval and planning behavior
+/files /diff /wiki            inspect the repository and changes
+/tools /context /memory       inspect the live harness inputs and actions
+/history /agents /jobs        inspect durable conversations and automation
+/settings /theme /model       configure the current workspace
 ```
 
-`grain -p`, `grain runs`, `grain wiki`, `grain agents`, `grain lab`, and
+Outside a detected project Grain starts in safe general-chat mode; repository
+indexing and filesystem tools stay disabled until `/open PATH` selects a project.
+
+Scheduled jobs use standard five-field cron expressions (plus `@hourly`,
+`@daily`, `@weekly`, and `@monthly`). They run while the TUI is open. For
+always-on scheduling, invoke `grain jobs run-due` once per minute from cron or
+launchd; Grain records the last launch minute to suppress duplicate polling.
+
+`grain -p`, `grain runs`, `grain wiki`, `grain agents`, `grain jobs`, `grain lab`, and
 `grain config` remain stable expert and automation commands.
 
 ---

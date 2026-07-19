@@ -105,6 +105,13 @@ describe('parseArgs — existing behavior preserved', () => {
     expect(agents.utilityArg).toBe('implement auth');
   });
 
+  test('scheduled job commands retain cron and task arguments', () => {
+    const parsed = parseArgs(['node', 'grain', 'jobs', 'add', 'audit', '0', '9', '*', '*', '1-5', '--', 'review', 'the', 'repo']);
+    expect(parsed.command).toBe('jobs');
+    expect(parsed.utilitySubcmd).toBe('add');
+    expect(parsed.utilityArgs).toEqual(['audit', '0', '9', '*', '*', '1-5', '--', 'review', 'the', 'repo']);
+  });
+
   test('TUI command and presentation flags parse without changing classic prompts', () => {
     const tui = parseArgs(['node', 'grain', 'tui', '--run', 'run-1']);
     expect(tui.command).toBe('tui'); expect(tui.utilitySubcmd).toBe('--run'); expect(tui.utilityArg).toBe('run-1');

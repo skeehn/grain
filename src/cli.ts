@@ -19,6 +19,7 @@ import { handleAgentsCommand } from './commands/agents.js';
 import { runTui } from './tui/app.js';
 import type { GrainThemeName } from './tui/theme.js';
 import { handleLabCommand } from './commands/lab.js';
+import { handleJobsCommand } from './commands/jobs.js';
 
 // ─── Load ~/.grain/.env before anything else ──────────────────────────────────
 
@@ -44,7 +45,7 @@ const bold = (s: string) => `${c.bold}${s}${c.reset}`;
 // ─── Arg parser ───────────────────────────────────────────────────────────────
 
 interface ParsedArgs {
-  command?: 'init' | 'update' | 'config' | 'status' | 'serve' | 'help' | 'version' | 'skills' | 'engram' | 'wiki' | 'runs' | 'learning' | 'agents' | 'tui' | 'lab';
+  command?: 'init' | 'update' | 'config' | 'status' | 'serve' | 'help' | 'version' | 'skills' | 'engram' | 'wiki' | 'runs' | 'learning' | 'agents' | 'jobs' | 'tui' | 'lab';
   configSubcmd?: 'set' | 'reset' | 'show';
   configKey?: string;
   configValue?: string;
@@ -70,6 +71,7 @@ interface ParsedArgs {
   utilitySubcmd?: string;
   utilityArg?: string;
   utilityOutput?: string;
+  utilityArgs?: string[];
   unknownFlags?: string[]; // dash-tokens before any prompt text that match no known flag
 }
 
@@ -160,6 +162,9 @@ export function parseArgs(argv: string[]): ParsedArgs {
         result.utilityArg = args[i + 2];
         result.utilityOutput = args[i + 3];
         break;
+      }
+      if (arg === 'jobs') {
+        result.command = 'jobs'; result.utilitySubcmd = args[i + 1]; result.utilityArgs = args.slice(i + 2); break;
       }
     }
 
@@ -678,16 +683,18 @@ ${bold(`grain v${GRAIN_VERSION}`)} — your coding workspace
 Your first launch connects a provider in the conversation. Grain remembers the
 current repository, your sessions, theme, and approved tools for the session.
 
-Inside Grain, type ${bold('/help')} for plans, files, diffs, wiki, history, agents,
-attachments, models, settings, and themes. Grain asks before every write or
-risky action by default.
+Inside Grain, type ${bold('/help')} for chat, files, diffs, tools, context, memory,
+history, agents, scheduled jobs, models, settings, and themes. Grain asks before
+every write or risky action by default.
 
 ${bold('AUTOMATION')}
   grain -p "task" --yes             non-interactive script/CI task
+  grain --classic                   line-oriented interactive mode
+  grain jobs run-due               run due jobs (for system cron/launchd)
   --provider <name> --model <id>   one-run override
   --attach <path>                  attach text/code/image material
 
-Legacy expert commands (${dim('runs, wiki, agents, lab, config')}) remain available
+Expert commands (${dim('runs, wiki, agents, jobs, lab, config')}) remain available
 for scripts and diagnostics.
 `);
 }
@@ -940,6 +947,7 @@ async function main(): Promise<void> {
   if (parsed.command === 'runs') { handleRunsCommand(parsed.utilitySubcmd, parsed.utilityArg, parsed.utilityOutput); return; }
   if (parsed.command === 'learning') { handleLearningCommand(parsed.utilitySubcmd, parsed.utilityArg, parsed.utilityOutput); return; }
   if (parsed.command === 'agents') { await handleAgentsCommand(parsed.utilitySubcmd, parsed.utilityArg, parsed.utilityOutput); return; }
+  if (parsed.command === 'jobs') { await handleJobsCommand(parsed.utilitySubcmd, parsed.utilityArgs); return; }
   if (parsed.command === 'tui') {
     const config = loadConfig();
     if (parsed.utilitySubcmd && !['--run', '--resume'].includes(parsed.utilitySubcmd)) throw new Error('Usage: grain tui [--run|--resume <run-id>]');
@@ -980,6 +988,7 @@ async function main(): Promise<void> {
       benchmark: parsed.tbBridge,
       attachments: parsed.attachments,
       workspace: !parsed.printMode,
+      classic: parsed.classic,
     });
 
     // Signal done to TB bridge

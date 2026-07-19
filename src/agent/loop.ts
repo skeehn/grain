@@ -1,7 +1,7 @@
 // Agent loop - fluid execution with streaming, error recovery, and quality control
 import type { Message, ContentBlock } from '../providers/types.js';
 import { getProvider } from '../providers/index.js';
-import { TOOLS, setToolCwd, destroyShell, registerDynamicTool, setQuestionJournal, setBashOutputSink } from '../tools/index.js';
+import { TOOLS, setToolCwd, destroyShell, registerDynamicTool, setQuestionJournal, setQuestionPrompt, setBashOutputSink } from '../tools/index.js';
 import { closeMcpClients, discoverMcpTools } from '../mcp/index.js';
 import { classifyTaskComplexity, routeModel, explainRouting, resolveModelAlias, MODEL_CONFIGS } from '../router/index.js';
 import { trackToolCall, getContextSummary } from './context-tracker.js';
@@ -24,6 +24,7 @@ import { RunJournal } from '../kernel/index.js';
 import { ToolGateway } from '../policy/index.js';
 import { queueAttachment, type GrainAttachment } from '../attachments.js';
 import { readFileSync } from 'fs';
+import { resolveWorkspace } from '../workspace/root.js';
 
 export interface AgentOpts {
   prompt?: string;
@@ -45,9 +46,35 @@ export interface AgentOpts {
   /** Mutable workspace-scoped approvals, intentionally limited to a risk class. */
   approvedRisks?: Set<string>;
   onEvent?: (event: AgentWorkspaceEvent) => void;
+  /** Optional presentation adapter used by the full-screen TUI. */
+  ui?: AgentUi;
+  /** Explicit project root. Without one Grain discovers a repository upward from cwd. */
+  workspaceRoot?: string;
+  /** General chat disables repository indexing and filesystem/code tools. */
+  generalChat?: boolean;
+  /** Cancels an in-flight model stream or tool boundary. */
+  signal?: AbortSignal;
+}
+
+export interface AgentUi {
+  stream(text: string): void;
+  streamToolLine(line: string): void;
+  tool(name: string, input: unknown): void;
+  result(output: unknown, isError?: boolean): void;
+  success(message: string): void;
+  newLine(): void;
+  clearLine(): void;
+  warn(message: string): void;
+  error(message: string): void;
+  info(message: string): void;
+  dim(message: string): void;
+  retryNotice(attempt: number, max: number, seconds: number): void;
+  spinner(label?: string): { stop(): void };
+  userPrompt(promptText?: string): Promise<string | null>;
 }
 
 export type AgentWorkspaceEvent =
+  | { type: 'run'; runId: string; provider: string; model: string }
   | { type: 'status'; status: string; detail?: string }
   | { type: 'tool'; name: string; input?: unknown }
   | { type: 'approval'; name: string; risk: string; decision: 'allowed' | 'denied' }
@@ -73,7 +100,7 @@ function buildUserContent(prompt: string, attachments: GrainAttachment[], suppor
 // Wrap a provider stream so a stall between events rejects instead of hanging
 // forever. A plain flag checked inside `for await` never fires on a stalled
 // stream because the loop is blocked on a pending next().
-async function* withInactivityTimeout<T>(source: AsyncIterable<T>, ms: number): AsyncGenerator<T> {
+export async function* withInactivityTimeout<T>(source: AsyncIterable<T>, ms: number, signal?: AbortSignal): AsyncGenerator<T> {
   const it = source[Symbol.asyncIterator]();
   try {
     while (true) {
@@ -84,12 +111,19 @@ async function* withInactivityTimeout<T>(source: AsyncIterable<T>, ms: number): 
           ms,
         );
       });
+      let onAbort: (() => void) | undefined;
+      const cancelled = new Promise<never>((_, reject) => {
+        onAbort = () => reject(new Error('SIGINT'));
+        if (signal?.aborted) onAbort();
+        else signal?.addEventListener('abort', onAbort, { once: true });
+      });
       try {
-        const res = await Promise.race([it.next(), timeout]);
+        const res = await Promise.race([it.next(), timeout, cancelled]);
         if (res.done) return;
         yield res.value;
       } finally {
         clearTimeout(timer);
+        if (onAbort) signal?.removeEventListener('abort', onAbort);
       }
     }
   } finally {
@@ -117,6 +151,7 @@ interface ReflectionContext {
 async function runReflection(
   provider: ReturnType<typeof getProvider>,
   ctx: ReflectionContext,
+  ui: AgentUi = renderer,
 ): Promise<void> {
   const { runId, task, outcome, toolsUsed, filesChanged, errors } = ctx;
 
@@ -148,7 +183,7 @@ async function runReflection(
 
   let raw = '';
   try {
-    const spin = renderer.spinner('Reflecting...');
+    const spin = ui.spinner('Reflecting...');
     let stopped = false;
     // Best-effort, but a stalled stream must not hang the process after the
     // task already succeeded — bound it by inactivity like the main loop.
@@ -161,7 +196,7 @@ async function runReflection(
     if (!stopped) spin.stop();
   } catch (e: any) {
     // Reflection is best-effort — never block the user
-    renderer.dim(`  (reflection skipped: ${e?.message || e})`);
+    ui.dim(`  (reflection skipped: ${e?.message || e})`);
     return;
   }
 
@@ -197,28 +232,35 @@ async function runReflection(
   const candidates = learnings.map(learning => ledger.propose('procedure', learning, runId, tags));
 
   // Print Reflection section
-  renderer.newLine();
-  renderer.info('Learning candidates (awaiting independent validation):');
+  ui.newLine();
+  ui.info('Learning candidates (awaiting independent validation):');
   for (const candidate of candidates) {
-    renderer.dim(`  • ${candidate.statement} [${candidate.id.slice(0, 8)}]`);
+    ui.dim(`  • ${candidate.statement} [${candidate.id.slice(0, 8)}]`);
   }
-  renderer.newLine();
+  ui.newLine();
 }
 
 export async function agentLoop(opts: AgentOpts): Promise<void> {
+  const ui = opts.ui || renderer;
+  const discovered = resolveWorkspace(process.cwd());
+  const workspaceRoot = opts.workspaceRoot || discovered.root;
+  const generalChat = opts.generalChat ?? !workspaceRoot;
+  const availableTools = generalChat
+    ? TOOLS.filter(tool => ['engram', 'ask_user', 'finish'].includes(tool.name))
+    : TOOLS;
   if (opts.prompt?.startsWith('/theme')) {
     const theme = opts.prompt.trim().split(/\s+/)[1];
     if (!['field', 'studio', 'arcade', 'system'].includes(theme || '')) {
-      renderer.info('Usage: /theme field|studio|arcade|system'); return;
+      ui.info('Usage: /theme field|studio|arcade|system'); return;
     }
     const config = loadConfig(); saveConfig({ ...config, tui: { ...config.tui!, theme: theme as any, schemaVersion: 2 } });
-    renderer.success(`Theme set to ${theme}.`); return;
+    ui.success(`Theme set to ${theme}.`); return;
   }
   const config = loadConfig();
   const skillManager = getSkillManager();
   await skillManager.initialize();
   try { for (const remote of await discoverMcpTools()) registerDynamicTool(remote.tool, remote.execute); }
-  catch (error: any) { renderer.warn(`MCP discovery failed: ${error.message}`); }
+  catch (error: any) { ui.warn(`MCP discovery failed: ${error.message}`); }
 
   // Model routing
   let providerName = opts.provider || config.provider;
@@ -231,7 +273,7 @@ export async function agentLoop(opts: AgentOpts): Promise<void> {
       const mc = MODEL_CONFIGS[aliasKey];
       providerName = mc.provider;
       modelName = mc.model;
-      renderer.info(`🧠 Forced model → ${mc.label}`);
+      ui.info(`🧠 Forced model → ${mc.label}`);
     }
   }
 
@@ -240,11 +282,11 @@ export async function agentLoop(opts: AgentOpts): Promise<void> {
     const modelConfig = routeModel(complexity);
     providerName = modelConfig.provider;
     modelName = modelConfig.model;
-    renderer.info(`🧠 ${explainRouting(complexity, modelConfig)}`);
+    ui.info(`🧠 ${explainRouting(complexity, modelConfig)}`);
   }
 
   const provider = getProvider(providerName, modelName);
-  renderer.info(`Using ${provider.name} / ${provider.model}`);
+  ui.info(`Using ${provider.name} / ${provider.model}`);
 
   // Seed the status line with the active model + its window.
   {
@@ -256,13 +298,15 @@ export async function agentLoop(opts: AgentOpts): Promise<void> {
 
   // Stream long-running command output live to the terminal (interactive only;
   // in non-TTY/CI keep the single end-of-tool result to avoid noisy logs).
-  setBashOutputSink(process.stdout.isTTY ? renderer.streamToolLine : null);
+  setBashOutputSink(process.stdout.isTTY ? ui.streamToolLine : null);
 
   const journal = RunJournal.create({ task: opts.prompt || 'interactive session', cwd: process.cwd(),
     provider: provider.name, model: provider.model, policy_profile: opts.benchmark ? 'benchmark' : 'default' });
   journal.transition('running');
+  opts.onEvent?.({ type: 'run', runId: journal.metadata.run_id, provider: provider.name, model: provider.model });
   opts.onEvent?.({ type: 'status', status: 'running', detail: opts.mode || 'ask' });
   setQuestionJournal(journal);
+  setQuestionPrompt(ui.userPrompt);
   const attachments: GrainAttachment[] = [];
   try {
     for (const path of opts.attachments || []) {
@@ -284,7 +328,7 @@ export async function agentLoop(opts: AgentOpts): Promise<void> {
         opts.onEvent?.({ type: 'approval', name, risk: policy.risk, decision: 'allowed' });
         return true;
       }
-      const answer = await renderer.userPrompt(`Approve ${policy.risk} tool "${name}"? [y] once · [a]llow this session · [N]o `);
+      const answer = await ui.userPrompt(`Approve ${policy.risk} tool "${name}"? [y] once · [a]llow this session · [N]o `);
       const choice = answer?.trim().toLowerCase();
       const allowed = choice === 'y' || choice === 'yes' || choice === 'a' || choice === 'allow';
       if (choice === 'a' || choice === 'allow') opts.approvedRisks?.add(policy.risk);
@@ -298,14 +342,14 @@ export async function agentLoop(opts: AgentOpts): Promise<void> {
   let messages: Message[] = [];
 
   // Init persistent shell cwd to wherever grain was invoked
-  setToolCwd(process.cwd());
+  setToolCwd(workspaceRoot || process.cwd());
 
   if (opts.resume) {
     const last = await getLastSession(opts.workspaceKey);
     if (last) {
       sessionId = last;
       messages = await getMessages(sessionId);
-      renderer.info('Resumed session');
+      ui.info('Resumed session');
     } else {
       sessionId = await createSession(opts.prompt?.slice(0, 80), opts.workspaceKey);
     }
@@ -322,10 +366,10 @@ export async function agentLoop(opts: AgentOpts): Promise<void> {
   } else if (messages.length === 0) {
     // Non-TTY (subprocess): no prompt = nothing to do, exit cleanly
     if (!process.stdin.isTTY) return;
-    const input = await renderer.userPrompt();
+    const input = await ui.userPrompt();
     if (input === null) return; // stdin EOF
     if (!input.trim()) {
-      renderer.info('Type a command to get started, or Ctrl+C to exit.');
+      ui.info('Type a command to get started, or Ctrl+C to exit.');
       return agentLoop(opts);
     }
     const content = buildUserContent(input, attachments, getModelCapabilities(provider.name, provider.model).supportsImages);
@@ -375,7 +419,7 @@ export async function agentLoop(opts: AgentOpts): Promise<void> {
         if (!skillsAnnounced) {
           const mdTotal = (await skillManager.listMarkdownSkills()).length;
           const mdShown = (mdContext.match(/^### /gm) ?? []).length;
-          renderer.info(`💡 Skills: ${mdShown} of ${mdTotal} md loaded`);
+          ui.info(`💡 Skills: ${mdShown} of ${mdTotal} md loaded`);
           skillsAnnounced = true;
         }
       }
@@ -408,11 +452,9 @@ export async function agentLoop(opts: AgentOpts): Promise<void> {
       // Native code retrieval — pull the most relevant repo locations for the
       // task so the model starts oriented on a large codebase instead of
       // grepping blind. Best-effort; never blocks a turn.
-      try {
+      if (!generalChat) try {
         const codeContext = retrieveCodeContext(lastUserText, 8);
-        if (codeContext.trim()) {
-          system += `\n\nRelevant code (from the repo index — read these to confirm):\n${codeContext}`;
-        }
+        if (codeContext.trim()) system += `\n\nRelevant code (from the repo index — read these to confirm):\n${codeContext}`;
       } catch { /* index unavailable — fall back to tools */ }
     }
 
@@ -427,11 +469,11 @@ export async function agentLoop(opts: AgentOpts): Promise<void> {
     const systemOverhead = Math.ceil(system.length / 4);
     if (needsCompaction(messages, inputBudget, systemOverhead)) {
       messages = compact(messages);
-      renderer.warn('Context compacted.');
+      ui.warn('Context compacted.');
     }
 
     // Stream LLM response
-    const spin = renderer.spinner('Thinking...');
+    const spin = ui.spinner('Thinking...');
     const assistantBlocks: ContentBlock[] = [];
     let currentToolId = '';
     let currentToolInputJson = '';
@@ -455,15 +497,15 @@ export async function agentLoop(opts: AgentOpts): Promise<void> {
           source: 'grain-system-prompt' },
         { id: `conversation-${turnCount}`, kind: 'conversation', content: conversationText, priority: 90,
           required: true, source: `session:${sessionId}` },
-      ], TOOLS);
+      ], availableTools);
       journal.append('model_requested', { turn: turnCount, message_count: messages.length,
         context_manifest: packed.manifest, capabilities });
 
-      for await (const event of withInactivityTimeout(provider.stream(messages, system, packed.tools), STREAM_TIMEOUT)) {
+      for await (const event of withInactivityTimeout(provider.stream(messages, system, packed.tools), STREAM_TIMEOUT, opts.signal)) {
         if (event.type === 'text_delta') {
-          if (!spinnerStopped) { spin.stop(); renderer.clearLine(); spinnerStopped = true; }
+          if (!spinnerStopped) { spin.stop(); ui.clearLine(); spinnerStopped = true; }
           textBuffer += event.text;
-          renderer.stream(event.text);
+          ui.stream(event.text);
         } else if (event.type === 'tool_use_start') {
           hasToolUse = true;
           currentToolId = event.id;
@@ -475,8 +517,8 @@ export async function agentLoop(opts: AgentOpts): Promise<void> {
             name: event.name,
             input: {},
           });
-          if (!spinnerStopped) { spin.stop(); renderer.clearLine(); spinnerStopped = true; }
-          renderer.tool(event.name, { _streaming: true });
+          if (!spinnerStopped) { spin.stop(); ui.clearLine(); spinnerStopped = true; }
+          ui.tool(event.name, { _streaming: true });
           opts.onEvent?.({ type: 'tool', name: event.name });
         } else if (event.type === 'tool_use_delta') {
           const toolId = event.id || currentToolId;
@@ -499,11 +541,11 @@ export async function agentLoop(opts: AgentOpts): Promise<void> {
                   : block.name === 'patch' ? (parsed.path || '')
                   : '';
                 if (summary) {
-                  renderer.dim(`  → ${summary}`);
+                  ui.dim(`  → ${summary}`);
                 }
               }
             } catch (err) {
-              renderer.warn(`Failed to parse tool input: ${err}`);
+              ui.warn(`Failed to parse tool input: ${err}`);
               malformedToolIds.add(toolId);
             }
           }
@@ -514,7 +556,7 @@ export async function agentLoop(opts: AgentOpts): Promise<void> {
           recordUsage(getSessionStats(), event);
         } else if (event.type === 'retry') {
           if (!spinnerStopped) { spin.stop(); spinnerStopped = true; }
-          renderer.retryNotice(event.attempt, event.max, event.seconds);
+          ui.retryNotice(event.attempt, event.max, event.seconds);
         }
       }
 
@@ -523,7 +565,7 @@ export async function agentLoop(opts: AgentOpts): Promise<void> {
       if (textBuffer) {
         assistantBlocks.unshift({ type: 'text', text: textBuffer });
       }
-      renderer.newLine();
+      ui.newLine();
 
       // If no tool calls, this is a final text response
       if (!hasToolUse) {
@@ -533,7 +575,7 @@ export async function agentLoop(opts: AgentOpts): Promise<void> {
           messages.push({ role: 'assistant', content: assistantBlocks });
           addMessage(sessionId, 'assistant', assistantBlocks);
         } else {
-          renderer.warn('Provider returned an empty response.');
+          ui.warn('Provider returned an empty response.');
         }
 
         if (opts.oneShot) { journal.transition('succeeded'); closeMcpClients(); return; }
@@ -542,9 +584,9 @@ export async function agentLoop(opts: AgentOpts): Promise<void> {
         // If stdin is not a TTY (e.g. subprocess/CI), treat as one-shot and exit
         if (!process.stdin.isTTY) return;
 
-        renderer.newLine();
-        let nextInput = await renderer.userPrompt();
-        while (nextInput !== null && !nextInput.trim()) nextInput = await renderer.userPrompt();
+        ui.newLine();
+        let nextInput = await ui.userPrompt();
+        while (nextInput !== null && !nextInput.trim()) nextInput = await ui.userPrompt();
         if (nextInput === null) return; // stdin EOF
         const content = buildUserContent(nextInput, attachments, getModelCapabilities(provider.name, provider.model).supportsImages);
         messages.push({ role: 'user', content });
@@ -559,12 +601,13 @@ export async function agentLoop(opts: AgentOpts): Promise<void> {
 
       for (const block of assistantBlocks) {
         if (block.type !== 'tool_use') continue;
+        if (opts.signal?.aborted) throw new Error('SIGINT');
 
         // Never act on a tool whose input JSON failed to parse — its input is
         // a placeholder {}. This must precede the finish branch: a malformed
         // finish would otherwise silently end the task.
         if (malformedToolIds.has(block.id)) {
-          renderer.warn(`Skipping ${block.name}: malformed tool input`);
+          ui.warn(`Skipping ${block.name}: malformed tool input`);
           toolResults.push({
             type: 'tool_result',
             tool_use_id: block.id,
@@ -578,7 +621,7 @@ export async function agentLoop(opts: AgentOpts): Promise<void> {
           const evidence = Array.isArray(block.input?.evidence)
             ? block.input.evidence.filter((item: unknown) => typeof item === 'string' && item.trim()) : [];
           if (evidence.length === 0) {
-            renderer.warn('Finish rejected: verification evidence is required');
+            ui.warn('Finish rejected: verification evidence is required');
             opts.onEvent?.({ type: 'verification', passed: false, detail: 'verification evidence is required' });
             toolResults.push({ type: 'tool_result', tool_use_id: block.id,
               content: 'finish requires at least one concrete verification artifact or command result', is_error: true });
@@ -593,10 +636,10 @@ export async function agentLoop(opts: AgentOpts): Promise<void> {
             const verify = detectVerifyCommand(process.cwd());
             if (verify) {
               verifyAttempts++;
-              renderer.tool('verify', { _streaming: true });
-              renderer.dim(`  → ${verify.label}`);
+              ui.tool('verify', { _streaming: true });
+              ui.dim(`  → ${verify.label}`);
               const res = await executeBash({ command: verify.command, timeout: 180 }, process.cwd());
-              renderer.result(res.content, res.is_error);
+              ui.result(res.content, res.is_error);
               if (res.is_error) {
                 opts.onEvent?.({ type: 'verification', passed: false, detail: verify.label });
                 journal.append('verification_completed', { turn: turnCount, passed: false, check: verify.label });
@@ -610,7 +653,7 @@ export async function agentLoop(opts: AgentOpts): Promise<void> {
           }
 
           const msg = block.input?.result || block.input?.message || 'Task complete.';
-          renderer.success(`✓ ${msg}`);
+          ui.success(`✓ ${msg}`);
           opts.onEvent?.({ type: 'verification', passed: true, detail: String(msg) });
           finishCalled = true;
 
@@ -659,7 +702,7 @@ export async function agentLoop(opts: AgentOpts): Promise<void> {
         const displayContent = resultContent.length > 500
           ? resultContent.slice(0, 500) + `\n... (${resultContent.length} chars total)`
           : resultContent;
-        renderer.result(displayContent, result.is_error);
+        ui.result(displayContent, result.is_error);
 
         if (result.is_error) {
           sessionErrors.push(resultContent.slice(0, 120));
@@ -707,7 +750,7 @@ export async function agentLoop(opts: AgentOpts): Promise<void> {
               } catch { /* file vanished — skip */ }
             }
           } else if (shots.length) {
-            renderer.info('Screenshot captured, but the current model can\'t see images — switch to a vision model (e.g. /model claude…) to critique it.');
+            ui.info('Screenshot captured, but the current model can\'t see images — switch to a vision model (e.g. /model claude…) to critique it.');
           }
         }
         messages.push({ role: 'user', content: toolResults });
@@ -736,7 +779,7 @@ export async function agentLoop(opts: AgentOpts): Promise<void> {
             toolsUsed:    [...new Set(allToolsUsed)],
             filesChanged: [...new Set(allFilesChanged)],
             errors:       [...new Set(sessionErrors)],
-          });
+          }, ui);
         }
         // ─────────────────────────────────────────────────────────────────────
 
@@ -746,9 +789,9 @@ export async function agentLoop(opts: AgentOpts): Promise<void> {
         // Non-TTY (subprocess/CI): treat as one-shot
         if (!process.stdin.isTTY) return;
 
-        renderer.newLine();
-        let nextInput = await renderer.userPrompt();
-        while (nextInput !== null && !nextInput.trim()) nextInput = await renderer.userPrompt();
+        ui.newLine();
+        let nextInput = await ui.userPrompt();
+        while (nextInput !== null && !nextInput.trim()) nextInput = await ui.userPrompt();
         if (nextInput === null) return; // stdin EOF
         messages = []; // Fresh context for new task
         const content = buildUserContent(nextInput, attachments, getModelCapabilities(provider.name, provider.model).supportsImages);
@@ -764,20 +807,20 @@ export async function agentLoop(opts: AgentOpts): Promise<void> {
     } catch (err: any) {
       if (!spinnerStopped) spin.stop();
 
-      // Ctrl-C at an in-loop prompt (renderer.userPrompt rejects with 'SIGINT')
+      // Ctrl-C at an in-loop prompt (ui.userPrompt rejects with 'SIGINT')
       // is a user cancellation, not a provider failure — clean up and exit
       // without polluting engram/journal with a bogus provider_error.
       if (err?.message === 'SIGINT') {
         destroyShell();
         closeMcpClients();
         journal.transition('cancelled');
-        renderer.newLine();
-        renderer.info('Cancelled.');
+        ui.newLine();
+        ui.info('Cancelled.');
         if (opts.oneShot) throw err; // let cli.ts print the top-level goodbye
         return;
       }
 
-      if (!opts.oneShot) renderer.error(err.message);
+      if (!opts.oneShot) ui.error(err.message);
       await engramStore(`Error: ${err.message}`, ['error']);
       journal.append(/parse|protocol|malformed/i.test(err.message) ? 'protocol_error' : 'provider_error', { error: err.message, turn: turnCount });
       journal.transition('failed', { error: err.message });
@@ -789,27 +832,27 @@ export async function agentLoop(opts: AgentOpts): Promise<void> {
         const isQuota = /429|quota|rate.?limit|throttl/i.test(err.message);
         const isAuthz = /403|AccessDenied|not available|forbidden/i.test(err.message);
         if (isQuota) {
-          renderer.warn('Rate limit hit. Partial work saved to session. Run again to continue.');
+          ui.warn('Rate limit hit. Partial work saved to session. Run again to continue.');
         } else if (isAuthz) {
-          renderer.warn(`Provider error: ${err.message}`);
+          ui.warn(`Provider error: ${err.message}`);
         } else {
-          renderer.warn(`Task stopped due to error: ${err.message}`);
+          ui.warn(`Task stopped due to error: ${err.message}`);
         }
         throw err;
       }
 
-      renderer.newLine();
+      ui.newLine();
       if (!process.stdin.isTTY) break; // non-TTY: don't wait for retry
-      const retry = await renderer.userPrompt('Try again? ');
+      const retry = await ui.userPrompt('Try again? ');
       if (retry === null || !retry.trim() || retry.toLowerCase() === 'n') break;
       turnCount = 0;
     }
   }
 
   if (turnCount >= turnLimit) {
-    renderer.warn(`Reached ${turnLimit} turn limit. Use a more specific prompt or break into smaller tasks.`);
+    ui.warn(`Reached ${turnLimit} turn limit. Use a more specific prompt or break into smaller tasks.`);
     journal.transition('failed', { error: 'turn_limit', turn_limit: turnLimit });
   }
 
-  renderer.info('Goodbye!');
+  ui.info('Goodbye!');
 }

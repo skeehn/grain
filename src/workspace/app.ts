@@ -1,5 +1,5 @@
 import { existsSync, statSync } from 'fs';
-import { basename } from 'path';
+import { basename, resolve } from 'path';
 import { agentLoop, type AgentWorkspaceEvent } from '../agent/loop.js';
 import { loadConfig, saveConfig } from '../config.js';
 import { listRuns } from '../kernel/index.js';
@@ -16,6 +16,7 @@ import { setToolCwd } from '../tools/index.js';
 import { handleWikiCommand } from '../commands/wiki.js';
 import { handleAgentsCommand } from '../commands/agents.js';
 import { openProviderPage, ensureWorkspaceSetup } from './setup.js';
+import { resolveWorkspace } from './root.js';
 
 export type WorkspaceMode = 'ask' | 'plan' | 'execute';
 export interface WorkspaceOptions { prompt?: string; model?: string; provider?: string; autoApprove?: boolean; concise?: boolean; maxTurns?: number; attachments?: string[]; }
@@ -35,6 +36,7 @@ const HELP = [
   '/effort low|medium|high  reasoning effort for capable models',
   '/undo                 revert the last task’s file changes',
   '/settings             show connection and workspace settings',
+  '/open <path>          open a project from general chat',
   '@path                 attach a file to your next message',
   '/exit                 leave Grain',
 ].join('\n');
@@ -61,7 +63,7 @@ function attachmentPreview(paths: string[]): string[] {
   });
 }
 
-type WorkspaceState = { mode: WorkspaceMode; model?: string };
+type WorkspaceState = { mode: WorkspaceMode; model?: string; root?: string };
 
 // Commands surfaced in the "/" palette (name → one-line description).
 const PALETTE_COMMANDS: Array<{ name: string; desc: string }> = [
@@ -77,6 +79,7 @@ const PALETTE_COMMANDS: Array<{ name: string; desc: string }> = [
   { name: 'effort', desc: 'reasoning effort: low · medium · high' },
   { name: 'undo', desc: 'revert the last task’s file changes' },
   { name: 'settings', desc: 'connection and workspace settings' },
+  { name: 'open', desc: 'open a project path' },
   { name: 'help', desc: 'show all controls' },
   { name: 'exit', desc: 'leave Grain' },
 ];
@@ -134,16 +137,24 @@ async function handleCommand(command: ComposerInput, state: WorkspaceState): Pro
       if (!['field', 'studio', 'arcade', 'system'].includes(theme)) { renderer.info('Usage: /theme field|studio|arcade|system'); return 'continue'; }
       const config = loadConfig(); saveConfig({ ...config, tui: { ...config.tui!, theme, schemaVersion: 2 } }); renderer.success(`Theme: ${theme}.`); return 'continue';
     }
-    case 'files': renderer.info((await executeWorkspaceScan({ path: '.', max_depth: 2 })).content); return 'continue';
+    case 'files':
+      if (!state.root) { renderer.info('No project is open. Use /open <path>.'); return 'continue'; }
+      renderer.info((await executeWorkspaceScan({ path: '.', max_depth: 2 })).content); return 'continue';
     case 'diff': {
+      if (!state.root) { renderer.info('No project is open. Use /open <path>.'); return 'continue'; }
       const status = await executeGit({ action: 'status' });
       renderer.info(`${status.content}\n\nLatest run: ${listRuns().at(-1) || 'none'}`); return 'continue';
     }
     case 'history': {
-      const sessions = await listSessions(workspaceKey());
+      const sessions = await listSessions(state.root ? workspaceKey(state.root) : undefined);
       renderer.info(sessions.length ? sessions.slice(0, 8).map(session => `${session.id.slice(0, 8)}  ${session.title || 'conversation'}  ${session.updated_at}`).join('\n') : 'No previous conversations in this repository.'); return 'continue';
     }
-    case 'settings': { const config = loadConfig(); renderer.info(`Provider: ${config.provider}\nModel: ${config.model || 'auto'}\nTheme: ${config.tui?.theme || 'field'}\nWorkspace: ${process.cwd()}`); return 'continue'; }
+    case 'settings': { const config = loadConfig(); renderer.info(`Provider: ${config.provider}\nModel: ${config.model || 'auto'}\nTheme: ${config.tui?.theme || 'field'}\nWorkspace: ${state.root || 'general chat'}`); return 'continue'; }
+    case 'open': {
+      const path = resolve(command.argument || '.'); const opened = resolveWorkspace(path);
+      if (!opened.root) { renderer.info(`${path} has no project marker; remaining in general chat.`); return 'continue'; }
+      process.chdir(opened.root); state.root = opened.root; setToolCwd(opened.root); renderer.success(`Opened ${opened.root}`); return 'continue';
+    }
     case 'effort': {
       const val = command.argument as 'low' | 'medium' | 'high';
       if (!['low', 'medium', 'high'].includes(val)) { renderer.info('Usage: /effort low|medium|high'); return 'continue'; }
@@ -156,6 +167,7 @@ async function handleCommand(command: ComposerInput, state: WorkspaceState): Pro
       return 'continue';
     }
     case 'wiki': {
+      if (!state.root) { renderer.info('Open a project before using its wiki.'); return 'continue'; }
       if (!command.argument) { renderer.info('Usage: /wiki build | /wiki verify | /wiki search <query>'); return 'continue'; }
       const [action, ...args] = command.argument.split(/\s+/);
       await handleWikiCommand(action, args.join(' ') || undefined); return 'continue';
@@ -170,12 +182,13 @@ async function handleCommand(command: ComposerInput, state: WorkspaceState): Pro
 
 /** The day-to-day Grain entry point: a repository-scoped conversational workspace. */
 export async function runWorkspace(options: WorkspaceOptions = {}): Promise<void> {
-  setToolCwd(process.cwd());
+  const opened = resolveWorkspace(process.cwd());
+  setToolCwd(opened.root || process.cwd());
   // Animated dither launch banner on a fresh interactive start (not when a task
   // was passed on the command line — that user wants to get straight to work).
   if (!options.prompt && process.stdout.isTTY) await renderer.launchBanner();
   await ensureWorkspaceSetup({ prompt: renderer.userPrompt, info: renderer.info, open: openProviderPage });
-  const state: { mode: WorkspaceMode; model?: string; approvedRisks: Set<string> } = { mode: 'ask', model: options.model, approvedRisks: new Set() };
+  const state: { mode: WorkspaceMode; model?: string; root?: string; approvedRisks: Set<string> } = { mode: 'ask', model: options.model, root: opened.root, approvedRisks: new Set() };
   const queuedAttachments = [...(options.attachments || [])];
   workspaceHeader(state.mode);
   let input: string | null | undefined = options.prompt;
@@ -206,7 +219,8 @@ export async function runWorkspace(options: WorkspaceOptions = {}): Promise<void
     try {
       await agentLoop({ prompt: composer.argument, resume: true, oneShot: true, provider: options.provider, model: state.model,
         autoApprove: options.autoApprove || state.mode === 'execute', concise: options.concise, maxTurns: options.maxTurns,
-        attachments, workspaceKey: workspaceKey(), mode: state.mode, approvedRisks: state.approvedRisks, onEvent: event });
+        attachments, workspaceKey: state.root ? workspaceKey(state.root) : 'general', workspaceRoot: state.root, generalChat: !state.root,
+        mode: state.mode, approvedRisks: state.approvedRisks, onEvent: event });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       if (!feed.some(item => item.startsWith('failed ·'))) feed.push(`failed · ${message}`);
