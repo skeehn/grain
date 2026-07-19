@@ -109,17 +109,20 @@ grain has native MCP support for connecting to external tools and services.
 
 ### Computer Use (Desktop Automation)
 
-Connect grain to Anthropic's Computer Use MCP server for GUI automation:
+Connect grain to a Computer Use MCP server for GUI automation:
 
-**1. Configure MCP server in ~/.grain/config.json:**
+**1. Configure MCP server in ~/.grain/mcp.json:**
 
 ```json
 {
-  "mcp": {
-    "servers": {
-      "computer-use": {
-        "command": "npx",
-        "args": ["-y", "@anthropic-ai/mcp-server-computer-use"]
+  "servers": {
+    "computer-use": {
+      "transport": "stdio",
+      "command": "npx",
+      "args": ["-y", "computer-use-mcp@1.8.0"],
+      "trust": {
+        "enabled": true,
+        "allowTools": ["computer"]
       }
     }
   }
@@ -142,12 +145,10 @@ grain "Find the Submit button on this form and click it"
 grain "Verify the login button appears after entering credentials"
 ```
 
-**Available Tools:**
-- `computer_screenshot` — Capture screen or window
-- `computer_mouse_move` — Move cursor to coordinates
-- `computer_click` — Click at location
-- `computer_type` — Type text
-- `computer_execute_command` — Run shell commands
+**Available Tool:**
+- `mcp__computer-use__computer` — Take screenshots and perform explicitly requested mouse/keyboard actions.
+
+MCP tools are disabled unless both `trust.enabled` is true and the remote tool name appears in `trust.allowTools`.
 
 ### Other MCP Servers
 
@@ -156,11 +157,13 @@ grain works with any MCP-compatible server. Popular options:
 **Filesystem:**
 ```json
 {
-  "mcp": {
-    "servers": {
-      "filesystem": {
-        "command": "npx",
-        "args": ["-y", "@modelcontextprotocol/server-filesystem", "/path/to/allowed/dir"]
+  "servers": {
+    "filesystem": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/path/to/allowed/dir"],
+      "trust": {
+        "enabled": true,
+        "allowTools": ["read_file", "read_text_file", "list_directory", "search_files"]
       }
     }
   }
@@ -170,11 +173,13 @@ grain works with any MCP-compatible server. Popular options:
 **Git:**
 ```json
 {
-  "mcp": {
-    "servers": {
-      "git": {
-        "command": "npx",
-        "args": ["-y", "@modelcontextprotocol/server-git"]
+  "servers": {
+    "git": {
+      "command": "uvx",
+      "args": ["mcp-server-git", "--repository", "/path/to/repository"],
+      "trust": {
+        "enabled": true,
+        "allowTools": ["git_status", "git_diff_unstaged", "git_diff_staged", "git_log"]
       }
     }
   }
@@ -184,14 +189,14 @@ grain works with any MCP-compatible server. Popular options:
 **GitHub:**
 ```json
 {
-  "mcp": {
-    "servers": {
-      "github": {
-        "command": "npx",
-        "args": ["-y", "@modelcontextprotocol/server-github"],
-        "env": {
-          "GITHUB_TOKEN": "your-token-here"
-        }
+  "servers": {
+    "github": {
+      "command": "docker",
+      "args": ["run", "-i", "--rm", "-e", "GITHUB_PERSONAL_ACCESS_TOKEN", "ghcr.io/github/github-mcp-server"],
+      "trust": {
+        "enabled": true,
+        "allowTools": ["get_file_contents", "search_code", "list_commits"],
+        "inheritEnv": ["PATH", "HOME", "GITHUB_PERSONAL_ACCESS_TOKEN"]
       }
     }
   }

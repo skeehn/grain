@@ -12,6 +12,7 @@ import { join } from 'path';
 import { homedir } from 'os';
 import { loadConfig, getConfigDir, VALID_PROVIDERS, listEnvKeys } from '../config.js';
 import { discoverPlugins } from '../plugins/discovery.js';
+import { loadMcpConfig, mcpConfigPath } from '../mcp/config.js';
 
 // ─── ANSI helpers ─────────────────────────────────────────────────────────────
 const c = {
@@ -163,38 +164,20 @@ export async function handleConfigShow(): Promise<void> {
   console.log(sectionEnd());
   
   // ─── MCP Servers Section ──────────────────────────────────────────────────
-  // Check for MCP configuration in common locations
-  const mcpConfigPaths = [
-    join(homedir(), '.grain', 'mcp.json'),
-    join(homedir(), '.config', 'mcp', 'config.json'),
-    join(process.cwd(), '.mcp.json'),
-  ];
-  
   let mcpServers: Array<{ name: string; command?: string; url?: string }> = [];
-  
-  for (const mcpPath of mcpConfigPaths) {
-    if (existsSync(mcpPath)) {
-      try {
-        const { readFileSync } = await import('fs');
-        const mcpConfig = JSON.parse(readFileSync(mcpPath, 'utf-8'));
-        if (mcpConfig.mcpServers) {
-          for (const [name, server] of Object.entries(mcpConfig.mcpServers as Record<string, any>)) {
-            mcpServers.push({
-              name,
-              command: server.command,
-              url: server.url,
-            });
-          }
-        }
-      } catch { /* ignore parse errors */ }
-    }
-  }
+  let mcpError = '';
+  try {
+    mcpServers = Object.entries(loadMcpConfig().servers).map(([name, server]) => ({ name, command: server.command, url: server.url }));
+  } catch (error: any) { mcpError = error.message; }
   
   console.log(sectionHeader('MCP Servers'));
   
-  if (mcpServers.length === 0) {
+  if (mcpError) {
+    console.log(row('', `${err} ${mcpError}`));
+    console.log(row('Config file', dim(mcpConfigPath())));
+  } else if (mcpServers.length === 0) {
     console.log(row('', dim('None configured')));
-    console.log(row('', dim('Add MCP servers to ~/.grain/mcp.json')));
+    console.log(row('', dim(`Add MCP servers to ${mcpConfigPath()}`)));
   } else {
     for (const server of mcpServers) {
       const detail = server.url ?? server.command ?? '';

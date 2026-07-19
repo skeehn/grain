@@ -172,14 +172,17 @@ grain supports Model Context Protocol for controlling your desktop:
 
 **1. Configure Computer Use:**
 
-Add to `~/.grain/config.json`:
+Add to `~/.grain/mcp.json`:
 ```json
 {
-  "mcp": {
-    "servers": {
-      "computer-use": {
-        "command": "npx",
-        "args": ["-y", "@anthropic-ai/mcp-server-computer-use"]
+  "servers": {
+    "computer-use": {
+      "transport": "stdio",
+      "command": "npx",
+      "args": ["-y", "computer-use-mcp@1.8.0"],
+      "trust": {
+        "enabled": true,
+        "allowTools": ["computer"]
       }
     }
   }
@@ -204,6 +207,7 @@ Everything lives in `~/.grain/`:
 ```
 ~/.grain/
   config.json       provider, model, settings
+  mcp.json          trusted MCP server connections
   .env              API keys (chmod 600, auto-loaded)
   skills/           project-specific agent skills
   sessions.json     conversation history
