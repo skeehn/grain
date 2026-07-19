@@ -20,7 +20,7 @@ export function packContext(
   const budget = Math.max(1_024, capabilities.contextWindow - reserve);
   const toolNames = capabilities.preferredToolNames;
   const tools = capabilities.supportsTools
-    ? availableTools.filter(tool => !toolNames || toolNames.includes(tool.name))
+    ? availableTools.filter(tool => !toolNames || toolNames.includes(tool.name) || tool.name.startsWith('mcp__'))
     : [];
   const toolCandidate: ContextCandidate | undefined = tools.length ? {
     id: 'tool-schemas', kind: 'tool_schema', priority: 95, required: true,
