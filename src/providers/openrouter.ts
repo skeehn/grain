@@ -2,8 +2,9 @@ import type { Provider, Message, Tool, StreamEvent } from './types.js';
 import { loadConfig } from '../config.js';
 import { getModelCapabilities } from '../context/index.js';
 
-export const OPENROUTER_POOL_MODEL = 'poolside/laguna-xs-2.1';
-const DEFAULT_MODEL = 'anthropic/claude-sonnet-4';
+export const OPENROUTER_FREE_MODEL = 'openrouter/free';
+export const OPENROUTER_POOL_MODEL = 'poolside/laguna-xs-2.1:free';
+const DEFAULT_MODEL = OPENROUTER_FREE_MODEL;
 const BASE_URL = 'https://openrouter.ai/api/v1/chat/completions';
 const STREAM_IDLE_TIMEOUT_MS = 90_000;
 // Free/community models throttle constantly (429) and upstream providers flap
@@ -103,6 +104,12 @@ export class OpenRouterProvider implements Provider {
       stream_options: { include_usage: true },
       max_tokens: this.options.maxTokens ?? 16_384,
     };
+    // A specific free model can disappear or be saturated without warning.
+    // Keep the user's choice first, then let OpenRouter select another free
+    // model that supports this request (including its tool requirements).
+    if (this.name === 'openrouter' && this.model.endsWith(':free')) {
+      body.models = [OPENROUTER_FREE_MODEL];
+    }
     // Reasoning effort for models that support it (OpenRouter ignores it otherwise).
     const effort = loadConfig().effort;
     if (effort && getModelCapabilities(this.name, this.model).supportsReasoning) {

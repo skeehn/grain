@@ -5,15 +5,16 @@ export interface ModelChoice { provider: string; model: string; label: string; h
 
 export const MODEL_CATALOG: ModelChoice[] = [
   // Free (OpenRouter) — good for high-volume testing.
-  { provider: 'openrouter', model: 'poolside/laguna-m.1:free', label: 'laguna-m.1', hint: 'free · poolside · coding' },
+  { provider: 'openrouter', model: 'openrouter/free', label: 'auto free', hint: 'free · automatic compatible fallback' },
+  { provider: 'openrouter', model: 'google/gemma-4-26b-a4b-it:free', label: 'gemma-4-26b', hint: 'free · tools · 262K ctx' },
+  { provider: 'openrouter', model: 'poolside/laguna-xs-2.1:free', label: 'laguna-xs-2.1', hint: 'free · poolside · coding' },
   { provider: 'openrouter', model: 'nvidia/nemotron-3-super-120b-a12b:free', label: 'nemotron-3-super', hint: 'free · 1M ctx · responsive' },
   { provider: 'openrouter', model: 'qwen/qwen3-coder:free', label: 'qwen3-coder', hint: 'free · 1M ctx · coding' },
-  { provider: 'openrouter', model: 'nousresearch/hermes-3-llama-3.1-405b:free', label: 'hermes-3-405b', hint: 'free · 405B' },
-  { provider: 'openrouter', model: 'meta-llama/llama-3.3-70b-instruct:free', label: 'llama-3.3-70b', hint: 'free · 70B' },
+  { provider: 'openrouter', model: 'openai/gpt-oss-20b:free', label: 'gpt-oss-20b', hint: 'free · tools · 131K ctx' },
   // Strong paid (direct) — reach for hard tasks.
   { provider: 'anthropic', model: 'claude-sonnet-4-5', label: 'claude-sonnet-4.5', hint: 'anthropic · balanced' },
   { provider: 'anthropic', model: 'claude-opus-4-5', label: 'claude-opus-4.5', hint: 'anthropic · max quality' },
-  { provider: 'groq', model: 'qwen/qwen3-32b', label: 'qwen3-32b (groq)', hint: 'groq · very fast' },
+  { provider: 'groq', model: 'openai/gpt-oss-120b', label: 'gpt-oss-120b (groq)', hint: 'groq · very fast' },
 ];
 
 /** Catalog with the active (provider, model) marked current; a custom active

@@ -2,6 +2,11 @@ import { describe, test, expect } from 'bun:test';
 import { MODEL_CATALOG, catalogWithCurrent, nextModel } from '../src/tui/models.js';
 
 describe('model catalog', () => {
+  test('starts with automatic free routing and only advertises tool-capable free models', () => {
+    expect(MODEL_CATALOG[0].model).toBe('openrouter/free');
+    expect(MODEL_CATALOG.some(c => c.model === 'nousresearch/hermes-3-llama-3.1-405b:free')).toBe(false);
+  });
+
   test('marks the active model as current', () => {
     const list = catalogWithCurrent('openrouter', 'qwen/qwen3-coder:free');
     const current = list.filter(c => c.current);

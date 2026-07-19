@@ -5,8 +5,8 @@ type ProviderLoader = (model?: string) => Promise<Provider>;
 const defaultModels: Record<string, string> = {
   bedrock: 'us.anthropic.claude-sonnet-4-5-20250929-v1:0',
   anthropic: 'claude-sonnet-4-20250514',
-  openrouter: 'anthropic/claude-sonnet-4',
-  groq: 'qwen/qwen3-32b',
+  openrouter: 'openrouter/free',
+  groq: 'openai/gpt-oss-120b',
   ollama: 'qwen2.5-coder:7b',
   vllm: 'meta-llama/Llama-3-70B-Instruct',
 };

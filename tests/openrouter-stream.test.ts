@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { OpenRouterProvider, OPENROUTER_POOL_MODEL } from '../src/providers/openrouter.js';
+import { OpenRouterProvider, OPENROUTER_FREE_MODEL, OPENROUTER_POOL_MODEL } from '../src/providers/openrouter.js';
+import { getProvider } from '../src/providers/index.js';
 import type { StreamEvent } from '../src/providers/types.js';
 
 const originalFetch = globalThis.fetch;
@@ -19,7 +20,42 @@ afterEach(() => {
 
 describe('OpenRouter streaming', () => {
   test('uses the canonical Poolside model slug', () => {
-    expect(OPENROUTER_POOL_MODEL).toBe('poolside/laguna-xs-2.1');
+    expect(OPENROUTER_POOL_MODEL).toBe('poolside/laguna-xs-2.1:free');
+  });
+
+  test('defaults to OpenRouter free automatic routing', () => {
+    expect(new OpenRouterProvider().model).toBe(OPENROUTER_FREE_MODEL);
+    expect(getProvider('openrouter').model).toBe(OPENROUTER_FREE_MODEL);
+    expect(getProvider('groq').model).toBe('openai/gpt-oss-120b');
+  });
+
+  test('adds automatic free fallback after a specifically selected free model', async () => {
+    let requestBody: any;
+    globalThis.fetch = (async (_input, init) => {
+      requestBody = JSON.parse(String(init?.body));
+      return responseFrom([{ choices: [{ delta: {}, finish_reason: 'stop' }] }]);
+    }) as typeof fetch;
+
+    for await (const _event of new OpenRouterProvider('qwen/qwen3-coder:free').stream(
+      [{ role: 'user', content: [{ type: 'text', text: 'hello' }] }], 'system', [],
+    )) { /* consume */ }
+
+    expect(requestBody.model).toBe('qwen/qwen3-coder:free');
+    expect(requestBody.models).toEqual([OPENROUTER_FREE_MODEL]);
+  });
+
+  test('does not silently replace a selected paid model', async () => {
+    let requestBody: any;
+    globalThis.fetch = (async (_input, init) => {
+      requestBody = JSON.parse(String(init?.body));
+      return responseFrom([{ choices: [{ delta: {}, finish_reason: 'stop' }] }]);
+    }) as typeof fetch;
+
+    for await (const _event of new OpenRouterProvider('anthropic/claude-sonnet-4.5').stream(
+      [{ role: 'user', content: [{ type: 'text', text: 'hello' }] }], 'system', [],
+    )) { /* consume */ }
+
+    expect(requestBody.models).toBeUndefined();
   });
 
   test('keeps interleaved parallel tool calls associated by index', async () => {
