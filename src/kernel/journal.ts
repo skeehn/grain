@@ -1,6 +1,6 @@
 import {
   appendFileSync, closeSync, existsSync, fsyncSync, mkdirSync, openSync,
-  readFileSync, readdirSync, renameSync, writeFileSync,
+  readFileSync, readdirSync, renameSync, statSync, writeFileSync,
 } from 'fs';
 import { createHash, randomUUID } from 'crypto';
 import { join } from 'path';
@@ -36,7 +36,23 @@ export function runDirectory(runId: string): string {
 export function listRuns(): string[] {
   const root = join(grainHome(), 'runs');
   if (!existsSync(root)) return [];
-  return readdirSync(root).filter(name => existsSync(join(root, name, 'events.jsonl'))).sort();
+  return readdirSync(root)
+    .map(name => {
+      const path = join(root, name, 'events.jsonl');
+      if (!existsSync(path)) return undefined;
+      let createdAt = statSync(path).birthtimeMs || statSync(path).mtimeMs;
+      try {
+        const firstLine = readFileSync(path, 'utf8').split('\n', 1)[0];
+        const first = JSON.parse(firstLine) as RunEvent;
+        const timestamp = String((first.payload as any)?.created_at || first.timestamp || '');
+        const parsed = Date.parse(timestamp);
+        if (Number.isFinite(parsed)) createdAt = parsed;
+      } catch { /* keep the journal visible; replayRun reports corruption */ }
+      return { name, createdAt };
+    })
+    .filter((run): run is { name: string; createdAt: number } => Boolean(run))
+    .sort((a, b) => a.createdAt - b.createdAt || a.name.localeCompare(b.name))
+    .map(run => run.name);
 }
 
 export function readRunEvents(runId: string): RunEvent[] {
