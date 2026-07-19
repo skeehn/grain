@@ -44,6 +44,12 @@ export function resolveTuiConnection(options: Pick<TuiAppOptions, 'provider' | '
 
 export function transcriptOutputView(): TuiView { return 'chat'; }
 
+export function classifyTuiTaskError(message: string): { status: 'cancelled' | 'failed'; label: '△ ' | '× '; message: string } {
+  return message === 'SIGINT'
+    ? { status: 'cancelled', label: '△ ', message: 'Cancelled.' }
+    : { status: 'failed', label: '× ', message };
+}
+
 const HELP = [
   '/chat                      return to the conversation',
   '/diff /tools /context      inspect the current coding run',
@@ -221,7 +227,8 @@ async function runWorkspaceTui(options: TuiAppOptions): Promise<void> {
       status = 'ready';
       if (job) new ScheduleStore().markRun(job.id, { runId: currentRunId });
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error); status = 'failed'; add('× ', message);
+      const message = error instanceof Error ? error.message : String(error); const failure = classifyTuiTaskError(message);
+      status = failure.status; add(failure.label, failure.message);
       if (job) new ScheduleStore().markRun(job.id, { runId: currentRunId, error: message });
       if (/429|quota|rate.?limit|throttl/i.test(message) && !job) {
         const replacement = await ui.userPrompt('Rate-limited. Enter another model ID, or press Enter to keep the current model: ');
