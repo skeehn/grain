@@ -1,4 +1,4 @@
-import { execFileSync } from 'child_process';
+import { execFileSync, spawnSync } from 'child_process';
 import { existsSync, statSync } from 'fs';
 import { resolve } from 'path';
 import { agentLoop, type AgentUi, type AgentWorkspaceEvent } from '../agent/loop.js';
@@ -86,6 +86,19 @@ function projectName(root?: string): string {
   const parts = root.split('/').filter(Boolean); return parts.at(-1) || root;
 }
 
+export function collectWorkingTreeDiff(root: string): string {
+  const statusText = execFileSync('git', ['status', '--short'], { cwd: root, encoding: 'utf8' });
+  const stat = execFileSync('git', ['diff', '--stat'], { cwd: root, encoding: 'utf8' });
+  const tracked = execFileSync('git', ['diff', '--no-ext-diff', '--unified=3'], { cwd: root, encoding: 'utf8', maxBuffer: 2_000_000 });
+  const untracked = execFileSync('git', ['ls-files', '--others', '--exclude-standard'], { cwd: root, encoding: 'utf8' })
+    .split('\n').filter(Boolean).slice(0, 50);
+  const untrackedPatches = untracked.map(path => spawnSync('git', ['diff', '--no-index', '--unified=3', '--', '/dev/null', path], {
+    cwd: root, encoding: 'utf8', maxBuffer: 2_000_000,
+  }).stdout || '').filter(Boolean).join('\n');
+  return [statusText && `STATUS\n${statusText}`, stat && `SUMMARY\n${stat}`, (tracked || untrackedPatches) && `PATCH\n${tracked}${untrackedPatches}`]
+    .filter(Boolean).join('\n') || 'Working tree clean.';
+}
+
 async function runWorkspaceTui(options: TuiAppOptions): Promise<void> {
   let capabilities = detectTerminalCapabilities();
   let renderer = new DifferentialRenderer(capabilities);
@@ -161,11 +174,7 @@ async function runWorkspaceTui(options: TuiAppOptions): Promise<void> {
       if (target === 'diff') {
         if (!root) panels.set(target, ['No project is open. Use /open PATH first.']);
         else {
-          const statusText = execFileSync('git', ['status', '--short'], { cwd: root, encoding: 'utf8' });
-          const stat = execFileSync('git', ['diff', '--stat'], { cwd: root, encoding: 'utf8' });
-          const diff = execFileSync('git', ['diff', '--no-ext-diff', '--unified=3'], { cwd: root, encoding: 'utf8', maxBuffer: 2_000_000 });
-          const combined = [statusText && `STATUS\n${statusText}`, stat && `SUMMARY\n${stat}`, diff && `PATCH\n${diff}`].filter(Boolean).join('\n');
-          panels.set(target, (combined || 'Working tree clean.').split('\n').slice(0, 500));
+          panels.set(target, collectWorkingTreeDiff(root).split('\n').slice(0, 500));
         }
       } else if (target === 'tools') {
         const recent = currentRunId ? readRunEvents(currentRunId).filter(event => event.type === 'tool_started' || event.type === 'tool_completed').slice(-20)
