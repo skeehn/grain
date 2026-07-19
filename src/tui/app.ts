@@ -3,7 +3,7 @@ import { existsSync, statSync } from 'fs';
 import { resolve } from 'path';
 import { agentLoop, type AgentUi, type AgentWorkspaceEvent } from '../agent/loop.js';
 import { changedFileCount, undoLast } from '../agent/checkpoint.js';
-import { loadConfig, saveConfig } from '../config.js';
+import { loadConfig, saveConfig, type GrainConfig } from '../config.js';
 import { listRuns, readRunEvents, RunEngine, RunJournal } from '../kernel/index.js';
 import { TaskGraphStore } from '../orchestration/store.js';
 import { createTemplate } from '../commands/agents.js';
@@ -37,6 +37,13 @@ export interface TuiAppOptions {
 }
 
 const VIEWS: TuiView[] = ['chat', 'diff', 'tools', 'context', 'memory', 'history', 'agents', 'jobs'];
+
+export function resolveTuiConnection(options: Pick<TuiAppOptions, 'provider' | 'model'>, config: GrainConfig): { provider: string; model: string } {
+  return { provider: options.provider || config.provider, model: options.model || config.model || 'auto' };
+}
+
+export function transcriptOutputView(): TuiView { return 'chat'; }
+
 const HELP = [
   '/chat                      return to the conversation',
   '/diff /tools /context      inspect the current coding run',
@@ -100,7 +107,8 @@ async function runWorkspaceTui(options: TuiAppOptions): Promise<void> {
     const frame = blankFrame(capabilities.columns, capabilities.rows);
     frame.cells.forEach(cell => { cell.style.background = theme.canvas; cell.style.foreground = theme.text; });
     const width = frame.width; const height = frame.height;
-    const config = loadConfig(); const header = ` GRAIN  ${projectName(workspace.root)}  ${workspace.mode.toUpperCase()}  ${config.provider}/${config.model || 'auto'} `;
+    const connection = resolveTuiConnection(options, loadConfig());
+    const header = ` GRAIN  ${projectName(workspace.root)}  ${workspace.mode.toUpperCase()}  ${connection.provider}/${connection.model} `;
     putText(frame, 0, 0, header.padEnd(width), { foreground: theme.text, background: theme.panel, bold: true });
     const tabs = VIEWS.map(name => name === view ? `[${name.toUpperCase()}]` : name).join('  ');
     putText(frame, 1, 1, clip(tabs, width - 2), { foreground: theme.accent, background: theme.canvas, bold: true });
@@ -120,6 +128,7 @@ async function runWorkspaceTui(options: TuiAppOptions): Promise<void> {
   };
 
   const add = (label: string, message: unknown) => {
+    view = transcriptOutputView();
     streamLine = -1;
     const text = typeof message === 'string' ? message : JSON.stringify(message, null, 2);
     transcript.push(...text.split('\n').map((line, index) => `${index === 0 ? label : ' '.repeat(label.length)}${line}`));
@@ -238,7 +247,8 @@ async function runWorkspaceTui(options: TuiAppOptions): Promise<void> {
       const config = loadConfig(); saveConfig({ ...config, effort: arg as 'low' | 'medium' | 'high' }); add('◆ ', `Reasoning effort: ${arg}`); return;
     }
     if (command === 'settings') {
-      const config = loadConfig(); add('· ', `Provider: ${config.provider}\nModel: ${config.model || 'auto'}\nEffort: ${config.effort || 'default'}\nTheme: ${config.tui?.theme}\nWorkspace: ${workspace.root || 'general chat'}\nRun: ${currentRunId || 'none'}`); return;
+      const config = loadConfig(); const connection = resolveTuiConnection(options, config);
+      add('· ', `Provider: ${connection.provider}\nModel: ${connection.model}\nEffort: ${config.effort || 'default'}\nTheme: ${config.tui?.theme}\nWorkspace: ${workspace.root || 'general chat'}\nRun: ${currentRunId || 'none'}`); return;
     }
     if (command === 'files') {
       if (!workspace.root) { add('△ ', 'No project is open. Use /open PATH.'); return; }
