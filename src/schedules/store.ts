@@ -19,12 +19,11 @@ export interface ScheduledJob {
 
 interface ScheduleFile { schemaVersion: 1; jobs: ScheduledJob[]; }
 
-function schedulePath(): string {
-  return join(process.env.GRAIN_HOME || join(homedir(), '.grain'), 'schedules.json');
+function defaultScheduleHome(): string {
+  return process.env.GRAIN_HOME || join(homedir(), '.grain');
 }
 
-function readStore(): ScheduleFile {
-  const path = schedulePath();
+function readStore(path: string): ScheduleFile {
   if (!existsSync(path)) return { schemaVersion: 1, jobs: [] };
   try {
     const parsed = JSON.parse(readFileSync(path, 'utf8')) as ScheduleFile;
@@ -32,8 +31,8 @@ function readStore(): ScheduleFile {
   } catch { return { schemaVersion: 1, jobs: [] }; }
 }
 
-function writeStore(store: ScheduleFile): void {
-  const path = schedulePath(); mkdirSync(dirname(path), { recursive: true });
+function writeStore(path: string, store: ScheduleFile): void {
+  mkdirSync(dirname(path), { recursive: true });
   const temp = `${path}.${process.pid}.tmp`;
   writeFileSync(temp, `${JSON.stringify(store, null, 2)}\n`, { mode: 0o600 });
   renameSync(temp, path);
@@ -87,22 +86,26 @@ export function cronMatches(expression: string, date: Date): boolean {
 }
 
 export class ScheduleStore {
-  list(): ScheduledJob[] { return readStore().jobs.sort((a, b) => a.name.localeCompare(b.name)); }
+  private readonly path: string;
+
+  constructor(home = defaultScheduleHome()) { this.path = join(home, 'schedules.json'); }
+
+  list(): ScheduledJob[] { return readStore(this.path).jobs.sort((a, b) => a.name.localeCompare(b.name)); }
 
   add(input: { name: string; cron: string; prompt: string; workspace: string }): ScheduledJob {
     if (!input.name.trim() || !input.prompt.trim() || !input.workspace.trim()) throw new Error('Job name, prompt, and workspace are required');
-    const store = readStore();
+    const store = readStore(this.path);
     if (store.jobs.some(job => job.name === input.name.trim())) throw new Error(`Scheduled job already exists: ${input.name.trim()}`);
     const now = new Date().toISOString();
     const job: ScheduledJob = { id: randomUUID(), name: input.name.trim(), cron: normalizeCron(input.cron), prompt: input.prompt.trim(),
       workspace: input.workspace, enabled: true, createdAt: now, updatedAt: now };
-    store.jobs.push(job); writeStore(store); return job;
+    store.jobs.push(job); writeStore(this.path, store); return job;
   }
 
   remove(idOrName: string): boolean {
-    const store = readStore(); const before = store.jobs.length;
+    const store = readStore(this.path); const before = store.jobs.length;
     store.jobs = store.jobs.filter(job => job.id !== idOrName && job.name !== idOrName);
-    if (store.jobs.length !== before) writeStore(store);
+    if (store.jobs.length !== before) writeStore(this.path, store);
     return store.jobs.length !== before;
   }
 
@@ -120,8 +123,8 @@ export class ScheduleStore {
   }
 
   private update(idOrName: string, mutate: (job: ScheduledJob) => void): ScheduledJob {
-    const store = readStore(); const job = store.jobs.find(item => item.id === idOrName || item.name === idOrName);
+    const store = readStore(this.path); const job = store.jobs.find(item => item.id === idOrName || item.name === idOrName);
     if (!job) throw new Error(`Unknown scheduled job: ${idOrName}`);
-    mutate(job); job.updatedAt = new Date().toISOString(); writeStore(store); return job;
+    mutate(job); job.updatedAt = new Date().toISOString(); writeStore(this.path, store); return job;
   }
 }

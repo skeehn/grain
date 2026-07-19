@@ -1,7 +1,8 @@
-import { beforeEach, describe, expect, test } from 'bun:test';
+import { describe, expect, test } from 'bun:test';
+import { mkdtempSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
 import { cronMatches, normalizeCron, ScheduleStore } from '../src/schedules/index.js';
-
-beforeEach(() => { process.env.GRAIN_HOME = `${process.env.GRAIN_HOME}/schedules-${Math.random()}`; });
 
 describe('scheduled jobs', () => {
   test('normalizes aliases and matches five-field cron expressions', () => {
@@ -13,7 +14,7 @@ describe('scheduled jobs', () => {
   });
 
   test('persists jobs and returns each due job once per minute', () => {
-    const store = new ScheduleStore();
+    const store = new ScheduleStore(mkdtempSync(join(tmpdir(), 'grain-schedules-')));
     const job = store.add({ name: 'audit', cron: '* * * * *', prompt: 'audit the repo', workspace: '/tmp/repo' });
     const at = new Date('2026-07-20T13:30:10');
     expect(store.due(at).map(item => item.id)).toEqual([job.id]);
