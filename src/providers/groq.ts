@@ -1,6 +1,6 @@
 import { OpenRouterProvider } from './openrouter.js';
 
-export const GROQ_DEFAULT_MODEL = 'qwen/qwen3-32b';
+export const GROQ_DEFAULT_MODEL = 'openai/gpt-oss-120b';
 
 export class GroqProvider extends OpenRouterProvider {
   constructor(model?: string) {
