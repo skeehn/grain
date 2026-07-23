@@ -3,8 +3,12 @@ import { WikiEngine, startWikiServer } from '../wiki/index.js';
 export async function handleWikiCommand(subcommand = 'search', argument?: string): Promise<void> {
   const wiki = new WikiEngine();
   if (subcommand === 'build') {
-    const page = wiki.build();
-    console.log(`Built ${page.path} with ${page.sources.length} source references.`);
+    // The file index remains a page; the generated architecture and subsystem
+    // pages are what make the wiki worth reading and verifiable.
+    const index = wiki.build();
+    const pages = await wiki.buildAll();
+    console.log([index, ...pages].map(page => `${page.path}  (${page.sources.length} sources)`).join('\n'));
+    console.log(`Built ${pages.length + 1} page(s).`);
     const sync = await wiki.sync();
     if (sync.ok) console.log(`Synced ${sync.indexed} page(s), ${sync.edges} link edge(s) to engram memory.`);
     return;

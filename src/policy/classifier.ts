@@ -4,8 +4,8 @@ import type { PolicyContext, ToolPolicyResult, ToolRisk } from './types.js';
 // it must never require approval (that would ask the user to approve being asked),
 // and must not be policy-denied in non-interactive mode where it returns a graceful
 // "user input required" result on its own.
-const READ_ONLY = new Set(['read', 'grep', 'workspace_scan', 'repo_map', 'inspect', 'search', 'code_search', 'screenshot', 'run_tests', 'test_fix_loop', 'wiki_search', 'wiki_get', 'ask_user']);
-const WRITES = new Set(['write', 'patch', 'multi_edit', 'plan', 'wiki_propose_update', 'run_agents']);
+const READ_ONLY = new Set(['read', 'grep', 'workspace_scan', 'repo_map', 'inspect', 'search', 'code_search', 'screenshot', 'run_tests', 'test_fix_loop', 'wiki_search', 'wiki_get', 'work_recall', 'ask_user']);
+const WRITES = new Set(['write', 'patch', 'multi_edit', 'plan', 'wiki_propose_update', 'work_note', 'run_agents']);
 const NETWORK = /\b(curl|wget|ssh|scp|rsync|npm\s+publish|git\s+push|gh\s+pr|docker\s+push)\b/i;
 const DESTRUCTIVE = /(^|[;&|]\s*|\b)(rm|rmdir|shred|mkfs|dd)\b|git\s+(reset\s+--hard|clean|checkout\s+--)|DROP\s+(TABLE|DATABASE)|truncate\s+/i;
 const INDIRECT = /\$\(|`|>\s*\/|\beval\b|\bsource\b/i;
@@ -44,7 +44,12 @@ export function classifyTool(name: string, input: any): ToolRisk {
 export function decidePolicy(name: string, input: any, context: PolicyContext): ToolPolicyResult {
   const risk = classifyTool(name, input);
   if (risk === 'read_only') return { risk, decision: 'allow', reason: 'read-only operation' };
-  if (context.benchmark && risk === 'workspace_write') return { risk, decision: 'allow', reason: 'disposable benchmark workspace' };
+  // In Terminal-Bench bridge mode bash never runs on the Grain host: bash.ts
+  // serializes the command to Harbor, which executes it under the task's
+  // disposable container and network policy. Applying host command policy a
+  // second time breaks legitimate benchmark work such as redirection, package
+  // installation, and task cleanup without adding host protection.
+  if (context.benchmark && name === 'bash') return { risk, decision: 'allow', reason: 'Harbor-isolated benchmark container' };
   if (risk === 'workspace_write') {
     if (context.autoApprove) return { risk, decision: 'allow', reason: '--yes authorizes workspace writes' };
     return { risk, decision: context.interactive ? 'ask' : 'deny', reason: 'workspace write requires approval' };

@@ -155,6 +155,33 @@ export function resolveModelAlias(alias: string): string | undefined {
   return MODEL_ALIASES[alias.toLowerCase()];
 }
 
+/**
+ * Resolve a short alias *inside the provider the user already chose*.
+ *
+ * The old behaviour rewrote both provider and model from `MODEL_CONFIGS`, so
+ * `--provider claude-code --model opus` silently became Bedrock — unusable for
+ * anyone without AWS. An alias now only picks a model; the provider is only
+ * filled in when the caller did not state one.
+ */
+export function resolveModelForProvider(
+  provider: string | undefined,
+  model: string,
+): { provider: string | undefined; model: string; label?: string } {
+  const key = MODEL_ALIASES[model.toLowerCase()];
+  if (!key || !MODEL_CONFIGS[key]) return { provider, model };
+  const config = MODEL_CONFIGS[key];
+  // Every CLI agent speaks these aliases natively — pass them straight through.
+  if (provider && CLI_ALIAS_PROVIDERS.includes(provider)) return { provider, model: model.toLowerCase() };
+  if (provider && provider !== config.provider) {
+    // The user pinned a provider. Honour it and keep the alias as written; the
+    // provider knows its own naming better than this table does.
+    return { provider, model };
+  }
+  return { provider: config.provider, model: config.model, label: config.label };
+}
+
+const CLI_ALIAS_PROVIDERS = ['claude-code', 'codex', 'opencode'];
+
 export function routeModel(
   complexity: TaskComplexity,
   options?: { preferFast?: boolean; preferCheap?: boolean; forceModel?: string; }

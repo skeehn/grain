@@ -1,6 +1,6 @@
 # grain
 
-Self-improving AI coding agent with persistent memory.
+Local-first AI coding agent with governed learning and persistent memory.
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/skeehn/grain/main/install.sh | sh
@@ -13,12 +13,12 @@ curl -fsSL https://raw.githubusercontent.com/skeehn/grain/main/install.sh | sh
 grain is a **multi-agent AI coding orchestrator** — it reads your codebase, writes code, runs commands, and coordinates with other AI agents to get work done.
 
 **Key features:**
-- 🤖 **Multi-agent orchestration** — Delegate to Claude Code, Codex, Aider, or custom agents
+- 🤖 **Multi-agent orchestration** — Coordinate Grain-native, Claude Code, Codex, OpenCode, Hermes, or custom agents
 - 🏠 **Local model hosting** — Run 100% private with vLLM (Llama 3, DeepSeek Coder, etc.)
 - 🧠 **Persistent memory** — Uses [engram](https://github.com/skeehn/engram) knowledge graph across sessions
 - 🎯 **Smart routing** — Auto-routes tasks to the cheapest capable model
 - 🔌 **MCP support** — Connect to any Model Context Protocol server (Computer Use, GitHub, etc.)
-- 📦 **Zero config** — Works out of the box with AWS Bedrock, Anthropic, OpenRouter, or Ollama
+- 🩺 **Guided setup** — `grain setup` and `grain doctor` validate providers, profiles, executors, Git, and Engram
 - 🌾 **Purpose-built terminal UI** — Ordered Bayer-dither activity, compact tool cards, no-color and reduced-motion support
 - 🧪 **One-command quality gate** — Tests, typecheck, and production build via `bun run check`
 - 🧾 **Replayable runs** — Hash-chained event journals record model, policy, tool, usage, and terminal outcomes
@@ -55,12 +55,19 @@ grain
 # Or begin with a task
 grain "explain the architecture of this project"
 
+# Verify this machine before a real coding run
+grain doctor
+
 # Inside Grain: /help, /files, /diff, /tools, /context, /memory,
 # /history, /agents, /jobs, /settings
 # Attach context with @src/auth.ts or @screenshot.png
 
-# Run Poolside Laguna XS 2.1 through OpenRouter
-grain --provider openrouter --model pool "fix and test this project"
+# Pick any model — subscriptions, local runtimes, or APIs — from one list
+grain            # then type /model
+
+# Or name one directly
+grain --model claude-code:opus "fix and test this project"
+grain --model openrouter:openrouter/free "fix and test this project"
 
 # Update later
 grain update
@@ -74,6 +81,10 @@ grain update
 grain                         open the workspace
 grain "task"                  open the workspace with a task
 grain update                  update Grain
+grain setup                   configure providers and workspace defaults
+grain doctor                  preflight config, executors, Git, and Engram
+grain memory status           inspect Engram transport and governance state
+grain skills validate         validate portable Agent Skills packages
 grain --classic               use the line-oriented compatibility UI
 
 # Inside the workspace
@@ -81,7 +92,18 @@ grain --classic               use the line-oriented compatibility UI
 /mode ask|plan|execute        choose approval and planning behavior
 /files /diff /wiki            inspect the repository and changes
 /tools /context /memory       inspect the live harness inputs and actions
+/context explain              show context allocation and durable compactions
+/memory search QUERY          search promoted repository-scoped memory
+/memory status                show v1/legacy/degraded Engram state
+/memory inspect ID            show provenance and governance state
+/memory edit ID CONTENT       update a governed memory record (v1)
+/memory forget ID             request verified deletion (v1)
+/memory export|rebuild        export scoped memory or rebuild indexes (v1)
+grain learning migrate PATH   resumably import the verified JSONL ledger to v1
 /history /agents /jobs        inspect durable conversations and automation
+/agent NAME /workflow NAME    select a profile or bounded workflow recipe
+/loop /budget /steer          inspect recursion limits or steer active work
+/detach /attach               leave and rejoin background work
 /settings /theme /model       configure the current workspace
 ```
 
@@ -89,16 +111,46 @@ Outside a detected project Grain starts in safe general-chat mode; repository
 indexing and filesystem tools stay disabled until `/open PATH` selects a project.
 
 Scheduled jobs use standard five-field cron expressions (plus `@hourly`,
-`@daily`, `@weekly`, and `@monthly`). They run while the TUI is open. For
-always-on scheduling, invoke `grain jobs run-due` once per minute from cron or
-launchd; Grain records the last launch minute to suppress duplicate polling.
+`@daily`, `@weekly`, and `@monthly`). Automatic execution belongs to the
+supervised `grain daemon`; `grain jobs run-due` is the explicit one-shot path.
+The TUI can inspect and edit jobs but does not own a background timer. Atomic
+leases prevent concurrent daemons from claiming the same launch. Use
+`grain daemon install` to generate a reviewable launchd/systemd user-service
+template.
 
 `grain -p`, `grain runs`, `grain wiki`, `grain agents`, `grain jobs`, `grain lab`, and
 `grain config` remain stable expert and automation commands.
 
 ---
 
-## Providers
+## Models
+
+`/model` opens one picker covering every model this machine can actually run —
+subscriptions first, then local runtimes, then paid APIs. Anything unavailable is
+listed with the exact command that fixes it, so nothing is silently missing.
+
+```sh
+grain            # then: /model
+/model claude-code:opus     # or select it from the picker
+/model codex                # or ollama:qwen2.5-coder:7b, openrouter:<id>, …
+```
+
+The same selector works for one-shot runs: `grain -p "task" --model claude-code:opus`.
+
+### Subscription agents (no API key)
+
+Grain drives coding-agent CLIs you are already signed into, so Claude and Codex
+keep working when the matching API key has no credit. The child agent runs its
+own tools in your working tree; Grain streams its narration and keeps the
+conversation alive across invocations, per repository.
+
+| Provider      | Setup | Cost |
+|---------------|-------|------|
+| `claude-code` | Install the `claude` CLI and sign in | Your Claude subscription |
+| `codex`       | Install the `codex` CLI and sign in  | Your ChatGPT subscription |
+| `opencode`    | Install the `opencode` CLI           | Whatever OpenCode is configured with |
+
+### Direct APIs and local runtimes
 
 | Provider    | Setup | Cost |
 |-------------|-------|------|
@@ -106,6 +158,7 @@ launchd; Grain records the last launch minute to suppress duplicate polling.
 | `anthropic` | `grain config set key ANTHROPIC_API_KEY sk-ant-...` | ~$0.003/task |
 | `openrouter`| `grain config set key OPENROUTER_API_KEY ...` | Varies |
 | `groq`      | `grain config set key GROQ_API_KEY ...`       | `qwen/qwen3-32b` |
+| `xai`       | `grain config set key XAI_API_KEY ...`        | Varies |
 | `ollama`    | Install [Ollama](https://ollama.ai), no key needed | Free (local) |
 | `vllm`      | See **Local Models** below | Free (local) |
 
@@ -145,22 +198,41 @@ See [PLUGINS.md](PLUGINS.md) for recommended models and hardware requirements.
 
 ## Multi-Agent Orchestration
 
-grain can delegate work to specialized coding agents:
+Grain can run a bounded, durable graph of specialized agents. Each node may use
+a different direct API, local model, subscription CLI, or stdio adapter. Writers
+operate in isolated worktrees and merge only after verification.
 
 ```sh
-# Let grain choose the best agent
-grain "review auth.py for security issues"
+# Inspect and validate layered profiles
+grain agents profiles
+grain agents validate
 
-# Use a specific agent
-grain --agent claude-code "refactor database.ts"
+# Run one portable profile through the durable scheduler
+grain agents run reviewer "review auth.py for security issues"
 
-# Or via the spawn_agent tool in interactive mode
+# Create a reusable bounded graph recipe
+grain agents recursive-delivery "refactor database.ts and prove it works"
 ```
 
-**Available agents:**
-- `claude-code` — Code review, refactoring, complex logic
-- `codex` — Rapid prototyping, exploratory coding
-- `aider` — Multi-file edits (coming soon)
+Portable profiles live at `.grain/agents/<name>.md`:
+
+```md
+---
+id: reviewer
+description: Read-only independent reviewer
+executor: codex
+model: gpt-5-codex
+permissions: {"read":"allow","write":"deny","bash":"ask"}
+maxDepth: 2
+maxFanOut: 4
+---
+Inspect the requested change and return evidence, risks, and a verdict.
+```
+
+Built-in executor targets are `grain-native`, `direct-api`, `claude-code`,
+`codex`, `opencode`, `hermes`, and `stdio`. Grain uses installed external
+binaries and user-owned logins; it does not extract subscription credentials or
+silently substitute an executor.
 
 See [PLUGINS.md](PLUGINS.md) for full documentation.
 
@@ -217,17 +289,24 @@ Everything lives in `~/.grain/`:
 
 ## Memory (engram)
 
-grain uses [engram](https://github.com/skeehn/engram) — a local Rust knowledge graph — for persistent memory. Install script downloads it automatically.
+grain uses [engram](https://github.com/skeehn/engram) — a local Rust knowledge graph — for persistent memory. Install script downloads it automatically. Grain negotiates the typed `/v1` contract when available and retains legacy reads for existing installations.
 
 engram starts automatically in the background when you run grain. It runs at `localhost:7474`.
 
-Without engram, grain still works — just without cross-session memory.
+Without engram, grain enters a visible degraded mode and continues coding without cross-session recall. Automatic `/v1` writes are scoped candidates with provenance and require independent validation before normal recall.
 
 Conversation history and Engram knowledge serve different purposes. Session files
 preserve resumable chat/tool history per repository. Engram stores retrieved facts
 and is automatically scoped to the active repository so unrelated projects do not
 leak context into each other. See [docs/DURABILITY.md](docs/DURABILITY.md) for the
 storage, recovery, and maintenance contract.
+
+The evidence-gated 1.0 program lives in
+[docs/GRAIN-1.0-ROADMAP.md](docs/GRAIN-1.0-ROADMAP.md). The independent Engram
+service proposal is [docs/ENGRAM-IMPROVEMENT-BRIEF.md](docs/ENGRAM-IMPROVEMENT-BRIEF.md).
+See the truthful [feature status](docs/FEATURE-STATUS.md), tested
+[compatibility matrix](docs/COMPATIBILITY.md), and primary-source-backed
+[research graph](docs/RESEARCH-GRAPH.md) before interpreting a release claim.
 
 ---
 
@@ -248,7 +327,8 @@ storage, recovery, and maintenance contract.
 ## Requirements
 
 - Bun >= 1.0 (development and source builds only)
-- One of: AWS credentials, Anthropic API key, OpenRouter API key, or Ollama
+- One configured direct provider, compatible endpoint, local runtime, or an
+  installed external executor with its own user login
 
 ## Verify your install
 
@@ -261,8 +341,8 @@ bun run check
 ./dist/grain --version
 
 # Live provider smoke test (uses a small real request)
-grain --provider openrouter --model pool --max-turns 1 \
-  "Reply exactly GRAIN_POOL_OK. Do not call tools."
+grain --provider openrouter --model openrouter/free --max-turns 1 \
+  "Reply exactly GRAIN_OPENROUTER_OK. Do not call tools."
 ```
 
 ---

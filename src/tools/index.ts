@@ -20,10 +20,13 @@ import { repoMapTool, executeRepoMap } from './repo-map.js';
 import { PluginRegistry } from '../plugins/registry.js';
 import { ClaudeCodePlugin } from '../plugins/claude-code.js';
 import { CodexPlugin } from '../plugins/codex.js';
+import { OpenCodePlugin } from '../plugins/opencode.js';
+import { HermesPlugin } from '../plugins/hermes.js';
 import { createSpawnAgentTool } from './spawn-agent.js';
 import { loadConfig } from '../config.js';
 import { setWorkspaceRoot } from '../workspace/index.js';
 import { wikiSearchTool, wikiGetTool, wikiProposeTool, executeWikiSearch, executeWikiGet, executeWikiPropose } from './wiki.js';
+import { workRecallTool, workNoteTool, executeWorkRecall, executeWorkNote } from './work.js';
 import { inspectTool, executeInspect } from './inspect.js';
 import { searchTool, executeSearch } from './search.js';
 import { askUserTool, setQuestionJournal, setQuestionPrompt } from './ask-user.js';
@@ -59,8 +62,12 @@ function getPluginRegistry(): PluginRegistry {
       p.startsWith('~/') || p === '~' ? join(homedir(), p.slice(1)) : p;
     const claudeCfg = pluginsConfig.plugins?.['claude-code'];
     const codexCfg = pluginsConfig.plugins?.['codex'];
+    const opencodeCfg = pluginsConfig.plugins?.['opencode'];
+    const hermesCfg = pluginsConfig.plugins?.['hermes'];
     _pluginRegistry.register(new ClaudeCodePlugin(expandTilde(claudeCfg?.binaryPath ?? 'claude'), claudeCfg?.defaultModel));
     _pluginRegistry.register(new CodexPlugin(expandTilde(codexCfg?.binaryPath ?? 'codex')));
+    _pluginRegistry.register(new OpenCodePlugin(expandTilde(opencodeCfg?.binaryPath ?? 'opencode')));
+    _pluginRegistry.register(new HermesPlugin(expandTilde(hermesCfg?.binaryPath ?? 'hermes')));
   }
   return _pluginRegistry;
 }
@@ -104,6 +111,8 @@ function getLazyTools(): Tool[] {
     wikiSearchTool,
     wikiGetTool,
     wikiProposeTool,
+    workRecallTool,  // Search past tasks, outcomes, and notes
+    workNoteTool,    // Persist a decision or constraint worth keeping
   ];
   return tools;
 }
@@ -148,6 +157,8 @@ const executors: Record<string, (input: any) => Promise<ToolResult>> = {
   wiki_search: executeWikiSearch,
   wiki_get: executeWikiGet,
   wiki_propose_update: executeWikiPropose,
+  work_recall: executeWorkRecall,
+  work_note: executeWorkNote,
 };
 
 export function registerDynamicTool(tool: Tool, executor: (input: any) => Promise<ToolResult>): void {

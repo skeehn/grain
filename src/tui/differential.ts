@@ -3,12 +3,27 @@ import type { CellStyle, TerminalCapabilities, TuiFrame } from './types.js';
 const sameStyle = (a: CellStyle, b: CellStyle) => a.foreground === b.foreground && a.background === b.background && a.bold === b.bold && a.dim === b.dim;
 const sameCell = (a: TuiFrame['cells'][number] | undefined, b: TuiFrame['cells'][number]) => !!a && a.grapheme === b.grapheme && a.width === b.width && sameStyle(a.style, b.style);
 
+/** xterm-256 index for an RGB triple: 6×6×6 cube, or the 24-step grey ramp. */
+export function ansi256Index(r: number, g: number, b: number): number {
+  if (Math.max(r, g, b) - Math.min(r, g, b) < 12) {
+    const level = Math.round((((r + g + b) / 3) - 8) / 247 * 23);
+    return 232 + Math.min(23, Math.max(0, level));
+  }
+  const axis = (value: number) => Math.round(Math.min(255, Math.max(0, value)) / 255 * 5);
+  return 16 + 36 * axis(r) + 6 * axis(g) + axis(b);
+}
+
 function color(value: string | undefined, background: boolean, capabilities: TerminalCapabilities): string {
   if (!value || capabilities.color === 'none') return '';
   const match = /^#([0-9a-f]{6})$/i.exec(value);
-  if (!match || capabilities.color !== 'truecolor') return '';
+  if (!match) return '';
   const raw = Number.parseInt(match[1], 16); const r = raw >> 16; const g = (raw >> 8) & 255; const b = raw & 255;
-  return `\x1b[${background ? 48 : 38};2;${r};${g};${b}m`;
+  if (capabilities.color === 'truecolor') return `\x1b[${background ? 48 : 38};2;${r};${g};${b}m`;
+  // Most terminals report only 256-color support; without this fallback the
+  // whole interface rendered as undifferentiated white-on-black.
+  if (capabilities.color === 'ansi256') return `\x1b[${background ? 48 : 38};5;${ansi256Index(r, g, b)}m`;
+  const basic = (r > 127 ? 1 : 0) | (g > 127 ? 2 : 0) | (b > 127 ? 4 : 0);
+  return `\x1b[${(background ? 40 : 30) + basic}m`;
 }
 
 function styleAnsi(style: CellStyle, capabilities: TerminalCapabilities): string {

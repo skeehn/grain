@@ -20,7 +20,11 @@ import { runTui } from './tui/app.js';
 import type { GrainThemeName } from './tui/theme.js';
 import { handleLabCommand } from './commands/lab.js';
 import { handleJobsCommand } from './commands/jobs.js';
+import { handleWorkCommand } from './commands/work.js';
+import { handleDaemonCommand } from './commands/daemon.js';
+import { handleDoctorCommand } from './commands/doctor.js';
 import { sessionsDirectory } from './session/store.js';
+import { executeEngram, formatEngramStats, formatEngramStatus } from './tools/engram.js';
 
 // ─── Load ~/.grain/.env before anything else ──────────────────────────────────
 
@@ -46,14 +50,15 @@ const bold = (s: string) => `${c.bold}${s}${c.reset}`;
 // ─── Arg parser ───────────────────────────────────────────────────────────────
 
 interface ParsedArgs {
-  command?: 'init' | 'update' | 'config' | 'status' | 'serve' | 'help' | 'version' | 'skills' | 'engram' | 'wiki' | 'runs' | 'learning' | 'agents' | 'jobs' | 'tui' | 'lab';
+  command?: 'init' | 'update' | 'config' | 'status' | 'doctor' | 'serve' | 'help' | 'version' | 'skills' | 'engram' | 'wiki' | 'runs' | 'learning' | 'agents' | 'jobs' | 'daemon' | 'tui' | 'lab' | 'note' | 'worklog' | 'recall';
   configSubcmd?: 'set' | 'reset' | 'show';
   configKey?: string;
   configValue?: string;
   skillsSubcmd?: 'list' | 'view' | 'add' | 'delete';
   skillsName?: string;
-  engramSubcmd?: 'stats' | 'search' | 'list' | 'add';
+  engramSubcmd?: 'status' | 'stats' | 'search' | 'list' | 'add' | 'get' | 'edit' | 'delete' | 'export' | 'rebuild';
   engramArg?: string;
+  engramBody?: string;
   prompt?: string;
   printMode: boolean;
   autoApprove: boolean;
@@ -89,9 +94,10 @@ export function parseArgs(argv: string[]): ParsedArgs {
     // Commands are only recognized before any positional prompt text —
     // once prompt words start, bare words like "config" belong to the prompt.
     if (promptParts.length === 0 && !result.prompt) {
-      if (arg === 'init')                                   { result.command = 'init'; break; }
+      if (arg === 'init' || arg === 'setup')                { result.command = 'init'; break; }
       if (arg === 'update')                                 { result.command = 'update'; break; }
       if (arg === 'status')                                 { result.command = 'status'; break; }
+      if (arg === 'doctor')                                 { result.command = 'doctor'; break; }
       if (arg === 'serve')                                  { result.command = 'serve'; break; }
       if (arg === 'tui') {
         result.command = 'tui';
@@ -142,31 +148,51 @@ export function parseArgs(argv: string[]): ParsedArgs {
         break;
       }
 
-      if (arg === 'engram') {
+      if (arg === 'engram' || arg === 'memory') {
         result.command = 'engram';
         const sub = args[i + 1];
         if (sub === 'search') {
           result.engramSubcmd = 'search';
-          result.engramArg = args[i + 2];
+          result.engramArg = args.slice(i + 2).join(' ');
         } else if (sub === 'list') {
           result.engramSubcmd = 'list';
         } else if (sub === 'add') {
           result.engramSubcmd = 'add';
           result.engramArg = args.slice(i + 2).join(' ');
+        } else if (sub === 'edit') {
+          result.engramSubcmd = 'edit'; result.engramArg = args[i + 2]; result.engramBody = args.slice(i + 3).join(' ');
+        } else if (sub === 'get' || sub === 'delete') {
+          result.engramSubcmd = sub; result.engramArg = args[i + 2];
+        } else if (sub === 'status' || sub === 'export' || sub === 'rebuild') {
+          result.engramSubcmd = sub;
         } else {
           result.engramSubcmd = 'stats';
         }
         break;
       }
-      if (arg === 'wiki' || arg === 'runs' || arg === 'learning' || arg === 'agents') {
+      if (arg === 'agents') {
+        result.command = 'agents'; result.utilitySubcmd = args[i + 1];
+        const recipe = ['solo', 'pair', 'research', 'plan', 'swarm', 'review-panel', 'repair-loop', 'migration-loop', 'benchmark-loop', 'recursive-delivery'];
+        if (result.utilitySubcmd === 'run') { result.utilityArg = args[i + 2]; result.utilityOutput = args.slice(i + 3).join(' '); }
+        else if (recipe.includes(result.utilitySubcmd || '')) result.utilityArg = args.slice(i + 2).join(' ');
+        else { result.utilityArg = args[i + 2]; result.utilityOutput = args[i + 3]; }
+        break;
+      }
+      if (arg === 'wiki' || arg === 'runs' || arg === 'learning') {
         result.command = arg;
         result.utilitySubcmd = args[i + 1];
         result.utilityArg = args[i + 2];
-        result.utilityOutput = args[i + 3];
+        result.utilityOutput = args.slice(i + 3).join(' ') || undefined;
         break;
       }
       if (arg === 'jobs') {
         result.command = 'jobs'; result.utilitySubcmd = args[i + 1]; result.utilityArgs = args.slice(i + 2); break;
+      }
+      if (arg === 'note' || arg === 'worklog' || arg === 'recall') {
+        result.command = arg; result.utilityArgs = args.slice(i + 1); break;
+      }
+      if (arg === 'daemon') {
+        result.command = 'daemon'; result.utilitySubcmd = args[i + 1] || 'status'; break;
       }
     }
 
@@ -224,8 +250,9 @@ export function parseArgs(argv: string[]): ParsedArgs {
  * message instead of surfacing as a deep provider/SDK error mid-stream.
  */
 export function validateInvocation(parsed: ParsedArgs): string | null {
-  if (parsed.provider && !VALID_PROVIDERS.includes(parsed.provider as any)) {
-    return `Invalid provider "${parsed.provider}". Valid: ${VALID_PROVIDERS.join(', ')}`;
+  const customProviders = Object.keys(loadConfig(process.cwd()).providers || {});
+  if (parsed.provider && !VALID_PROVIDERS.includes(parsed.provider as any) && !customProviders.includes(parsed.provider)) {
+    return `Invalid provider "${parsed.provider}". Valid: ${[...VALID_PROVIDERS, ...customProviders].join(', ')}`;
   }
   // In print/automation mode there is no conversational prompt to fall back on,
   // so an empty task is a usage error rather than an empty agent run.
@@ -370,8 +397,9 @@ async function handleConfig(sub?: string, key?: string, value?: string): Promise
     }
 
     if (key === 'provider') {
-      if (!value || !VALID_PROVIDERS.includes(value as any)) {
-        console.error(`Invalid provider "${value}". Valid: ${VALID_PROVIDERS.join(', ')}`);
+      const configured = Object.keys(config.providers || {});
+      if (!value || (!VALID_PROVIDERS.includes(value as any) && !configured.includes(value))) {
+        console.error(`Invalid provider "${value}". Valid: ${[...VALID_PROVIDERS, ...configured].join(', ')}`);
         process.exit(1);
       }
       saveConfig({ provider: value });
@@ -497,6 +525,10 @@ async function handleStatus(): Promise<void> {
     console.log(process.env.GROQ_API_KEY
       ? `${ok} groq`
       : `${err} groq — GROQ_API_KEY not set\n       Run: grain config set key GROQ_API_KEY ...`);
+  } else if (config.provider === 'xai') {
+    console.log(process.env.XAI_API_KEY
+      ? `${ok} xAI / Grok`
+      : `${err} xAI — XAI_API_KEY not set\n       Run: grain config set key XAI_API_KEY ...`);
   } else if (config.provider === 'ollama') {
     try {
       await fetch('http://localhost:11434/api/tags');
@@ -504,6 +536,13 @@ async function handleStatus(): Promise<void> {
     } catch {
       console.log(`${warn} ollama  ${dim('(localhost:11434 not responding — is Ollama running?)')}`);
     }
+  } else if (config.providers?.[config.provider]) {
+    const custom = config.providers[config.provider];
+    console.log(process.env[custom.apiKeyEnv]
+      ? `${ok} ${custom.displayName || config.provider}  ${dim(`(${custom.baseUrl})`)}`
+      : `${err} ${config.provider} — ${custom.apiKeyEnv} not set`);
+  } else {
+    console.log(`${ok} ${config.provider}`);
   }
 
   // Plugins
@@ -562,6 +601,9 @@ async function handleInit(): Promise<void> {
   if (process.env.GROQ_API_KEY) {
     available.push({ name: 'groq', label: 'Groq', hint: 'GROQ_API_KEY set' });
   }
+  if (process.env.XAI_API_KEY) {
+    available.push({ name: 'xai', label: 'xAI / Grok', hint: 'XAI_API_KEY set' });
+  }
   available.push({ name: 'ollama', label: 'Ollama', hint: 'local, no key needed' });
 
   available.forEach((p, i) => {
@@ -612,6 +654,14 @@ async function handleInit(): Promise<void> {
     if (!key.trim()) { console.log('No key entered. Exiting.'); process.exit(1); }
     saveKeyToEnv('GROQ_API_KEY', key.trim());
     process.env.GROQ_API_KEY = key.trim();
+    console.log(`${ok} Saved to ~/.grain/.env\n`);
+  }
+
+  if (provider === 'xai' && !process.env.XAI_API_KEY) {
+    const key = await ask('XAI_API_KEY: ');
+    if (!key.trim()) { console.log('No key entered. Exiting.'); process.exit(1); }
+    saveKeyToEnv('XAI_API_KEY', key.trim());
+    process.env.XAI_API_KEY = key.trim();
     console.log(`${ok} Saved to ~/.grain/.env\n`);
   }
 
@@ -686,6 +736,9 @@ ${bold(`grain v${GRAIN_VERSION}`)} — your coding workspace
   grain                         open your workspace
   grain "do something"           start a workspace with a task
   grain update                   install the latest release
+  grain setup                    configure providers, memory, and workspace defaults
+  grain doctor                   verify config, agents, executors, Git, and Engram
+  grain memory status            inspect persistent memory without invoking a model
 
 Your first launch connects a provider in the conversation. Grain remembers the
 current repository, your sessions, theme, and approved tools for the session.
@@ -694,15 +747,24 @@ Inside Grain, type ${bold('/help')} for chat, files, diffs, tools, context, memo
 history, agents, scheduled jobs, models, settings, and themes. Grain asks before
 every write or risky action by default.
 
+${bold('MODELS')}  ${dim('one picker for subscriptions, APIs, and local models')}
+  /model                           browse everything you can actually run
+  --model claude-code:opus         Claude through your Claude Code subscription
+  --model codex                    OpenAI Codex through your ChatGPT subscription
+  --model openrouter:<id>          any OpenRouter model · ollama:<id> runs locally
+  Subscription agents need no API key — Grain drives the CLI you already signed
+  into, so they keep working when an API key has no credit.
+
 ${bold('AUTOMATION')}
   grain -p "task" --yes             non-interactive script/CI task
   grain --resume -p "follow up"     continue this repository's latest conversation
   grain --classic                   line-oriented interactive mode
   grain jobs run-due               run due jobs (for system cron/launchd)
+  grain daemon start|status|stop   supervise scheduled jobs in the background
   --provider <name> --model <id>   one-run override
   --attach <path>                  attach text/code/image material
 
-Expert commands (${dim('runs, wiki, agents, jobs, lab, config')}) remain available
+Expert commands (${dim('memory, runs, wiki, agents, jobs, lab, config')}) remain available
 for scripts and diagnostics.
 `);
 }
@@ -730,103 +792,18 @@ async function testBedrockConnection(): Promise<{ ok: boolean; error?: string }>
 
 // ─── Engram handler ───────────────────────────────────────────────────────────
 
-const ENGRAM_API = 'http://127.0.0.1:7474';
-
-function engramApiFetch(path: string, init: RequestInit = {}): Promise<Response> {
-  return fetch(`${ENGRAM_API}${path}`, { ...init, signal: init.signal || AbortSignal.timeout(5000) });
-}
-
-async function handleEngram(subcmd?: string, arg?: string): Promise<void> {
-  // Check server is up
-  try {
-    const health = await engramApiFetch('/health', { signal: AbortSignal.timeout(2000) });
-    if (!health.ok) throw new Error('not ok');
-  } catch {
-    console.error(`${err} engram server not running at ${ENGRAM_API}`);
-    console.log(dim('  Run: grain init  (auto-starts engram)'));
-    process.exitCode = 1;
-    return;
+async function handleEngram(subcmd?: string, arg?: string, body?: string): Promise<void> {
+  const action = subcmd || 'stats';
+  if (['search', 'add', 'get', 'edit', 'delete'].includes(action) && !arg) {
+    console.error(`${err} Usage: grain engram ${action} <${action === 'search' ? 'query' : action === 'add' ? 'fact' : 'id'}>`); return;
   }
-
-  if (!subcmd || subcmd === 'stats') {
-    const [statsRes, nodesRes] = await Promise.all([
-      engramApiFetch('/stats').then(r => r.json()) as Promise<any>,
-      engramApiFetch('/nodes?limit=100').then(r => r.json()) as Promise<any[]>,
-    ]);
-
-    // Count tags across all nodes
-    const tagCounts: Record<string, number> = {};
-    for (const node of nodesRes) {
-      for (const tag of (node.tags || [])) {
-        tagCounts[tag] = (tagCounts[tag] || 0) + 1;
-      }
-    }
-    const topTags = Object.entries(tagCounts)
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 10);
-
-    console.log(`\n${bold('engram stats')}\n`);
-    console.log(`  ${bold('Nodes')}    ${c.cyan}${statsRes.nodes}${c.reset}  ${dim(`(${statsRes.fts_docs} indexed, ${statsRes.vectors} vectors)`)}`);
-    console.log(`  ${bold('Edges')}    ${c.cyan}${statsRes.edges}${c.reset}`);
-    if (statsRes.object_bytes) {
-      console.log(`  ${bold('Storage')}  ${dim(`${(statsRes.object_bytes / 1024).toFixed(0)} KB`)}`);
-    }
-    if (topTags.length > 0) {
-      console.log(`\n  ${bold('Top Tags')}`);
-      for (const [tag, count] of topTags) {
-        const bar = '█'.repeat(Math.min(count, 20));
-        console.log(`  ${c.cyan}${tag.padEnd(20)}${c.reset} ${dim(bar)} ${count}`);
-      }
-    }
-    console.log('');
-    return;
-  }
-
-  if (subcmd === 'list') {
-    const nodes = await engramApiFetch('/nodes?limit=20').then(r => r.json()) as any[];
-    if (!nodes.length) { console.log(dim('No nodes in engram.')); return; }
-    console.log(`\n${bold('Recent nodes')} ${dim('(latest 20)')}\n`);
-    for (const node of nodes) {
-      const tags = node.tags?.length ? dim(` [${node.tags.join(', ')}]`) : '';
-      const body = node.body.slice(0, 80).replace(/\n/g, ' ');
-      console.log(`  ${c.cyan}${node.id.slice(-8)}${c.reset}${tags}`);
-      console.log(`  ${dim(body)}`);
-    }
-    console.log('');
-    return;
-  }
-
-  if (subcmd === 'search') {
-    if (!arg) { console.error(`${err} Usage: grain engram search <query>`); return; }
-    const res = await engramApiFetch(`/search?q=${encodeURIComponent(arg)}&limit=10`).then(r => r.json()) as any[];
-    if (!res.length) { console.log(dim(`No results for "${arg}"`)); return; }
-    // Normalize scores relative to top result
-    const maxScore = Math.max(...res.map((n: any) => n.score || 0), 0.001);
-    console.log(`\n${bold(`engram search: "${arg}"`)}\n`);
-    for (const node of res) {
-      const tags = node.tags?.length ? dim(` [${node.tags.join(', ')}]`) : '';
-      const normalizedPct = Math.round(((node.score || 0) / maxScore) * 100);
-      const score = `${normalizedPct}%`;
-      const body = node.body.slice(0, 120).replace(/\n/g, ' ');
-      console.log(`  ${c.cyan}${score.padEnd(5)}${c.reset}${tags}`);
-      console.log(`  ${body}\n`);
-    }
-    return;
-  }
-
-  if (subcmd === 'add') {
-    if (!arg) { console.error(`${err} Usage: grain engram add <fact>`); return; }
-    const res = await engramApiFetch('/add', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ body: arg, tags: ['manual'], node_type: 'fact' }),
-    }).then(r => r.json()) as any;
-    console.log(`${ok} Stored: ${c.cyan}${res.id}${c.reset}`);
-    return;
-  }
-
-  console.error(`${err} Unknown subcommand: ${subcmd}`);
-  console.log(`Usage: grain engram [stats|list|search <query>|add <fact>]`);
+  if (action === 'edit' && !body) { console.error(`${err} Usage: grain engram edit <id> <new content>`); return; }
+  const result = await executeEngram({ action, query: ['search', 'get', 'delete'].includes(action) ? arg : undefined,
+    body: action === 'add' ? arg : action === 'edit' ? body : undefined, tags: action === 'add' ? ['manual'] : undefined,
+    ...(action === 'edit' ? { query: arg } : {}) });
+  const content = String(result.content);
+  console.log(action === 'status' ? formatEngramStatus(content) : action === 'stats' ? formatEngramStats(content) : content);
+  if (result.is_error) process.exitCode = 1;
 }
 
 // ─── Skills handler ───────────────────────────────────────────────────────────
@@ -877,6 +854,23 @@ async function handleSkills(subcmd?: string, name?: string): Promise<void> {
     return;
   }
 
+  if (subcmd === 'validate') {
+    const results = await mgr.validatePortableSkills();
+    if (!results.length) { console.log(`${dim('No portable SKILL.md packages found.')}`); return; }
+    let failures = 0;
+    for (const result of results) {
+      if (result.valid) console.log(`${ok} ${result.name}  ${dim(result.filePath)}`);
+      else {
+        failures++;
+        console.error(`${err} ${result.name}  ${dim(result.filePath)}`);
+        for (const issue of result.errors) console.error(`  ${issue}`);
+      }
+    }
+    if (failures) process.exitCode = 1;
+    else console.log(`Validated ${results.length} portable skill package(s).`);
+    return;
+  }
+
   if (subcmd === 'add') {
     if (!name) { console.error(`${err} Usage: grain skills add <name>`); return; }
     const iface = readline.createInterface({ input: process.stdin, output: process.stdout });
@@ -919,7 +913,7 @@ async function handleSkills(subcmd?: string, name?: string): Promise<void> {
   }
 
   console.error(`${err} Unknown subcommand: ${subcmd}`);
-  console.log(`Usage: grain skills [list|view <name>|add <name>|delete <name>]`);
+  console.log(`Usage: grain skills [list|validate|view <name>|add <name>|delete <name>]`);
 }
 
 // ─── main ─────────────────────────────────────────────────────────────────────
@@ -948,18 +942,23 @@ async function main(): Promise<void> {
   if (parsed.command === 'update')  { await handleUpdate(); return; }
   if (parsed.command === 'init')    { await handleInit(); return; }
   if (parsed.command === 'status')  { await handleStatus(); return; }
+  if (parsed.command === 'doctor')  { await handleDoctorCommand(); return; }
   if (parsed.command === 'serve') {
     renderer.error('The serve command is not available. Run "grain" for the interactive agent.');
     process.exitCode = 1;
     return;
   }
   if (parsed.command === 'skills')  { await handleSkills(parsed.skillsSubcmd, parsed.skillsName); return; }
-  if (parsed.command === 'engram')  { await handleEngram(parsed.engramSubcmd, parsed.engramArg); return; }
+  if (parsed.command === 'engram')  { await handleEngram(parsed.engramSubcmd, parsed.engramArg, parsed.engramBody); return; }
   if (parsed.command === 'wiki') { await handleWikiCommand(parsed.utilitySubcmd, parsed.utilityArg); return; }
   if (parsed.command === 'runs') { handleRunsCommand(parsed.utilitySubcmd, parsed.utilityArg, parsed.utilityOutput); return; }
-  if (parsed.command === 'learning') { handleLearningCommand(parsed.utilitySubcmd, parsed.utilityArg, parsed.utilityOutput); return; }
+  if (parsed.command === 'learning') { await handleLearningCommand(parsed.utilitySubcmd, parsed.utilityArg, parsed.utilityOutput); return; }
   if (parsed.command === 'agents') { await handleAgentsCommand(parsed.utilitySubcmd, parsed.utilityArg, parsed.utilityOutput); return; }
   if (parsed.command === 'jobs') { await handleJobsCommand(parsed.utilitySubcmd, parsed.utilityArgs); return; }
+  if (parsed.command === 'daemon') { await handleDaemonCommand(parsed.utilitySubcmd); return; }
+  if (parsed.command === 'note' || parsed.command === 'worklog' || parsed.command === 'recall') {
+    await handleWorkCommand(parsed.command, parsed.utilityArgs); return;
+  }
   if (parsed.command === 'tui') {
     const config = loadConfig();
     if (parsed.utilitySubcmd && !['--run', '--resume'].includes(parsed.utilitySubcmd)) throw new Error('Usage: grain tui [--run|--resume <run-id>]');
@@ -1002,6 +1001,7 @@ async function main(): Promise<void> {
       attachments: parsed.attachments,
       workspace: !parsed.printMode,
       classic: parsed.classic,
+      alternateScreen: parsed.noAltScreen ? false : loadConfig().tui?.alternateScreen,
     });
 
     // Signal done to TB bridge

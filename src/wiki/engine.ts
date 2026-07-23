@@ -62,6 +62,47 @@ export class WikiEngine {
     return this.fs.list(WIKI_DIR).filter(path => path.endsWith('.md')).map(path => parse(path, this.fs.readRange(path, 1, Number.MAX_SAFE_INTEGER).content));
   }
 
+  /**
+   * Generate the full page set from the code.
+   *
+   * Human prose above the managed region is preserved verbatim on every page,
+   * so regenerating never destroys what someone wrote by hand.
+   */
+  async buildAll(): Promise<WikiPage[]> {
+    const { generatePages, buildSources } = await import('../docs/generate.js');
+    const generated = await generatePages(this.fs.root);
+    const sourceCommit = commit(this.fs.root);
+    const pages: WikiPage[] = [];
+    for (const page of generated) {
+      const sources = buildSources(page.sourcePaths, path => {
+        try {
+          const read = this.fs.readRange(path, 1, Number.MAX_SAFE_INTEGER);
+          return { total_lines: read.total_lines, hash: read.hash };
+        } catch { return null; }
+      });
+      const metadata = { id: page.id, title: page.title, type: page.type, status: 'current' as const,
+        owners: [], tags: page.tags, source_commit: sourceCommit, generated_at: new Date().toISOString(), sources };
+      const target = `${WIKI_DIR}/${page.id}.md`;
+      const markdown = `${frontmatter(metadata)}\n${this.preservedProse(target, page.title)}\n\n${MANAGED_START}\n${page.body}\n${MANAGED_END}\n`;
+      this.fs.writeAtomic(target, markdown);
+      const parsed = parse(target, markdown);
+      this.updateCatalog(parsed);
+      pages.push(parsed);
+    }
+    return pages;
+  }
+
+  /** Whatever a human wrote outside the managed region, or a fresh header. */
+  private preservedProse(path: string, title: string): string {
+    if (!existsSync(this.fs.resolve(path))) {
+      return `# ${title}\n\nMaintained by Grain. Add durable human notes above the generated region — they are preserved across rebuilds.`;
+    }
+    const existing = this.fs.readRange(path, 1, Number.MAX_SAFE_INTEGER).content;
+    const withoutFrontmatter = existing.match(/^---\n[\s\S]*?\n---\n?([\s\S]*)$/)?.[1] || existing;
+    return withoutFrontmatter.replace(new RegExp(`${MANAGED_START}[\\s\\S]*?${MANAGED_END}`), '').trim()
+      || `# ${title}\n\nMaintained by Grain.`;
+  }
+
   build(): WikiPage {
     const files = this.fs.list('.', 12).filter(path => /\.(ts|tsx|js|jsx|rs|py|go|md)$/.test(path) && !path.startsWith(`${WIKI_DIR}/`));
     const sources: WikiSource[] = files.slice(0, 500).map(path => {

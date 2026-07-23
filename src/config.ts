@@ -4,10 +4,12 @@ import { homedir } from 'os';
 import { randomUUID } from 'crypto';
 
 import type { PluginsConfig } from './plugins/types.js';
+import type { AgentProfileV1, RunTreeLimits, WorkflowDefinitionV1 } from './orchestration/types.js';
 
 export const GRAIN_VERSION = '0.2.0';
 
 export interface GrainConfig {
+  schemaVersion?: 3;
   provider: string;
   model: string | null;
   engram_db: string;
@@ -15,6 +17,13 @@ export interface GrainConfig {
   /** Reasoning effort for models that support it (OpenRouter `reasoning.effort`). */
   effort?: 'low' | 'medium' | 'high';
   plugins?: PluginsConfig;
+  agents?: Record<string, Partial<AgentProfileV1>>;
+  workflows?: Record<string, WorkflowDefinitionV1>;
+  orchestration?: Partial<RunTreeLimits>;
+  providers?: Record<string, {
+    kind: 'openai-compatible'; baseUrl: string; apiKeyEnv: string; defaultModel: string;
+    headers?: Record<string, string>; displayName?: string;
+  }>;
   vllm?: {
     endpoint?: string;
     apiKey?: string;
@@ -35,6 +44,7 @@ const CONFIG_PATH = join(CONFIG_DIR, 'config.json');
 const ENV_PATH    = join(CONFIG_DIR, '.env');
 
 const DEFAULTS: GrainConfig = {
+  schemaVersion: 3,
   provider:   'bedrock',
   model:      null,
   engram_db:  '~/.engram/knowledge',
@@ -57,6 +67,8 @@ const DEFAULTS: GrainConfig = {
       "aider": {
         enabled: false,
       },
+      "opencode": { enabled: true, preferredFor: ["feature-dev", "refactoring"] },
+      "hermes": { enabled: true, preferredFor: ["documentation", "code-review"] },
     },
     routing: {
       prefer: "claude-code",
@@ -64,9 +76,15 @@ const DEFAULTS: GrainConfig = {
       routeByCapability: true,
     },
   },
+  agents: {}, workflows: {}, orchestration: {}, providers: {},
 };
 
-export const VALID_PROVIDERS = ['bedrock', 'anthropic', 'openrouter', 'groq', 'ollama', 'vllm'] as const;
+/** Providers backed by an installed, already-signed-in coding-agent CLI. */
+export const CLI_AGENT_PROVIDERS = ['claude-code', 'codex', 'opencode'] as const;
+
+export const VALID_PROVIDERS = [
+  'bedrock', 'anthropic', 'openrouter', 'groq', 'xai', 'ollama', 'vllm', ...CLI_AGENT_PROVIDERS,
+] as const;
 
 // ─── .env loading ─────────────────────────────────────────────────────────────
 // Load ~/.grain/.env into process.env at startup.
@@ -133,22 +151,34 @@ export function getConfigDir(): string {
   return CONFIG_DIR;
 }
 
-export function loadConfig(): GrainConfig {
-  if (!existsSync(CONFIG_PATH)) return { ...DEFAULTS };
-  try {
-    const parsed = JSON.parse(readFileSync(CONFIG_PATH, 'utf-8'));
+function mergeConfig(parsed: any, project: any = {}): GrainConfig {
+    const combined = { ...parsed, ...project,
+      agents: { ...(parsed.agents || {}), ...(project.agents || {}) },
+      workflows: { ...(parsed.workflows || {}), ...(project.workflows || {}) },
+      providers: { ...(parsed.providers || {}), ...(project.providers || {}) },
+      orchestration: { ...(parsed.orchestration || {}), ...(project.orchestration || {}) } };
     // Deep-merge `plugins` — a partial user value (e.g. only `routing`) must
     // not clobber the default plugin map, which PluginRegistry requires.
-    const plugins = parsed.plugins
+    const plugins = combined.plugins
       ? {
-          plugins: { ...DEFAULTS.plugins!.plugins, ...(parsed.plugins.plugins || {}) },
-          routing: { ...DEFAULTS.plugins!.routing, ...(parsed.plugins.routing || {}) },
+          plugins: { ...DEFAULTS.plugins!.plugins, ...(combined.plugins.plugins || {}) },
+          routing: { ...DEFAULTS.plugins!.routing, ...(combined.plugins.routing || {}) },
         }
       : DEFAULTS.plugins;
-    const tui = { ...DEFAULTS.tui!, ...(parsed.tui || {}) };
+    const tui = { ...DEFAULTS.tui!, ...(combined.tui || {}) };
     if (tui.theme === 'light') tui.theme = 'studio';
     tui.schemaVersion = 2;
-    return { ...DEFAULTS, ...parsed, plugins, tui };
+    return { ...DEFAULTS, ...combined, schemaVersion: 3, plugins, tui };
+}
+
+export function loadConfig(workspaceRoot?: string): GrainConfig {
+  let parsed: any = {};
+  if (existsSync(CONFIG_PATH)) try { parsed = JSON.parse(readFileSync(CONFIG_PATH, 'utf-8')); } catch { parsed = {}; }
+  let project: any = {};
+  const projectPath = workspaceRoot ? join(workspaceRoot, '.grain', 'config.json') : undefined;
+  if (projectPath && existsSync(projectPath)) try { project = JSON.parse(readFileSync(projectPath, 'utf-8')); } catch { project = {}; }
+  try {
+    return mergeConfig(parsed, project);
   } catch {
     return { ...DEFAULTS };
   }
@@ -163,21 +193,30 @@ export function saveConfig(config: GrainConfig | Partial<GrainConfig>): void {
 }
 
 export function validateConfig(config: GrainConfig): { valid: boolean; error?: string } {
-  if (!VALID_PROVIDERS.includes(config.provider as any)) {
-    return { valid: false, error: `Unknown provider "${config.provider}". Valid: ${VALID_PROVIDERS.join(', ')}.\n\nRun: grain init` };
+  if (!VALID_PROVIDERS.includes(config.provider as any) && !config.providers?.[config.provider]) {
+    return { valid: false, error: `Unknown provider "${config.provider}". Valid: ${[...VALID_PROVIDERS, ...Object.keys(config.providers || {})].join(', ')}.\n\nRun: grain init` };
   }
   const needs: Record<string, string> = {
     anthropic:  'ANTHROPIC_API_KEY',
     openrouter: 'OPENROUTER_API_KEY',
     groq: 'GROQ_API_KEY',
+    xai: 'XAI_API_KEY',
   };
-  const envKey = needs[config.provider];
+  // CLI-agent providers authenticate through their own login, so they need no
+  // Grain-managed key — requiring one would lock out exactly the subscription
+  // users they exist to serve.
+  const isCliAgent = (CLI_AGENT_PROVIDERS as readonly string[]).includes(config.provider);
+  const envKey = isCliAgent ? undefined : needs[config.provider] || config.providers?.[config.provider]?.apiKeyEnv;
   if (envKey && !process.env[envKey]) {
     return { valid: false, error: `${config.provider} requires ${envKey}.\n\nRun: grain config set key ${envKey} <your-key>\nor:  grain init` };
   }
   if (config.tui && (config.tui.schemaVersion !== 2 || !['field', 'studio', 'arcade', 'system'].includes(config.tui.theme)
     || !['compact', 'comfortable'].includes(config.tui.density))) {
     return { valid: false, error: 'Invalid TUI configuration. Expected schemaVersion=2 and a supported theme/density value.' };
+  }
+  for (const [id, provider] of Object.entries(config.providers || {})) {
+    if (!id.trim() || provider.kind !== 'openai-compatible' || !/^https?:\/\//u.test(provider.baseUrl)
+      || !provider.apiKeyEnv || !provider.defaultModel) return { valid: false, error: `Invalid custom provider configuration: ${id}` };
   }
   return { valid: true };
 }

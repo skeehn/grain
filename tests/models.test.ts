@@ -1,9 +1,11 @@
 import { describe, test, expect } from 'bun:test';
-import { MODEL_CATALOG, catalogWithCurrent, nextModel } from '../src/tui/models.js';
+import { MODEL_CATALOG, catalogWithCurrent, nextModel, resolveModelSelection } from '../src/tui/models.js';
 
 describe('model catalog', () => {
-  test('starts with automatic free routing and only advertises tool-capable free models', () => {
-    expect(MODEL_CATALOG[0].model).toBe('openrouter/free');
+  test('leads with subscription agents so a user without API credit can still work', () => {
+    expect(MODEL_CATALOG[0].provider).toBe('claude-code');
+    expect(MODEL_CATALOG.some(c => c.provider === 'codex')).toBe(true);
+    expect(MODEL_CATALOG.some(c => c.model === 'openrouter/free')).toBe(true);
     expect(MODEL_CATALOG.some(c => c.model === 'nousresearch/hermes-3-llama-3.1-405b:free')).toBe(false);
   });
 
@@ -31,5 +33,25 @@ describe('model catalog', () => {
 
   test('nextModel from an unknown model starts at the top of the catalog', () => {
     expect(nextModel('x', 'y').model).toBe(MODEL_CATALOG[0].model);
+  });
+
+  test('model selection switches providers explicitly or through the catalog', () => {
+    expect(resolveModelSelection('openrouter:qwen/qwen3-coder:free', 'anthropic')).toEqual({ provider: 'openrouter', model: 'qwen/qwen3-coder:free' });
+    expect(resolveModelSelection('openrouter/free', 'anthropic')).toEqual({ provider: 'openrouter', model: 'openrouter/free' });
+    expect(resolveModelSelection('custom/model', 'vllm')).toEqual({ provider: 'vllm', model: 'custom/model' });
+  });
+
+  test('reaches every provider Grain supports, not a hardcoded subset', () => {
+    // xai and the CLI-agent providers used to fall through the old whitelist
+    // and were silently reinterpreted as a model id on the current provider.
+    expect(resolveModelSelection('xai:grok-code-fast-1', 'openrouter')).toEqual({ provider: 'xai', model: 'grok-code-fast-1' });
+    expect(resolveModelSelection('claude-code:opus', 'openrouter')).toEqual({ provider: 'claude-code', model: 'opus' });
+    expect(resolveModelSelection('codex', 'openrouter')).toEqual({ provider: 'codex', model: 'auto' });
+  });
+
+  test('keeps colons that belong to the model id itself', () => {
+    expect(resolveModelSelection('qwen2.5-coder:7b', 'ollama')).toEqual({ provider: 'ollama', model: 'qwen2.5-coder:7b' });
+    expect(resolveModelSelection('us.anthropic.claude-sonnet-4-5-20250929-v1:0', 'bedrock'))
+      .toEqual({ provider: 'bedrock', model: 'us.anthropic.claude-sonnet-4-5-20250929-v1:0' });
   });
 });

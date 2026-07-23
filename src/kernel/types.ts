@@ -29,6 +29,15 @@ export type RunEventType =
   | 'model_requested'
   | 'model_stream_started'
   | 'model_completed'
+  | 'context_planned'
+  | 'context_compacted'
+  | 'memory_recalled'
+  | 'memory_proposed'
+  | 'work_recorded'
+  | 'memory_validated'
+  | 'memory_promoted'
+  | 'memory_forgotten'
+  | 'engram_degraded'
   | 'usage_recorded'
   | 'tool_proposed'
   | 'policy_decided'
@@ -58,6 +67,8 @@ export interface RunEvent<T = Record<string, unknown>> {
   type: RunEventType;
   previous_hash: string | null;
   hash: string;
+  /** Stable trace identity shared by a parent run and its child runs. */
+  correlation_id?: string;
   payload: T;
 }
 
@@ -69,6 +80,27 @@ export interface RunMetadata {
   model: string;
   policy_profile: string;
   created_at: string;
+  correlation_id?: string;
+  parent_run_id?: string;
+}
+
+export type RunFailureCategory =
+  | 'configuration'
+  | 'authentication'
+  | 'provider'
+  | 'protocol'
+  | 'policy'
+  | 'tool'
+  | 'verification'
+  | 'timeout'
+  | 'corruption';
+
+export interface RunFailureShape {
+  category: RunFailureCategory;
+  message: string;
+  retryable: boolean;
+  user_action?: string;
+  cause?: unknown;
 }
 
 export interface RunState {
