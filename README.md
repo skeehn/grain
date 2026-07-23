@@ -105,6 +105,10 @@ grain learning migrate PATH   resumably import the verified JSONL ledger to v1
 /loop /budget /steer          inspect recursion limits or steer active work
 /detach /attach               leave and rejoin background work
 /settings /theme /model       configure the current workspace
+/note TEXT                    record a decision worth keeping
+/work                         what you have done in this repository
+/recall QUERY [--all]         search past work; --all spans every repository
+/wiki build|verify            regenerate repo docs; check they still match code
 ```
 
 Outside a detected project Grain starts in safe general-chat mode; repository
@@ -118,8 +122,9 @@ leases prevent concurrent daemons from claiming the same launch. Use
 `grain daemon install` to generate a reviewable launchd/systemd user-service
 template.
 
-`grain -p`, `grain runs`, `grain wiki`, `grain agents`, `grain jobs`, `grain lab`, and
-`grain config` remain stable expert and automation commands.
+`grain -p`, `grain runs`, `grain wiki`, `grain agents`, `grain jobs`, `grain lab`,
+`grain note`, `grain worklog`, `grain recall`, and `grain config` remain stable
+expert and automation commands.
 
 ---
 

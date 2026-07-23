@@ -1,10 +1,13 @@
 # grain Architecture
 
-> Historical architecture narrative. Some storage and qualification descriptions
-> below predate schema-v3 run journals and per-session JSON storage. Use
-> [`docs/GRAIN-1.0-ROADMAP.md`](./docs/GRAIN-1.0-ROADMAP.md) and
-> [`docs/DURABILITY.md`](./docs/DURABILITY.md) as current delivery contracts until
-> this document is fully reconciled.
+> **Historical narrative — do not treat as current.** Storage, provider, and
+> qualification descriptions below predate schema-v3 run journals, per-session
+> storage, subscription-CLI providers, and the durable work record.
+>
+> For how the system works today, read [`AGENTS.md`](./AGENTS.md) (the working
+> contract), [`docs/wiki/architecture.md`](./docs/wiki/architecture.md)
+> (generated from the code, with provenance), [`docs/DURABILITY.md`](./docs/DURABILITY.md),
+> and [`docs/GRAIN-1.0-ROADMAP.md`](./docs/GRAIN-1.0-ROADMAP.md).
 
 **Technical deep-dive into grain's self-improving AI agent system**
 
