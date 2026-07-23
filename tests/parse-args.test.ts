@@ -45,6 +45,13 @@ describe('parseArgs — existing behavior preserved', () => {
     expect(p.prompt).toBe('refactor this');
   });
 
+  test('--resume continues the latest repository conversation in print mode', () => {
+    const parsed = parse('--resume', '-p', 'follow up', '--yes');
+    expect(parsed.resume).toBe(true);
+    expect(parsed.prompt).toBe('follow up');
+    expect(parsed.printMode).toBe(true);
+  });
+
   test('-p sets the prompt explicitly', () => {
     const p = parse('-p', 'task description', '--yes');
     expect(p.prompt).toBe('task description');

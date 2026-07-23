@@ -1,8 +1,9 @@
 // Context Tracker - Session file/operation tracking
 // Lightweight, synchronous, no engram dependency for core tracking
-import { writeFileSync, readFileSync, existsSync, mkdirSync } from 'fs';
+import { writeFileSync, readFileSync, existsSync, mkdirSync, renameSync } from 'fs';
 import { join, basename } from 'path';
 import { homedir } from 'os';
+import { createHash, randomUUID } from 'crypto';
 
 interface SessionContext {
   sessionId: string;
@@ -24,6 +25,7 @@ interface SessionContext {
 
 class ContextTracker {
   private sessionPath: string;
+  private sessionFile: string;
   private session: SessionContext;
 
   constructor() {
@@ -32,51 +34,78 @@ class ContextTracker {
     if (!existsSync(this.sessionPath)) {
       mkdirSync(this.sessionPath, { recursive: true });
     }
-    this.session = this.loadSession();
+    this.sessionFile = this.fileFor(process.cwd());
+    this.session = this.loadSession(process.cwd());
   }
 
-  private loadSession(): SessionContext {
-    const sessionFile = join(this.sessionPath, 'current.json');
+  private normalizeWorkspace(path: string): string {
+    return path.replaceAll('\\', '/').replace(/\/+$/u, '') || '/';
+  }
+
+  private fileFor(workingDirectory: string): string {
+    const key = createHash('sha256').update(this.normalizeWorkspace(workingDirectory)).digest('hex').slice(0, 20);
+    return join(this.sessionPath, `${key}.json`);
+  }
+
+  private freshSession(workingDirectory: string): SessionContext {
+    return {
+      sessionId: randomUUID(), startTime: Date.now(), workingDirectory: this.normalizeWorkspace(workingDirectory),
+      recentFiles: [], operationHistory: [],
+    };
+  }
+
+  private loadSession(workingDirectory: string): SessionContext {
+    const normalized = this.normalizeWorkspace(workingDirectory);
+    const sessionFile = this.fileFor(normalized);
+    this.sessionFile = sessionFile;
     if (existsSync(sessionFile)) {
       try {
-        return JSON.parse(readFileSync(sessionFile, 'utf-8'));
+        const parsed = JSON.parse(readFileSync(sessionFile, 'utf-8')) as SessionContext;
+        if (parsed && this.normalizeWorkspace(parsed.workingDirectory) === normalized
+          && Array.isArray(parsed.recentFiles) && Array.isArray(parsed.operationHistory)) return parsed;
       } catch {
         // Corrupted, start fresh
       }
     }
-    return {
-      sessionId: Date.now().toString(),
-      startTime: Date.now(),
-      workingDirectory: process.cwd(),
-      recentFiles: [],
-      operationHistory: [],
-    };
+    return this.freshSession(normalized);
+  }
+
+  private ensureWorkspace(workingDirectory = process.cwd()) {
+    const normalized = this.normalizeWorkspace(workingDirectory);
+    if (this.normalizeWorkspace(this.session.workingDirectory) !== normalized) {
+      this.session = this.loadSession(normalized);
+    }
   }
 
   private saveSession() {
-    const sessionFile = join(this.sessionPath, 'current.json');
-    writeFileSync(sessionFile, JSON.stringify(this.session, null, 2));
+    const tmp = `${this.sessionFile}.${process.pid}.${randomUUID()}.tmp`;
+    writeFileSync(tmp, JSON.stringify(this.session, null, 2), { mode: 0o600 });
+    renameSync(tmp, this.sessionFile);
   }
 
   trackFileRead(path: string) {
+    this.ensureWorkspace();
     this.session.lastReadFile = path;
     this.addRecentFile(path);
     this.addOperation('read', [path]);
   }
 
   trackFileWrite(path: string) {
+    this.ensureWorkspace();
     this.session.lastModifiedFile = path;
     this.addRecentFile(path);
     this.addOperation('write', [path]);
   }
 
   trackFileEdit(path: string) {
+    this.ensureWorkspace();
     this.session.lastModifiedFile = path;
     this.addRecentFile(path);
     this.addOperation('edit', [path]);
   }
 
   trackOperation(operation: string, files: string[]) {
+    this.ensureWorkspace();
     this.addOperation(operation, files);
   }
 
@@ -96,6 +125,7 @@ class ContextTracker {
   }
 
   resolveReference(ref: string): string | null {
+    this.ensureWorkspace();
     const normalized = ref.toLowerCase().trim();
     if (normalized.match(/^(that|the|this)\s+file$/)) {
       return this.session.lastModifiedFile || this.session.lastReadFile || null;
@@ -112,6 +142,7 @@ class ContextTracker {
   }
 
   getContextSummary(): string {
+    this.ensureWorkspace();
     const lines: string[] = [];
     if (this.session.recentFiles.length > 0) {
       lines.push('Recent files: ' + this.session.recentFiles.slice(0, 5).join(', '));
@@ -127,6 +158,7 @@ class ContextTracker {
   }
 
   setProjectContext(name: string, type: string, module?: string) {
+    this.ensureWorkspace();
     this.session.projectName = name;
     this.session.projectType = type;
     if (module) this.session.currentModule = module;
@@ -134,6 +166,7 @@ class ContextTracker {
   }
 
   updateProjectContext(path: string, _operation: string) {
+    this.ensureWorkspace(path);
     this.session.projectName = basename(path);
     this.session.workingDirectory = path;
     this.saveSession();
@@ -155,11 +188,13 @@ class ContextTracker {
   }
 
   setTaskContext(task: string) {
+    this.ensureWorkspace();
     this.session.currentTask = task;
     this.saveSession();
   }
 
   clearTaskContext() {
+    this.ensureWorkspace();
     this.session.currentTask = undefined;
     this.saveSession();
   }

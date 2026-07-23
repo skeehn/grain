@@ -244,6 +244,7 @@ export async function agentLoop(opts: AgentOpts): Promise<void> {
   const ui = opts.ui || renderer;
   const discovered = resolveWorkspace(process.cwd());
   const workspaceRoot = opts.workspaceRoot || discovered.root;
+  const memoryProject = opts.workspaceKey || workspaceRoot;
   const generalChat = opts.generalChat ?? !workspaceRoot;
   const availableTools = generalChat
     ? TOOLS.filter(tool => ['engram', 'ask_user', 'finish'].includes(tool.name))
@@ -444,7 +445,7 @@ export async function agentLoop(opts: AgentOpts): Promise<void> {
       }
 
       // Engram context (facts/memory)
-      const engramContext = await engramRetrieve(lastUserText);
+      const engramContext = await engramRetrieve(lastUserText, memoryProject);
       if (engramContext.trim()) {
         system += `\n\nRelevant context from memory:\n${engramContext}`;
       }
@@ -821,7 +822,7 @@ export async function agentLoop(opts: AgentOpts): Promise<void> {
       }
 
       if (!opts.oneShot) ui.error(err.message);
-      await engramStore(`Error: ${err.message}`, ['error']);
+      await engramStore(`Error: ${err.message}`, ['error'], memoryProject);
       journal.append(/parse|protocol|malformed/i.test(err.message) ? 'protocol_error' : 'provider_error', { error: err.message, turn: turnCount });
       journal.transition('failed', { error: err.message });
       opts.onEvent?.({ type: 'status', status: 'failed', detail: err.message });

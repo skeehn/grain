@@ -7,12 +7,13 @@
  * - MCP Servers (if configured)
  * - Paths (config dir, engram db, sessions)
  */
-import { existsSync, statSync } from 'fs';
+import { existsSync, readdirSync, statSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
 import { loadConfig, getConfigDir, VALID_PROVIDERS, listEnvKeys } from '../config.js';
 import { discoverPlugins } from '../plugins/discovery.js';
 import { loadMcpConfig, mcpConfigPath } from '../mcp/config.js';
+import { sessionsDirectory } from '../session/store.js';
 
 // ─── ANSI helpers ─────────────────────────────────────────────────────────────
 const c = {
@@ -192,7 +193,7 @@ export async function handleConfigShow(): Promise<void> {
   
   const configDir = getConfigDir();
   const engramDb = config.engram_db.replace(/^~(?=\/|$)/, homedir());
-  const sessionsPath = join(process.env.GRAIN_HOME || join(homedir(), '.grain'), 'sessions.json');
+  const sessionsPath = sessionsDirectory();
   const skillsPath = join(process.env.GRAIN_HOME || join(homedir(), '.grain'), 'skills');
   
   console.log(row('Config', dim(configDir)));
@@ -215,11 +216,12 @@ export async function handleConfigShow(): Promise<void> {
   // Sessions DB
   if (existsSync(sessionsPath)) {
     try {
-      const size = statSync(sessionsPath).size;
+      const files = readdirSync(sessionsPath).filter(name => name.endsWith('.json'));
+      const size = files.reduce((total, name) => total + statSync(join(sessionsPath, name)).size, 0);
       const sizeStr = size > 1024 * 1024 
         ? `${(size / (1024 * 1024)).toFixed(1)} MB`
         : `${(size / 1024).toFixed(0)} KB`;
-      console.log(row('Sessions', `${dim(sessionsPath)} ${dim(`(${sizeStr})`)}`));
+      console.log(row('Sessions', `${dim(sessionsPath)} ${dim(`(${files.length} conversations, ${sizeStr})`)}`));
     } catch {
       console.log(row('Sessions', dim(sessionsPath)));
     }

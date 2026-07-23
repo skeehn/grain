@@ -3,6 +3,7 @@ import { homedir } from 'os';
 import { join } from 'path';
 import { existsSync } from 'fs';
 import type { ToolResult } from '../providers/types.js';
+import { loadConfig } from '../config.js';
 
 export const engramTool = {
   name: 'engram',
@@ -26,27 +27,46 @@ export const engramTool = {
   },
 };
 
-const ENGRAM_BIN  = join(homedir(), 'bin', 'engram');
-const ENGRAM_DB   = join(homedir(), '.engram', 'knowledge');
-const ENGRAM_HTTP = 'http://localhost:7474';
+const HTTP_TIMEOUT_MS = 5_000;
+const SEARCH_TIMEOUT_MS = 15_000;
+const HEALTH_TIMEOUT_MS = 2_000;
+const NEGATIVE_CACHE_MS = 1_000;
+
+function engramBin(): string {
+  return process.env.GRAIN_ENGRAM_BIN || join(homedir(), 'bin', 'engram');
+}
+
+function engramDb(): string {
+  return loadConfig().engram_db.replace(/^~(?=\/|$)/u, homedir());
+}
+
+function engramHttp(): string {
+  return (process.env.GRAIN_ENGRAM_HTTP || 'http://127.0.0.1:7474').replace(/\/$/u, '');
+}
 
 let httpAvailable: boolean | null = null; // null = unchecked
+let httpCheckedAt = 0;
 let engramWarningShown = false;
 
 // ─── HTTP helpers ────────────────────────────────────────────────────────────
 
 async function checkHttp(): Promise<boolean> {
-  if (httpAvailable !== null) return httpAvailable;
+  if (httpAvailable === true) return true;
+  if (httpAvailable === false && Date.now() - httpCheckedAt < NEGATIVE_CACHE_MS) return false;
   try {
-    const ctrl = new AbortController();
-    const tid = setTimeout(() => ctrl.abort(), 400);
-    const res = await fetch(`${ENGRAM_HTTP}/health`, { signal: ctrl.signal });
-    clearTimeout(tid);
+    const res = await fetch(`${engramHttp()}/health`, { signal: AbortSignal.timeout(HEALTH_TIMEOUT_MS) });
     httpAvailable = res.ok;
   } catch {
     httpAvailable = false;
   }
+  httpCheckedAt = Date.now();
   return httpAvailable;
+}
+
+export function resetEngramTransportState(): void {
+  httpAvailable = null;
+  httpCheckedAt = 0;
+  engramWarningShown = false;
 }
 
 function qs(params: Record<string, string | number | undefined>): string {
@@ -57,23 +77,25 @@ function qs(params: Record<string, string | number | undefined>): string {
 }
 
 async function httpGet(path: string): Promise<any> {
-  const res = await fetch(`${ENGRAM_HTTP}${path}`);
+  const timeout = path.startsWith('/search') ? SEARCH_TIMEOUT_MS : HTTP_TIMEOUT_MS;
+  const res = await fetch(`${engramHttp()}${path}`, { signal: AbortSignal.timeout(timeout) });
   if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`);
   return res.json();
 }
 
 async function httpPost(path: string, body: unknown): Promise<any> {
-  const res = await fetch(`${ENGRAM_HTTP}${path}`, {
+  const res = await fetch(`${engramHttp()}${path}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
+    signal: AbortSignal.timeout(HTTP_TIMEOUT_MS),
   });
   if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`);
   return res.json();
 }
 
 async function httpDelete(path: string): Promise<void> {
-  const res = await fetch(`${ENGRAM_HTTP}${path}`, { method: 'DELETE' });
+  const res = await fetch(`${engramHttp()}${path}`, { method: 'DELETE', signal: AbortSignal.timeout(HTTP_TIMEOUT_MS) });
   if (!res.ok && res.status !== 204) throw new Error(`HTTP ${res.status} ${res.statusText}`);
 }
 
@@ -141,8 +163,10 @@ async function graphHttp(id: string, depth = 1): Promise<ToolResult> {
 // ─── Subprocess fallback ──────────────────────────────────────────────────────
 
 function runSubprocess(args: string[]): Promise<ToolResult> {
+  const bin = engramBin();
+  if (!existsSync(bin)) return Promise.resolve({ content: 'engram not available', is_error: true });
   return new Promise((resolve) => {
-    const proc = spawn(ENGRAM_BIN, args, {
+    const proc = spawn(bin, ['-d', engramDb(), ...args], {
       stdio: ['pipe', 'pipe', 'pipe'],
       timeout: 10000,
       env: { ...process.env },
@@ -172,7 +196,7 @@ export async function executeEngram(input: {
 }): Promise<ToolResult> {
   const useHttp = await checkHttp();
 
-  if (!useHttp && !existsSync(ENGRAM_BIN)) {
+  if (!useHttp && !existsSync(engramBin())) {
     if (!engramWarningShown) {
       engramWarningShown = true;
     }
@@ -191,7 +215,9 @@ export async function executeEngram(input: {
         try { return await searchHttp(input.query, input.top_k ?? 10, input.project); }
         catch { httpAvailable = false; }
       }
-      return runSubprocess(['-d', ENGRAM_DB, 'search', input.query]);
+      const args = ['search', input.query, '--top-k', String(input.top_k ?? 10)];
+      if (input.project) args.push('--project', input.project);
+      return runSubprocess(args);
     }
 
     // ── add ──
@@ -201,8 +227,9 @@ export async function executeEngram(input: {
         try { return await addHttp(input.body, input.tags ?? [], input.project); }
         catch { httpAvailable = false; }
       }
-      const args = ['-d', ENGRAM_DB, 'add', input.body];
+      const args = ['add', input.body];
       if (input.tags?.length) args.push('--tags', input.tags.join(','));
+      if (input.project) args.push('--project', input.project);
       return runSubprocess(args);
     }
 
@@ -213,37 +240,47 @@ export async function executeEngram(input: {
         try { return await getHttp(input.query); }
         catch { httpAvailable = false; }
       }
-      return runSubprocess(['-d', ENGRAM_DB, 'get', input.query]);
+      return runSubprocess(['get', input.query]);
     }
 
-    // ── list (HTTP-only, no subprocess equivalent) ──
+    // ── list ──
     case 'list': {
-      if (!useHttp) return { content: 'list requires engram HTTP server' };
-      try { return await listHttp(input.project); }
-      catch (e: any) { return { content: `list failed: ${e.message}`, is_error: true }; }
+      if (useHttp) {
+        try { return await listHttp(input.project); }
+        catch { httpAvailable = false; httpCheckedAt = Date.now(); }
+      }
+      const args = ['list', '--limit', String(input.top_k ?? 20)];
+      if (input.project) args.push('--project', input.project);
+      return runSubprocess(args);
     }
 
-    // ── delete (HTTP-only) ──
+    // ── delete ──
     case 'delete': {
       if (!input.query) return { content: 'query (id) required', is_error: true };
-      if (!useHttp) return { content: 'delete requires engram HTTP server' };
-      try { return await deleteHttp(input.query); }
-      catch (e: any) { return { content: `delete failed: ${e.message}`, is_error: true }; }
+      if (useHttp) {
+        try { return await deleteHttp(input.query); }
+        catch { httpAvailable = false; httpCheckedAt = Date.now(); }
+      }
+      return runSubprocess(['delete', input.query]);
     }
 
-    // ── stats (HTTP-only) ──
+    // ── stats ──
     case 'stats': {
-      if (!useHttp) return { content: 'stats requires engram HTTP server' };
-      try { return await statsHttp(); }
-      catch (e: any) { return { content: `stats failed: ${e.message}`, is_error: true }; }
+      if (useHttp) {
+        try { return await statsHttp(); }
+        catch { httpAvailable = false; httpCheckedAt = Date.now(); }
+      }
+      return runSubprocess(['stats']);
     }
 
-    // ── graph (HTTP-only) ──
+    // ── graph ──
     case 'graph': {
       if (!input.query) return { content: 'query (node id) required', is_error: true };
-      if (!useHttp) return { content: 'graph requires engram HTTP server' };
-      try { return await graphHttp(input.query, input.depth ?? 1); }
-      catch (e: any) { return { content: `graph failed: ${e.message}`, is_error: true }; }
+      if (useHttp) {
+        try { return await graphHttp(input.query, input.depth ?? 1); }
+        catch { httpAvailable = false; httpCheckedAt = Date.now(); }
+      }
+      return runSubprocess(['graph', input.query, '--depth', String(input.depth ?? 1)]);
     }
 
     default:

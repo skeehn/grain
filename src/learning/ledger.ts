@@ -19,19 +19,21 @@ export class LearningLedger {
     const entries = new Map<string, LearningEntry>();
     if (!existsSync(this.path)) return [];
     for (const line of readFileSync(this.path, 'utf8').split('\n').filter(Boolean)) {
-      const event = JSON.parse(line) as LearningEvent;
-      if (event.type === 'proposed') entries.set(event.entry.id, structuredClone(event.entry));
-      else {
-        const entry = entries.get(event.id);
-        if (!entry) throw new Error(`Learning event references unknown entry ${event.id}`);
-        entry.updatedAt = new Date().toISOString();
-        if (event.type === 'validated') {
-          if (event.evidence.runId === entry.sourceRunId) throw new Error('Independent validation must use a different run');
-          if (!entry.evidence.some(item => item.runId === event.evidence.runId)) entry.evidence.push(event.evidence);
-          entry.status = 'validated';
-          entry.confidence = Math.min(1, entry.confidence + (event.evidence.outcome === 'passed' ? 0.25 : -0.25));
-        } else entry.status = event.type;
-      }
+      try {
+        const event = JSON.parse(line) as LearningEvent;
+        if (event.type === 'proposed' && event.entry?.id) entries.set(event.entry.id, structuredClone(event.entry));
+        else if (event.type !== 'proposed') {
+          const entry = entries.get(event.id);
+          if (!entry) continue;
+          entry.updatedAt = new Date().toISOString();
+          if (event.type === 'validated') {
+            if (!event.evidence || event.evidence.runId === entry.sourceRunId) continue;
+            if (!entry.evidence.some(item => item.runId === event.evidence.runId)) entry.evidence.push(event.evidence);
+            entry.status = 'validated';
+            entry.confidence = Math.min(1, entry.confidence + (event.evidence.outcome === 'passed' ? 0.25 : -0.25));
+          } else entry.status = event.type;
+        }
+      } catch { /* isolate a truncated/corrupt record; later entries remain usable */ }
     }
     return [...entries.values()];
   }

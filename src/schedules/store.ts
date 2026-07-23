@@ -1,5 +1,5 @@
 import { randomUUID } from 'crypto';
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'fs';
+import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from 'fs';
 import { dirname, join } from 'path';
 import { homedir } from 'os';
 
@@ -27,15 +27,37 @@ function readStore(path: string): ScheduleFile {
   if (!existsSync(path)) return { schemaVersion: 1, jobs: [] };
   try {
     const parsed = JSON.parse(readFileSync(path, 'utf8')) as ScheduleFile;
-    return parsed?.schemaVersion === 1 && Array.isArray(parsed.jobs) ? parsed : { schemaVersion: 1, jobs: [] };
-  } catch { return { schemaVersion: 1, jobs: [] }; }
+    if (parsed?.schemaVersion === 1 && Array.isArray(parsed.jobs)) return parsed;
+    throw new Error('unsupported schema');
+  } catch (error: any) {
+    throw new Error(`Schedule store is corrupt: ${path} (${error?.message || error})`);
+  }
 }
 
 function writeStore(path: string, store: ScheduleFile): void {
   mkdirSync(dirname(path), { recursive: true });
-  const temp = `${path}.${process.pid}.tmp`;
-  writeFileSync(temp, `${JSON.stringify(store, null, 2)}\n`, { mode: 0o600 });
+  const temp = `${path}.${process.pid}.${randomUUID()}.tmp`;
+  const fd = openSync(temp, 'w', 0o600);
+  try { writeFileSync(fd, `${JSON.stringify(store, null, 2)}\n`); fsyncSync(fd); }
+  finally { closeSync(fd); }
   renameSync(temp, path);
+}
+
+function withStoreLock<T>(path: string, operation: () => T): T {
+  mkdirSync(dirname(path), { recursive: true });
+  const lock = `${path}.lock`; const deadline = Date.now() + 5_000;
+  let descriptor: number | undefined;
+  while (descriptor === undefined) {
+    try { descriptor = openSync(lock, 'wx', 0o600); }
+    catch (error: any) {
+      if (error?.code !== 'EEXIST') throw error;
+      try { if (Date.now() - statSync(lock).mtimeMs > 30_000) unlinkSync(lock); } catch {}
+      if (Date.now() >= deadline) throw new Error(`Timed out waiting for schedule store lock: ${path}`);
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
+    }
+  }
+  try { return operation(); }
+  finally { closeSync(descriptor); try { unlinkSync(lock); } catch {} }
 }
 
 const ALIASES: Record<string, string> = {
@@ -94,19 +116,23 @@ export class ScheduleStore {
 
   add(input: { name: string; cron: string; prompt: string; workspace: string }): ScheduledJob {
     if (!input.name.trim() || !input.prompt.trim() || !input.workspace.trim()) throw new Error('Job name, prompt, and workspace are required');
-    const store = readStore(this.path);
-    if (store.jobs.some(job => job.name === input.name.trim())) throw new Error(`Scheduled job already exists: ${input.name.trim()}`);
-    const now = new Date().toISOString();
-    const job: ScheduledJob = { id: randomUUID(), name: input.name.trim(), cron: normalizeCron(input.cron), prompt: input.prompt.trim(),
-      workspace: input.workspace, enabled: true, createdAt: now, updatedAt: now };
-    store.jobs.push(job); writeStore(this.path, store); return job;
+    return withStoreLock(this.path, () => {
+      const store = readStore(this.path);
+      if (store.jobs.some(job => job.name === input.name.trim())) throw new Error(`Scheduled job already exists: ${input.name.trim()}`);
+      const now = new Date().toISOString();
+      const job: ScheduledJob = { id: randomUUID(), name: input.name.trim(), cron: normalizeCron(input.cron), prompt: input.prompt.trim(),
+        workspace: input.workspace, enabled: true, createdAt: now, updatedAt: now };
+      store.jobs.push(job); writeStore(this.path, store); return job;
+    });
   }
 
   remove(idOrName: string): boolean {
-    const store = readStore(this.path); const before = store.jobs.length;
-    store.jobs = store.jobs.filter(job => job.id !== idOrName && job.name !== idOrName);
-    if (store.jobs.length !== before) writeStore(this.path, store);
-    return store.jobs.length !== before;
+    return withStoreLock(this.path, () => {
+      const store = readStore(this.path); const before = store.jobs.length;
+      store.jobs = store.jobs.filter(job => job.id !== idOrName && job.name !== idOrName);
+      if (store.jobs.length !== before) writeStore(this.path, store);
+      return store.jobs.length !== before;
+    });
   }
 
   setEnabled(idOrName: string, enabled: boolean): ScheduledJob {
@@ -123,8 +149,10 @@ export class ScheduleStore {
   }
 
   private update(idOrName: string, mutate: (job: ScheduledJob) => void): ScheduledJob {
-    const store = readStore(this.path); const job = store.jobs.find(item => item.id === idOrName || item.name === idOrName);
-    if (!job) throw new Error(`Unknown scheduled job: ${idOrName}`);
-    mutate(job); job.updatedAt = new Date().toISOString(); writeStore(this.path, store); return job;
+    return withStoreLock(this.path, () => {
+      const store = readStore(this.path); const job = store.jobs.find(item => item.id === idOrName || item.name === idOrName);
+      if (!job) throw new Error(`Unknown scheduled job: ${idOrName}`);
+      mutate(job); job.updatedAt = new Date().toISOString(); writeStore(this.path, store); return job;
+    });
   }
 }

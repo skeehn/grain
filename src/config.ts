@@ -1,6 +1,7 @@
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
+import { closeSync, existsSync, fsyncSync, readFileSync, writeFileSync, mkdirSync, openSync, renameSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
+import { randomUUID } from 'crypto';
 
 import type { PluginsConfig } from './plugins/types.js';
 
@@ -94,7 +95,7 @@ export function saveKeyToEnv(key: string, value: string): void {
 
   const lines = contents.split('\n').filter(l => !l.startsWith(`${key}=`));
   lines.push(`${key}=${value}`);
-  writeFileSync(ENV_PATH, lines.filter(l => l.trim()).join('\n') + '\n', { mode: 0o600 });
+  atomicConfigWrite(ENV_PATH, lines.filter(l => l.trim()).join('\n') + '\n');
 }
 
 export function listEnvKeys(): Record<string, string> {
@@ -116,6 +117,15 @@ export function listEnvKeys(): Record<string, string> {
 
 export function ensureConfigDir(): void {
   if (!existsSync(CONFIG_DIR)) mkdirSync(CONFIG_DIR, { recursive: true });
+}
+
+function atomicConfigWrite(path: string, contents: string, mode = 0o600): void {
+  ensureConfigDir();
+  const temp = `${path}.${process.pid}.${randomUUID()}.tmp`;
+  const fd = openSync(temp, 'w', mode);
+  try { writeFileSync(fd, contents); fsyncSync(fd); }
+  finally { closeSync(fd); }
+  renameSync(temp, path);
 }
 
 export function getConfigDir(): string {
@@ -149,7 +159,7 @@ export function saveConfig(config: GrainConfig | Partial<GrainConfig>): void {
   const current = existsSync(CONFIG_PATH)
     ? (() => { try { return JSON.parse(readFileSync(CONFIG_PATH, 'utf-8')); } catch { return {}; } })()
     : {};
-  writeFileSync(CONFIG_PATH, JSON.stringify({ ...DEFAULTS, ...current, ...config }, null, 2));
+  atomicConfigWrite(CONFIG_PATH, JSON.stringify({ ...DEFAULTS, ...current, ...config }, null, 2));
 }
 
 export function validateConfig(config: GrainConfig): { valid: boolean; error?: string } {

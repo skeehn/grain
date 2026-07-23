@@ -12,7 +12,7 @@
 
 import type { WikiPage } from './types.js';
 
-const ENGRAM_HTTP = process.env.ENGRAM_HTTP || 'http://localhost:7474';
+const ENGRAM_HTTP = process.env.ENGRAM_HTTP || 'http://127.0.0.1:7474';
 
 /** Extract `[[target]]` wiki-link targets from a page body. */
 export function extractWikiLinks(body: string): string[] {
@@ -40,7 +40,7 @@ async function req(path: string, init?: RequestInit, timeoutMs = 1500): Promise<
 
 /** True if the engram HTTP server is reachable. */
 export async function engramAvailable(): Promise<boolean> {
-  const res = await req('/health', undefined, 400);
+  const res = await req('/health', undefined, 2000);
   return !!res && res.ok;
 }
 

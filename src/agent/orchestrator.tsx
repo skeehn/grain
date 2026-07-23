@@ -13,6 +13,7 @@ export interface OrchestratorOpts {
   provider?: string;
   maxTurns?: number;
   reflect?: boolean;
+  resume?: boolean;
   allowDestructive?: boolean;
   benchmark?: boolean;
   attachments?: string[];
@@ -31,7 +32,7 @@ export async function orchestrate(opts: OrchestratorOpts): Promise<void> {
   }
   await agentLoop({
     prompt:      opts.prompt,
-    resume:      false,
+    resume:      opts.resume ?? false,
     model:       opts.model,
     provider:    opts.provider,
     oneShot:     !!opts.prompt,

@@ -210,7 +210,7 @@ Everything lives in `~/.grain/`:
   mcp.json          trusted MCP server connections
   .env              API keys (chmod 600, auto-loaded)
   skills/           project-specific agent skills
-  sessions.json     conversation history
+  sessions/         versioned conversation files (migrated from sessions.json)
 ```
 
 ---
@@ -222,6 +222,12 @@ grain uses [engram](https://github.com/skeehn/engram) — a local Rust knowledge
 engram starts automatically in the background when you run grain. It runs at `localhost:7474`.
 
 Without engram, grain still works — just without cross-session memory.
+
+Conversation history and Engram knowledge serve different purposes. Session files
+preserve resumable chat/tool history per repository. Engram stores retrieved facts
+and is automatically scoped to the active repository so unrelated projects do not
+leak context into each other. See [docs/DURABILITY.md](docs/DURABILITY.md) for the
+storage, recovery, and maintenance contract.
 
 ---
 

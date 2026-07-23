@@ -20,6 +20,7 @@ import { runTui } from './tui/app.js';
 import type { GrainThemeName } from './tui/theme.js';
 import { handleLabCommand } from './commands/lab.js';
 import { handleJobsCommand } from './commands/jobs.js';
+import { sessionsDirectory } from './session/store.js';
 
 // ─── Load ~/.grain/.env before anything else ──────────────────────────────────
 
@@ -62,6 +63,7 @@ interface ParsedArgs {
   maxTurns?: number;
   tbBridge: boolean;  // TerminalBench bridge mode
   reflect: boolean;   // post-task self-reflection + engram store
+  resume: boolean;    // continue the latest conversation for this repository
   allowDestructive: boolean;
   classic: boolean;
   noAltScreen: boolean;
@@ -77,7 +79,7 @@ interface ParsedArgs {
 
 export function parseArgs(argv: string[]): ParsedArgs {
   const args = argv.slice(2);
-  const result: ParsedArgs = { autoApprove: false, concise: false, tbBridge: false, reflect: false, allowDestructive: false, classic: false, noAltScreen: false, printMode: false, attachments: [] };
+  const result: ParsedArgs = { autoApprove: false, concise: false, tbBridge: false, reflect: false, resume: false, allowDestructive: false, classic: false, noAltScreen: false, printMode: false, attachments: [] };
   const promptParts: string[] = [];
 
   let i = 0;
@@ -176,6 +178,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
     else if (arg === '--max-turns')                  { result.maxTurns = parseInt(args[++i], 10); }
     else if (arg === '--tb-bridge')                  { result.tbBridge = true; }
     else if (arg === '--reflect')                    { result.reflect = true; }
+    else if (arg === '--resume')                     { result.resume = true; }
     else if (arg === '--allow-destructive')          { result.allowDestructive = true; }
     else if (arg === '--classic')                    { result.classic = true; }
     else if (arg === '--no-alt-screen')              { result.noAltScreen = true; }
@@ -240,14 +243,14 @@ function ask(question: string): Promise<string> {
 }
 
 // ─── Engram: silent background auto-start ────────────────────────────────────
-// Checks :7474 with a 200ms timeout. If dead and engram binary exists,
+// Checks :7474 with a bounded timeout. If dead and engram binary exists,
 // spawns it detached. grain never waits — continues immediately.
 
 export async function ensureEngramRunning(): Promise<void> {
   try {
     const ctrl = new AbortController();
-    const tid = setTimeout(() => ctrl.abort(), 200);
-    const res = await fetch('http://localhost:7474/health', { signal: ctrl.signal });
+    const tid = setTimeout(() => ctrl.abort(), 2000);
+    const res = await fetch('http://127.0.0.1:7474/health', { signal: ctrl.signal });
     clearTimeout(tid);
     if (res.ok) return; // already running
   } catch { /* not running */ }
@@ -255,7 +258,7 @@ export async function ensureEngramRunning(): Promise<void> {
   const bin = join(homedir(), 'bin', 'engram');
   if (!existsSync(bin)) return; // not installed — silent skip
 
-  const db = join(homedir(), '.engram', 'knowledge');
+  const db = loadConfig().engram_db.replace(/^~(?=\/|$)/u, homedir());
   const child = spawn(bin, ['-d', db, 'serve', '--port', '7474'], {
     detached: true,
     stdio: 'ignore',
@@ -420,10 +423,10 @@ async function handleStatus(): Promise<void> {
     try {
       const ctrl = new AbortController();
       const tid = setTimeout(() => ctrl.abort(), 400);
-      const res = await fetch('http://localhost:7474/health', { signal: ctrl.signal });
+      const res = await fetch('http://127.0.0.1:7474/health', { signal: ctrl.signal });
       clearTimeout(tid);
       if (res.ok) {
-        const stats: any = await (await fetch('http://localhost:7474/stats')).json();
+        const stats: any = await (await fetch('http://127.0.0.1:7474/stats', { signal: AbortSignal.timeout(5000) })).json();
         console.log(`${ok} running  ${dim(`(${stats.nodes} nodes · ${stats.fts_docs} indexed)`)}`);
       } else {
         console.log(`${warn} server not responding`);
@@ -461,11 +464,15 @@ async function handleStatus(): Promise<void> {
 
   // Sessions
   try {
-    const { statSync } = await import('fs');
-    const dbPath = join(process.env.GRAIN_HOME || join(homedir(), '.grain'), 'sessions.json');
-    if (existsSync(dbPath)) {
-      const sz = statSync(dbPath).size;
-      console.log(`  ${bold('Sessions')}  ${dim(`${(sz / 1024).toFixed(0)} KB stored`)}`);
+    const { readdirSync, statSync } = await import('fs');
+    const dir = sessionsDirectory();
+    if (existsSync(dir)) {
+      const files = readdirSync(dir).filter(name => name.endsWith('.json'));
+      const size = files.reduce((total, name) => total + statSync(join(dir, name)).size, 0);
+      console.log(`  ${bold('Sessions')}  ${dim(`${files.length} conversations · ${(size / 1024).toFixed(0)} KB stored`)}`);
+    } else {
+      const legacy = join(process.env.GRAIN_HOME || join(homedir(), '.grain'), 'sessions.json');
+      if (existsSync(legacy)) console.log(`  ${bold('Sessions')}  ${dim('legacy history ready for automatic migration')}`);
     }
   } catch { /* skip */ }
 
@@ -638,18 +645,18 @@ async function handleInit(): Promise<void> {
     console.log(`${ok} engram binary found`);
     process.stdout.write('   Starting memory server... ');
     try {
-      execSync('curl -sf http://localhost:7474/health > /dev/null 2>&1');
+      execSync('curl -sf http://127.0.0.1:7474/health > /dev/null 2>&1');
       console.log(`${ok} already running`);
     } catch {
       try {
-        const db = join(homedir(), '.engram', 'knowledge');
+        const db = loadConfig().engram_db.replace(/^~(?=\/|$)/u, homedir());
         const child = spawn(engramBin, ['-d', db, 'serve', '--port', '7474'], {
           detached: true, stdio: 'ignore',
         });
         child.unref();
         await new Promise(r => setTimeout(r, 900));
-        execSync('curl -sf http://localhost:7474/health > /dev/null 2>&1');
-        console.log(`${ok} started at http://localhost:7474`);
+        execSync('curl -sf http://127.0.0.1:7474/health > /dev/null 2>&1');
+        console.log(`${ok} started at http://127.0.0.1:7474`);
       } catch {
         console.log(`${warn} could not start — run manually: engram -d ~/.engram/knowledge serve`);
       }
@@ -689,6 +696,7 @@ every write or risky action by default.
 
 ${bold('AUTOMATION')}
   grain -p "task" --yes             non-interactive script/CI task
+  grain --resume -p "follow up"     continue this repository's latest conversation
   grain --classic                   line-oriented interactive mode
   grain jobs run-due               run due jobs (for system cron/launchd)
   --provider <name> --model <id>   one-run override
@@ -722,12 +730,16 @@ async function testBedrockConnection(): Promise<{ ok: boolean; error?: string }>
 
 // ─── Engram handler ───────────────────────────────────────────────────────────
 
-const ENGRAM_API = 'http://localhost:7474';
+const ENGRAM_API = 'http://127.0.0.1:7474';
+
+function engramApiFetch(path: string, init: RequestInit = {}): Promise<Response> {
+  return fetch(`${ENGRAM_API}${path}`, { ...init, signal: init.signal || AbortSignal.timeout(5000) });
+}
 
 async function handleEngram(subcmd?: string, arg?: string): Promise<void> {
   // Check server is up
   try {
-    const health = await fetch(`${ENGRAM_API}/health`, { signal: AbortSignal.timeout(1000) });
+    const health = await engramApiFetch('/health', { signal: AbortSignal.timeout(2000) });
     if (!health.ok) throw new Error('not ok');
   } catch {
     console.error(`${err} engram server not running at ${ENGRAM_API}`);
@@ -738,8 +750,8 @@ async function handleEngram(subcmd?: string, arg?: string): Promise<void> {
 
   if (!subcmd || subcmd === 'stats') {
     const [statsRes, nodesRes] = await Promise.all([
-      fetch(`${ENGRAM_API}/stats`).then(r => r.json()) as Promise<any>,
-      fetch(`${ENGRAM_API}/nodes?limit=100`).then(r => r.json()) as Promise<any[]>,
+      engramApiFetch('/stats').then(r => r.json()) as Promise<any>,
+      engramApiFetch('/nodes?limit=100').then(r => r.json()) as Promise<any[]>,
     ]);
 
     // Count tags across all nodes
@@ -771,7 +783,7 @@ async function handleEngram(subcmd?: string, arg?: string): Promise<void> {
   }
 
   if (subcmd === 'list') {
-    const nodes = await fetch(`${ENGRAM_API}/nodes?limit=20`).then(r => r.json()) as any[];
+    const nodes = await engramApiFetch('/nodes?limit=20').then(r => r.json()) as any[];
     if (!nodes.length) { console.log(dim('No nodes in engram.')); return; }
     console.log(`\n${bold('Recent nodes')} ${dim('(latest 20)')}\n`);
     for (const node of nodes) {
@@ -786,7 +798,7 @@ async function handleEngram(subcmd?: string, arg?: string): Promise<void> {
 
   if (subcmd === 'search') {
     if (!arg) { console.error(`${err} Usage: grain engram search <query>`); return; }
-    const res = await fetch(`${ENGRAM_API}/search?q=${encodeURIComponent(arg)}&limit=10`).then(r => r.json()) as any[];
+    const res = await engramApiFetch(`/search?q=${encodeURIComponent(arg)}&limit=10`).then(r => r.json()) as any[];
     if (!res.length) { console.log(dim(`No results for "${arg}"`)); return; }
     // Normalize scores relative to top result
     const maxScore = Math.max(...res.map((n: any) => n.score || 0), 0.001);
@@ -804,7 +816,7 @@ async function handleEngram(subcmd?: string, arg?: string): Promise<void> {
 
   if (subcmd === 'add') {
     if (!arg) { console.error(`${err} Usage: grain engram add <fact>`); return; }
-    const res = await fetch(`${ENGRAM_API}/add`, {
+    const res = await engramApiFetch('/add', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ body: arg, tags: ['manual'], node_type: 'fact' }),
@@ -984,6 +996,7 @@ async function main(): Promise<void> {
       provider:    parsed.provider,
       maxTurns:    parsed.maxTurns,
       reflect:     parsed.reflect,
+      resume:      parsed.resume,
       allowDestructive: parsed.allowDestructive,
       benchmark: parsed.tbBridge,
       attachments: parsed.attachments,

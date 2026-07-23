@@ -1,8 +1,5 @@
-import { spawn } from 'child_process';
-import { homedir } from 'os';
-import { join } from 'path';
 import type { Message, ContentBlock } from '../providers/types.js';
-import { loadConfig } from '../config.js';
+import { executeEngram } from '../tools/engram.js';
 
 // Fallback input budget when the caller doesn't know the model's real window.
 export const MAX_TOKENS = 180000;
@@ -144,67 +141,12 @@ export function compact(messages: Message[]): Message[] {
   return [{ role: 'user', content: [{ type: 'text', text: summaryText }] }, ...toKeep];
 }
 
-const ENGRAM_HTTP = 'http://localhost:7474';
-
-export async function engramRetrieve(query: string): Promise<string> {
-  // Try HTTP first (faster, no subprocess overhead)
-  try {
-    const url = `${ENGRAM_HTTP}/search?q=${encodeURIComponent(query)}&limit=5`;
-    const res = await fetch(url, { signal: AbortSignal.timeout(4000) });
-    if (res.ok) {
-      const results = await res.json() as Array<{ body: string; score: number; tags: string[] }>;
-      if (results.length === 0) return '';
-      return results
-        .filter(r => r.score > 0.01)
-        .slice(0, 5)
-        .map(r => `• ${r.body}`)
-        .join('\n');
-    }
-  } catch { /* fall through to CLI */ }
-
-  // Fallback: CLI subprocess
-  const engramBin = join(homedir(), 'bin', 'engram');
-  const config = loadConfig();
-  const dbPath = config.engram_db.replace('~', homedir());
-
-  return new Promise((resolve) => {
-    const proc = spawn(engramBin, ['-d', dbPath, 'search', query], {
-      stdio: ['pipe', 'pipe', 'pipe'],
-      timeout: 5000,
-    });
-
-    let output = '';
-    proc.stdout.on('data', (data: Buffer) => { output += data.toString(); });
-    proc.on('close', () => resolve(output));
-    proc.on('error', () => resolve(''));
-  });
+export async function engramRetrieve(query: string, project?: string): Promise<string> {
+  const result = await executeEngram({ action: 'search', query, top_k: 5, project });
+  if (result.is_error || /^No results|engram not available/iu.test(String(result.content))) return '';
+  return String(result.content);
 }
 
-export async function engramStore(fact: string, tags: string[] = ['grain-auto']): Promise<void> {
-  // Try HTTP first
-  try {
-    const response = await fetch(`${ENGRAM_HTTP}/add`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ body: fact, tags, node_type: 'fact' }),
-      signal: AbortSignal.timeout(4000),
-    });
-    if (response.ok) return;
-  } catch { /* fall through to CLI */ }
-
-  // Fallback: CLI subprocess
-  const engramBin = join(homedir(), 'bin', 'engram');
-  const config = loadConfig();
-  const dbPath = config.engram_db.replace('~', homedir());
-
-  const tagArgs = tags.flatMap(t => ['--tags', t]);
-
-  return new Promise((resolve) => {
-    const proc = spawn(engramBin, ['-d', dbPath, 'add', fact, ...tagArgs], {
-      stdio: ['pipe', 'pipe', 'pipe'],
-      timeout: 5000,
-    });
-    proc.on('close', () => resolve());
-    proc.on('error', () => resolve());
-  });
+export async function engramStore(fact: string, tags: string[] = ['grain-auto'], project?: string): Promise<void> {
+  await executeEngram({ action: 'add', body: fact, tags, project });
 }
