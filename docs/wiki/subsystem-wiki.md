@@ -5,9 +5,9 @@ type: subsystem
 status: current
 owners: []
 tags: ["generated","subsystem","wiki"]
-source_commit: 81789a2c9ee13b74dcf6cca2b8e43d39cf70e745
-generated_at: 2026-07-23T07:27:54.223Z
-sources: [{"path":"src/wiki/engine.ts","start_line":1,"end_line":183,"hash":"6a5225650029280d7b5bc673a06426b8d2b7c8d571895fad77f46aee6f161803"},{"path":"src/wiki/engram-bridge.ts","start_line":1,"end_line":145,"hash":"6d4d83720f88ce83d9622d6f2dca1ecac19c0b7070408397c7d6aceb1f04d738"},{"path":"src/wiki/server.ts","start_line":1,"end_line":29,"hash":"788a169698ae41da697be82bea71fbc36ef46f5c0f9546805282241faa1a2efd"},{"path":"src/wiki/types.ts","start_line":1,"end_line":17,"hash":"8b1fdb180361d98055d34411e3eb2c270ee58f2084eb3170f0dd992d5305a57b"}]
+source_commit: 35ee9ad5014e572504b00b32c76b45c524e24633
+generated_at: 2026-07-23T07:42:24.813Z
+sources: [{"path":"src/wiki/engine.ts","start_line":1,"end_line":187,"hash":"f1d3fe41a1ccc2c35611d7a9e59a4214df90dbcd2467ff69f0fdb09c822255fc"},{"path":"src/wiki/engram-bridge.ts","start_line":1,"end_line":145,"hash":"6d4d83720f88ce83d9622d6f2dca1ecac19c0b7070408397c7d6aceb1f04d738"},{"path":"src/wiki/server.ts","start_line":1,"end_line":29,"hash":"788a169698ae41da697be82bea71fbc36ef46f5c0f9546805282241faa1a2efd"},{"path":"src/wiki/types.ts","start_line":1,"end_line":17,"hash":"8b1fdb180361d98055d34411e3eb2c270ee58f2084eb3170f0dd992d5305a57b"}]
 ---
 # Subsystem: wiki
 

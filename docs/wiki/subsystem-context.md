@@ -5,8 +5,8 @@ type: subsystem
 status: current
 owners: []
 tags: ["generated","subsystem","context"]
-source_commit: 81789a2c9ee13b74dcf6cca2b8e43d39cf70e745
-generated_at: 2026-07-23T07:27:54.228Z
+source_commit: 35ee9ad5014e572504b00b32c76b45c524e24633
+generated_at: 2026-07-23T07:42:24.815Z
 sources: [{"path":"src/context/capabilities.ts","start_line":1,"end_line":65,"hash":"1f336c35051a26473319121da1867eade9fc41af9644e78ed23a5a4960abb654"},{"path":"src/context/packer.ts","start_line":1,"end_line":84,"hash":"44559b2d8cdf0ccfccb8300ecd5ddbe4c783514abe006c615890158093cf51e7"},{"path":"src/context/types.ts","start_line":1,"end_line":61,"hash":"2e38201c46b4ca83328b0b606b85dbef97e2f29c9eb10e266f4c5bfb9745ecc9"}]
 ---
 # Subsystem: context

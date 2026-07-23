@@ -105,7 +105,11 @@ export class WikiEngine {
 
   build(): WikiPage {
     const files = this.fs.list('.', 12).filter(path => /\.(ts|tsx|js|jsx|rs|py|go|md)$/.test(path) && !path.startsWith(`${WIKI_DIR}/`));
-    const sources: WikiSource[] = files.slice(0, 500).map(path => {
+    // Provenance covers code only. This page is a map of where things live, so
+    // hashing prose made every README edit report it stale — a false positive
+    // that teaches you to ignore `wiki verify`, which is the one thing it must
+    // never do. Markdown still appears in the listing below.
+    const sources: WikiSource[] = files.filter(path => /\.(ts|tsx|js|jsx|rs|py|go)$/.test(path)).slice(0, 500).map(path => {
       const read = this.fs.readRange(path, 1, Number.MAX_SAFE_INTEGER);
       return { path, start_line: 1, end_line: read.total_lines, hash: read.hash };
     });
@@ -113,10 +117,10 @@ export class WikiEngine {
       status: 'current' as const, owners: [], tags: ['generated', 'repository'], source_commit: commit(this.fs.root),
       generated_at: new Date().toISOString(), sources };
     const grouped = new Map<string, string[]>();
-    for (const source of sources) {
-      const group = source.path.split('/')[0] || '.';
+    for (const path of files.slice(0, 800)) {
+      const group = path.split('/')[0] || '.';
       if (!grouped.has(group)) grouped.set(group, []);
-      grouped.get(group)!.push(source.path);
+      grouped.get(group)!.push(path);
     }
     const generated = [...grouped].sort().map(([group, paths]) => `## ${group}\n\n${paths.map(path => `- [${path}](../../${path})`).join('\n')}`).join('\n\n');
     const existingPath = `${WIKI_DIR}/repository-index.md`;

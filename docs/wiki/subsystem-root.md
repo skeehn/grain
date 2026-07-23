@@ -5,8 +5,8 @@ type: subsystem
 status: current
 owners: []
 tags: ["generated","subsystem","root"]
-source_commit: 81789a2c9ee13b74dcf6cca2b8e43d39cf70e745
-generated_at: 2026-07-23T07:27:54.221Z
+source_commit: 35ee9ad5014e572504b00b32c76b45c524e24633
+generated_at: 2026-07-23T07:42:24.810Z
 sources: [{"path":"src/attachments.ts","start_line":1,"end_line":33,"hash":"31a1c4a029b4f172282f64e5576dccea89242d68c4b817f7b6e47448893102ff"},{"path":"src/cli.ts","start_line":1,"end_line":1031,"hash":"1292c6956e327e393d1d17d0df43284ef38689dee72dcc0174ee0ac7235c21c6"},{"path":"src/config.ts","start_line":1,"end_line":223,"hash":"31a8b9df7b40b273ac2d27ed44fe651061351d19956f1327cf170327a52184b5"},{"path":"src/system-prompt.ts","start_line":1,"end_line":77,"hash":"8b9afbd6a2c2c766020d3c89d5e4545ae46e9d1ae972615ec591dbc5559de95a"}]
 ---
 # Subsystem: root

@@ -5,8 +5,8 @@ type: subsystem
 status: current
 owners: []
 tags: ["generated","subsystem","policy"]
-source_commit: 81789a2c9ee13b74dcf6cca2b8e43d39cf70e745
-generated_at: 2026-07-23T07:27:54.230Z
+source_commit: 35ee9ad5014e572504b00b32c76b45c524e24633
+generated_at: 2026-07-23T07:42:24.817Z
 sources: [{"path":"src/policy/classifier.ts","start_line":1,"end_line":63,"hash":"7f0e033c91d666aa86937894f1a15a72d49ab8bd01e929f8b9d97d4f717ec121"},{"path":"src/policy/gateway.ts","start_line":1,"end_line":40,"hash":"018ee30f9b25d2c58883ed462714a42cd2a9d6c74578a0069b6d47edcecc223c"},{"path":"src/policy/types.ts","start_line":1,"end_line":16,"hash":"731eaa77c1c3abc9b2d6bf3599607329f599f309b548572c4a55440e6f2cd61d"}]
 ---
 # Subsystem: policy

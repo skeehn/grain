@@ -5,8 +5,8 @@ type: subsystem
 status: current
 owners: []
 tags: ["generated","subsystem","session"]
-source_commit: 81789a2c9ee13b74dcf6cca2b8e43d39cf70e745
-generated_at: 2026-07-23T07:27:54.222Z
+source_commit: 35ee9ad5014e572504b00b32c76b45c524e24633
+generated_at: 2026-07-23T07:42:24.812Z
 sources: [{"path":"src/session/store.ts","start_line":1,"end_line":355,"hash":"d907ae67f9fb962a5773a3ac986299246bd1dfda5bae204cae66ad612330ec4b"}]
 ---
 # Subsystem: session

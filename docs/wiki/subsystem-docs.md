@@ -5,8 +5,8 @@ type: subsystem
 status: current
 owners: []
 tags: ["generated","subsystem","docs"]
-source_commit: 81789a2c9ee13b74dcf6cca2b8e43d39cf70e745
-generated_at: 2026-07-23T07:27:54.216Z
+source_commit: 35ee9ad5014e572504b00b32c76b45c524e24633
+generated_at: 2026-07-23T07:42:24.804Z
 sources: [{"path":"src/docs/generate.ts","start_line":1,"end_line":188,"hash":"d75d3b40e85901c0e6a991e5a3216da0d7f72e5574400e8339c74c058bbb222c"},{"path":"src/docs/index-bridge.ts","start_line":1,"end_line":146,"hash":"f837cd4fc8c04b9fb69b2176bda614cce1fa0f8e8fa70a301be4f192593ced6c"},{"path":"src/docs/worklog.ts","start_line":1,"end_line":183,"hash":"d264c98903d27607df2bd5e757917bf75e48f1af3d93b961fd1dfe8f3d31ce2f"}]
 ---
 # Subsystem: docs

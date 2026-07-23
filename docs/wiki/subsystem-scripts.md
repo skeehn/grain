@@ -5,8 +5,8 @@ type: subsystem
 status: current
 owners: []
 tags: ["generated","subsystem","scripts"]
-source_commit: 81789a2c9ee13b74dcf6cca2b8e43d39cf70e745
-generated_at: 2026-07-23T07:27:54.231Z
+source_commit: 35ee9ad5014e572504b00b32c76b45c524e24633
+generated_at: 2026-07-23T07:42:24.819Z
 sources: [{"path":"scripts/benchmark-report.ts","start_line":1,"end_line":168,"hash":"a078c84dac314314e0fa98a52983118aad918c2eb8a7d6092df51b734e6f7e7a"}]
 ---
 # Subsystem: scripts

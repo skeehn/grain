@@ -5,8 +5,8 @@ type: subsystem
 status: current
 owners: []
 tags: ["generated","subsystem","mcp"]
-source_commit: 81789a2c9ee13b74dcf6cca2b8e43d39cf70e745
-generated_at: 2026-07-23T07:27:54.226Z
+source_commit: 35ee9ad5014e572504b00b32c76b45c524e24633
+generated_at: 2026-07-23T07:42:24.814Z
 sources: [{"path":"src/mcp/client.ts","start_line":1,"end_line":75,"hash":"01a88217dfe6112afe174a29c5b7f521927813990ac8abd53e9ac95961fabae0"},{"path":"src/mcp/config.ts","start_line":1,"end_line":25,"hash":"5a02686b3e47ad0019abe5f4d2c767702f03565490810cdb649f557a6e550709"},{"path":"src/mcp/http-client.ts","start_line":1,"end_line":57,"hash":"3e1e5fa29921ea74712892603f8194387ad7e6c97d214ab64435df1a5bdb5e0b"},{"path":"src/mcp/registry.ts","start_line":1,"end_line":38,"hash":"aa8d017c31beda6f4b26842390f901c7fd76dfdb14d03fd15f1320fcf09a410f"},{"path":"src/mcp/types.ts","start_line":1,"end_line":37,"hash":"7cd59dbdea83dc270aa87848eb65081b9242cd7c7859b40bb660ee015a793301"}]
 ---
 # Subsystem: mcp

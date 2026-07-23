@@ -5,8 +5,8 @@ type: subsystem
 status: current
 owners: []
 tags: ["generated","subsystem","skills"]
-source_commit: 81789a2c9ee13b74dcf6cca2b8e43d39cf70e745
-generated_at: 2026-07-23T07:27:54.227Z
+source_commit: 35ee9ad5014e572504b00b32c76b45c524e24633
+generated_at: 2026-07-23T07:42:24.815Z
 sources: [{"path":"src/skills/manager.ts","start_line":1,"end_line":573,"hash":"dda921e85cc8446afc2b94381fe750e3951a80604b1d963fb8689e0344a12e55"},{"path":"src/skills/types.ts","start_line":1,"end_line":94,"hash":"6d94aee613f74bcedb015f011c50a15041b2416f2d9c26fc3489f4cfc09883f8"}]
 ---
 # Subsystem: skills

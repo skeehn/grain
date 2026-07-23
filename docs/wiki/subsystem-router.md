@@ -5,8 +5,8 @@ type: subsystem
 status: current
 owners: []
 tags: ["generated","subsystem","router"]
-source_commit: 81789a2c9ee13b74dcf6cca2b8e43d39cf70e745
-generated_at: 2026-07-23T07:27:54.231Z
+source_commit: 35ee9ad5014e572504b00b32c76b45c524e24633
+generated_at: 2026-07-23T07:42:24.818Z
 sources: [{"path":"src/router/index.ts","start_line":1,"end_line":216,"hash":"d05143249d31874a16a703d8c02ac4bfb4f4d77a77bbf6dba852f4fdc106264b"}]
 ---
 # Subsystem: router

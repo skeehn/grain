@@ -5,8 +5,8 @@ type: subsystem
 status: current
 owners: []
 tags: ["generated","subsystem","engram"]
-source_commit: 81789a2c9ee13b74dcf6cca2b8e43d39cf70e745
-generated_at: 2026-07-23T07:27:54.215Z
+source_commit: 35ee9ad5014e572504b00b32c76b45c524e24633
+generated_at: 2026-07-23T07:42:24.803Z
 sources: [{"path":"src/engram/client.ts","start_line":1,"end_line":229,"hash":"bc5c6113d50f91a26634d5993d94016947c770452abee9fd59e335afa719a235"},{"path":"src/engram/memory.ts","start_line":1,"end_line":58,"hash":"60326e96dbdb487f1e9f4648f185cd10c13f28ebf294c8cad18768ec4bb60d79"},{"path":"src/engram/types.ts","start_line":1,"end_line":123,"hash":"5d1d0dec95d8331bd883b021671c74adb74e2bf31d627f76f3261ca52c2d2eaf"}]
 ---
 # Subsystem: engram

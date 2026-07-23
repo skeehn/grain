@@ -5,8 +5,8 @@ type: subsystem
 status: current
 owners: []
 tags: ["generated","subsystem","agent"]
-source_commit: 81789a2c9ee13b74dcf6cca2b8e43d39cf70e745
-generated_at: 2026-07-23T07:27:54.211Z
+source_commit: 35ee9ad5014e572504b00b32c76b45c524e24633
+generated_at: 2026-07-23T07:42:24.797Z
 sources: [{"path":"src/agent/changed-files.ts","start_line":1,"end_line":46,"hash":"69696ee62b192059f6b994a8ca6686bee6f58b329ade7974d7fca5a0bc83f8f3"},{"path":"src/agent/checkpoint.ts","start_line":1,"end_line":41,"hash":"fd9ae3bfd556e117507bec28f2d4227963ed3fb418bff00d1cec36e9fc3cba20"},{"path":"src/agent/context-tracker.ts","start_line":1,"end_line":229,"hash":"2a886eb0aab4a95f67489116e98a5ca16e585b387effa20cade2d005e6de844d"},{"path":"src/agent/context.ts","start_line":1,"end_line":358,"hash":"8b9d9948bfa7720fca4adbda359378d6634f0c417b9bab01050fb5ab3baa5ac9"},{"path":"src/agent/loop.ts","start_line":1,"end_line":1051,"hash":"521619ed3c3bd87b0c746a6a1e1696c4862ff0f00e873d422aeabda7c3d2bacd"},{"path":"src/agent/loop/plan-parser.ts","start_line":1,"end_line":40,"hash":"ece028f6346dde9377125aa56bfafa94c9553fcbe5f5a7f46dbe9b3859dcac4d"},{"path":"src/agent/orchestrator.tsx","start_line":1,"end_line":49,"hash":"574ac0c0faba317ad3ddec7ce1b8b9cad1d3437a74f955bcca28642101fcce67"},{"path":"src/agent/verify.ts","start_line":1,"end_line":36,"hash":"30c5b95d056b66604d2d0b736f4b6f7e517d42701b770bfc1918b26b17f60a94"}]
 ---
 # Subsystem: agent

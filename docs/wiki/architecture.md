@@ -5,8 +5,8 @@ type: architecture
 status: current
 owners: []
 tags: ["generated","architecture"]
-source_commit: 81789a2c9ee13b74dcf6cca2b8e43d39cf70e745
-generated_at: 2026-07-23T07:27:54.179Z
+source_commit: 35ee9ad5014e572504b00b32c76b45c524e24633
+generated_at: 2026-07-23T07:42:24.775Z
 sources: []
 ---
 # Architecture

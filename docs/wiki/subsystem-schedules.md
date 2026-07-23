@@ -5,8 +5,8 @@ type: subsystem
 status: current
 owners: []
 tags: ["generated","subsystem","schedules"]
-source_commit: 81789a2c9ee13b74dcf6cca2b8e43d39cf70e745
-generated_at: 2026-07-23T07:27:54.232Z
+source_commit: 35ee9ad5014e572504b00b32c76b45c524e24633
+generated_at: 2026-07-23T07:42:24.819Z
 sources: [{"path":"src/schedules/store.ts","start_line":1,"end_line":210,"hash":"f447f1442f55a74bc510051688a7ef1606355a66a51d38411cccb341eed61847"}]
 ---
 # Subsystem: schedules
