@@ -1,6 +1,7 @@
-import type { Provider, Message, Tool, StreamEvent } from './types.js';
+import type { Provider, ProviderStreamOptions, Message, Tool, StreamEvent } from './types.js';
 import { loadConfig } from '../config.js';
 import { getModelCapabilities } from '../context/index.js';
+import { compatibleOpenRouterFreeModels } from './catalog.js';
 
 export const OPENROUTER_FREE_MODEL = 'openrouter/free';
 export const OPENROUTER_POOL_MODEL = 'poolside/laguna-xs-2.1:free';
@@ -12,6 +13,8 @@ const STREAM_IDLE_TIMEOUT_MS = 90_000;
 // honoring the provider's Retry-After when it's short enough to be worth waiting.
 const MAX_TRANSIENT_RETRIES = 3;
 const MAX_RETRY_WAIT_MS = 30_000;
+// OpenRouter currently rejects `models` arrays longer than three.
+const MAX_FREE_FALLBACK_MODELS = 3;
 
 const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
 
@@ -91,7 +94,7 @@ export class OpenRouterProvider implements Provider {
     return result;
   }
 
-  async *stream(messages: Message[], system: string, tools: Tool[]): AsyncIterable<StreamEvent> {
+  async *stream(messages: Message[], system: string, tools: Tool[], options?: ProviderStreamOptions): AsyncIterable<StreamEvent> {
     if (!this.apiKey) {
       yield { type: 'error', error: `${this.options.apiKeyEnv} is not set. Run: grain config set key ${this.options.apiKeyEnv} <key>` };
       return;
@@ -104,23 +107,63 @@ export class OpenRouterProvider implements Provider {
       stream_options: { include_usage: true },
       max_tokens: this.options.maxTokens ?? 16_384,
     };
+    // OpenRouter's free router may choose a model whose catalog entry claims
+    // tool support but whose current upstream route rejects tool_choice. For
+    // coding turns, resolve a bounded, explicit list of free tool-capable
+    // models so OpenRouter can fail over between models, not just providers.
+    if (this.name === 'openrouter' && this.model === OPENROUTER_FREE_MODEL && tools.length) {
+      try {
+        const compatible = await compatibleOpenRouterFreeModels({ tools: true });
+        const preferred = [
+          OPENROUTER_POOL_MODEL,
+          'poolside/laguna-m.1:free',
+          'poolside/laguna-s-2.1:free',
+          'cohere/north-mini-code:free',
+        ];
+        const rank = new Map(preferred.map((id, index) => [id, index]));
+        const models = compatible
+          .map(model => model.id)
+          .sort((a, b) => (rank.get(a) ?? preferred.length) - (rank.get(b) ?? preferred.length)
+            || a.localeCompare(b))
+          .slice(0, MAX_FREE_FALLBACK_MODELS);
+        if (models.length) {
+          delete body.model;
+          body.models = models;
+          body.route = 'fallback';
+        }
+      } catch {
+        // Catalog availability must not make OpenRouter unavailable. The
+        // canonical free router remains the degraded fallback.
+      }
+    }
     // A specific free model can disappear or be saturated without warning.
     // Keep the user's choice first, then let OpenRouter select another free
     // model that supports this request (including its tool requirements).
     if (this.name === 'openrouter' && this.model.endsWith(':free')) {
       body.models = [OPENROUTER_FREE_MODEL];
     }
-    // Reasoning effort for models that support it (OpenRouter ignores it otherwise).
+    // Reasoning effort, in the shape this endpoint actually accepts.
+    //
+    // `reasoning: {effort}` is an OpenRouter extension. Sending it to any other
+    // OpenAI-compatible endpoint is a hard 400 ("property 'reasoning' is
+    // unsupported"), which made a saved `/effort` setting silently break Groq,
+    // vLLM, and every custom provider. Groq speaks the standard
+    // `reasoning_effort` scalar; unknown endpoints get neither.
     const effort = loadConfig().effort;
     if (effort && getModelCapabilities(this.name, this.model).supportsReasoning) {
-      body.reasoning = { effort };
+      if (this.name === 'openrouter') body.reasoning = { effort };
+      else if (this.name === 'groq') body.reasoning_effort = effort;
     }
     if (tools.length) body.tools = tools.map(tool => ({
       type: 'function',
       function: { name: tool.name, description: tool.description, parameters: tool.input_schema },
     }));
+    if (tools.length) body.tool_choice = 'auto';
 
     const controller = new AbortController();
+    const abort = () => controller.abort(options?.signal?.reason);
+    if (options?.signal?.aborted) abort();
+    else options?.signal?.addEventListener('abort', abort, { once: true });
     let timer: ReturnType<typeof setTimeout> | undefined;
     const refreshTimeout = () => {
       if (timer) clearTimeout(timer);
@@ -167,6 +210,7 @@ export class OpenRouterProvider implements Provider {
       const states = new Map<number, ToolState>();
       let buffer = '';
       let ended = false;
+      let selectedModelReported = false;
       const endTools = function* (): Generator<StreamEvent> {
         for (const state of states.values()) if (state.started && !state.ended) {
           state.ended = true;
@@ -203,6 +247,11 @@ export class OpenRouterProvider implements Provider {
           if (parsed.error) {
             yield { type: 'error', error: parsed.error.message || JSON.stringify(parsed.error) };
             return;
+          }
+          if (!selectedModelReported && typeof parsed.model === 'string') {
+            selectedModelReported = true;
+            yield { type: 'model_selected', provider: this.name, requested_model: this.model,
+              selected_model: parsed.model, fallback: parsed.model !== this.model };
           }
           if (parsed.usage) {
             yield { type: 'usage', input_tokens: parsed.usage.prompt_tokens || 0,
@@ -256,6 +305,7 @@ export class OpenRouterProvider implements Provider {
       };
     } finally {
       if (timer) clearTimeout(timer);
+      options?.signal?.removeEventListener('abort', abort);
     }
   }
 }
