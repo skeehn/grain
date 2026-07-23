@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "kind": "grain_harbor_bridge_canary",
+  "observed_at": "2026-07-22T01:03:24.255358-04:00",
+  "source_tree": "dirty-intentional",
+  "platform": {
+    "os": "macOS",
+    "arch": "arm64",
+    "docker_desktop": "4.81.0",
+    "docker_engine": "29.6.1"
+  },
+  "harness": {
+    "harbor": "0.20.0",
+    "python": "3.12",
+    "litellm": "1.83.14",
+    "telemetry": false
+  },
+  "agent": {
+    "name": "grain",
+    "version": "0.2.0",
+    "provider": "openrouter",
+    "requested_model": "openrouter/free",
+    "observed_model": "poolside/laguna-xs-2.1:free",
+    "tool_calls": 3,
+    "protocol_errors": 0
+  },
+  "task": {
+    "name": "grain/bridge-canary",
+    "required_shell_redirection": true,
+    "completed_trials": 1,
+    "errored_trials": 0,
+    "reward": 1.0,
+    "runtime_seconds": 24.175293
+  },
+  "source_job_id": "9240c8a4-85ad-4e1e-a740-819596b6c361",
+  "source_result_sha256": "1a9e2e2cd84f3b02d37051c0d1b77c328afac5e3e1729363291fdbc0e1666b32",
+  "source_trial_sha256": "a520405c5a544a0e756fc460507c6a4186b39deeaa014c3f36e9aa87aad3c57f"
+}

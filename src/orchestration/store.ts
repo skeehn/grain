@@ -2,8 +2,22 @@ import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, 
 import { dirname, join } from 'path';
 import { homedir } from 'os';
 import type { TaskGraph } from './types.js';
+import { DEFAULT_RUN_TREE_LIMITS } from './types.js';
 
 function graphDir(): string { return join(process.env.GRAIN_HOME || join(homedir(), '.grain'), 'agents'); }
+
+function normalizeGraph(raw: any): TaskGraph {
+  const createdAt = String(raw?.createdAt || raw?.tasks?.[0]?.createdAt || new Date(0).toISOString());
+  const tasks = Array.isArray(raw?.tasks) ? raw.tasks : [];
+  const byId = new Map(tasks.map((task: any) => [task.id, task]));
+  const depthOf = (task: any, seen = new Set<string>()): number => {
+    if (!task?.parentId || seen.has(task.id)) return 0;
+    seen.add(task.id); return 1 + depthOf(byId.get(task.parentId), seen);
+  };
+  return { ...raw, createdAt, limits: { ...DEFAULT_RUN_TREE_LIMITS, ...(raw?.limits || {}) },
+    usage: { turns: 0, tokens: 0, costUsd: 0, wallTimeMs: 0, toolCalls: 0, ...(raw?.usage || {}) },
+    tasks: tasks.map((task: any) => ({ ...task, depth: Number.isInteger(task.depth) ? task.depth : depthOf(task) })) } as TaskGraph;
+}
 
 export class TaskGraphStore {
   save(graph: TaskGraph): string {
@@ -15,7 +29,7 @@ export class TaskGraphStore {
   load(id: string): TaskGraph {
     const path = join(graphDir(), `${id}.json`);
     if (!existsSync(path)) throw new Error(`Unknown agent graph ${id}`);
-    return JSON.parse(readFileSync(path, 'utf8')) as TaskGraph;
+    return normalizeGraph(JSON.parse(readFileSync(path, 'utf8')));
   }
   update(id: string, mutate: (graph: TaskGraph) => void): TaskGraph {
     const lock = join(graphDir(), `${id}.lock`); mkdirSync(graphDir(), { recursive: true });
@@ -34,6 +48,6 @@ export class TaskGraphStore {
   list(): TaskGraph[] {
     if (!existsSync(graphDir())) return [];
     return readdirSync(graphDir()).filter(name => name.endsWith('.json')).sort()
-      .map(name => JSON.parse(readFileSync(join(graphDir(), name), 'utf8')) as TaskGraph);
+      .map(name => normalizeGraph(JSON.parse(readFileSync(join(graphDir(), name), 'utf8'))));
   }
 }

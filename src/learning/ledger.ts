@@ -29,7 +29,8 @@ export class LearningLedger {
           if (event.type === 'validated') {
             if (!event.evidence || event.evidence.runId === entry.sourceRunId) continue;
             if (!entry.evidence.some(item => item.runId === event.evidence.runId)) entry.evidence.push(event.evidence);
-            entry.status = 'validated';
+            const independentPasses = new Set(entry.evidence.filter(item => item.outcome === 'passed' && item.runId !== entry.sourceRunId).map(item => item.runId));
+            entry.status = independentPasses.size >= 2 ? 'validated' : 'evaluated';
             entry.confidence = Math.min(1, entry.confidence + (event.evidence.outcome === 'passed' ? 0.25 : -0.25));
           } else entry.status = event.type;
         }
@@ -44,8 +45,9 @@ export class LearningLedger {
       && !['rejected', 'stale', 'superseded'].includes(entry.status));
     if (duplicate) return duplicate;
     const now = new Date().toISOString();
+    const requiresUserReview = /prompt|permission|executable|script|global|cross[- ]project/iu.test(`${statement} ${tags.join(' ')}`);
     const entry: LearningEntry = { id: randomUUID(), kind, statement: statement.trim(), status: 'candidate',
-      confidence: 0.5, createdAt: now, updatedAt: now, sourceRunId, evidence: [], tags };
+      confidence: 0.5, createdAt: now, updatedAt: now, sourceRunId, evidence: [], tags, requiresUserReview };
     this.append({ type: 'proposed', entry });
     return entry;
   }
@@ -59,16 +61,17 @@ export class LearningLedger {
     return this.list().find(item => item.id === id)!;
   }
 
-  promote(id: string): LearningEntry {
+  promote(id: string, options: { userReviewed?: boolean } = {}): LearningEntry {
     const entry = this.list().find(item => item.id === id);
     if (!entry) throw new Error(`Unknown learning ${id}`);
     const independentPasses = new Set(entry.evidence.filter(e => e.outcome === 'passed' && e.runId !== entry.sourceRunId).map(e => e.runId));
-    if (entry.status !== 'validated' || independentPasses.size < 1) throw new Error('Learning requires independent successful validation');
+    if (entry.status !== 'validated' || independentPasses.size < 2) throw new Error('Learning requires two independent successful validations');
+    if (entry.requiresUserReview && !options.userReviewed) throw new Error('Learning requires explicit user review before promotion');
     this.append({ type: 'promoted', id });
     return this.list().find(item => item.id === id)!;
   }
 
   autoPromoteValidated(): LearningEntry[] {
-    return this.list().filter(entry => entry.status === 'validated').map(entry => this.promote(entry.id));
+    return this.list().filter(entry => entry.status === 'validated' && !entry.requiresUserReview).map(entry => this.promote(entry.id));
   }
 }

@@ -68,6 +68,8 @@ describe('parseArgs — existing behavior preserved', () => {
   test('commands still recognized in first position', () => {
     expect(parse('status').command).toBe('status');
     expect(parse('init').command).toBe('init');
+    expect(parse('setup').command).toBe('init');
+    expect(parse('doctor').command).toBe('doctor');
     expect(parse('--help').command).toBe('help');
     const cfg = parse('config', 'set', 'model', 'foo');
     expect(cfg.command).toBe('config');
@@ -110,6 +112,9 @@ describe('parseArgs — existing behavior preserved', () => {
     expect(agents.command).toBe('agents');
     expect(agents.utilitySubcmd).toBe('pair');
     expect(agents.utilityArg).toBe('implement auth');
+    expect(parse('agents', 'recursive-delivery', 'plan', 'build', 'verify').utilityArg).toBe('plan build verify');
+    const run = parse('agents', 'run', 'grok-reviewer', 'inspect', 'the', 'patch');
+    expect(run.utilityArg).toBe('grok-reviewer'); expect(run.utilityOutput).toBe('inspect the patch');
   });
 
   test('scheduled job commands retain cron and task arguments', () => {
@@ -117,6 +122,12 @@ describe('parseArgs — existing behavior preserved', () => {
     expect(parsed.command).toBe('jobs');
     expect(parsed.utilitySubcmd).toBe('add');
     expect(parsed.utilityArgs).toEqual(['audit', '0', '9', '*', '*', '1-5', '--', 'review', 'the', 'repo']);
+  });
+
+  test('parses daemon lifecycle commands', () => {
+    const parsed = parseArgs(['bun', 'grain', 'daemon', 'start']);
+    expect(parsed.command).toBe('daemon');
+    expect(parsed.utilitySubcmd).toBe('start');
   });
 
   test('TUI command and presentation flags parse without changing classic prompts', () => {
@@ -135,5 +146,26 @@ describe('parseArgs — existing behavior preserved', () => {
   test('validates operands for Lab and attachments', () => {
     expect(() => parse('lab', '--run')).toThrow('Usage: grain lab --run <run-id>');
     expect(() => parse('--attach')).toThrow('Missing path for --attach');
+  });
+});
+
+describe('parseArgs — governed memory operators', () => {
+  test('routes the user-facing memory alias without invoking chat', () => {
+    const parsed = parse('memory', 'status');
+    expect(parsed.command).toBe('engram');
+    expect(parsed.engramSubcmd).toBe('status');
+    expect(parsed.prompt).toBeUndefined();
+  });
+
+  test('parses memory edit content separately from its id', () => {
+    const parsed = parse('engram', 'edit', 'memory-1', 'updated', 'content');
+    expect(parsed.engramSubcmd).toBe('edit');
+    expect(parsed.engramArg).toBe('memory-1');
+    expect(parsed.engramBody).toBe('updated content');
+  });
+
+  test('parses export and rebuild', () => {
+    expect(parse('engram', 'export').engramSubcmd).toBe('export');
+    expect(parse('engram', 'rebuild').engramSubcmd).toBe('rebuild');
   });
 });

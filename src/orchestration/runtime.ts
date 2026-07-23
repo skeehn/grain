@@ -1,9 +1,9 @@
 import { randomUUID } from 'crypto';
 import { AgentScheduler } from './scheduler.js';
 import { TaskGraphStore } from './store.js';
-import type { AgentTask, TaskGraph } from './types.js';
+import type { AgentTask, AgentUsage, TaskGraph } from './types.js';
 
-export interface AgentExecutionResult { summary: string; evidence: string[]; changedPaths: string[]; }
+export interface AgentExecutionResult { summary: string; evidence: string[]; changedPaths: string[]; usage?: Partial<AgentUsage>; }
 export type AgentExecutor = (task: AgentTask, signal: AbortSignal, heartbeat: () => void) => Promise<AgentExecutionResult>;
 
 export class DurableAgentRuntime {
@@ -30,9 +30,11 @@ export class DurableAgentRuntime {
         this.scheduler.heartbeat(graph, ready.id, this.workerId); this.store.save(graph);
       };
       try {
+        const startedAt = Date.now();
         const latest = this.store.load(graphId).tasks.find(task => task.id === ready.id)!;
         if (latest.cancellationRequestedAt) controller.abort();
         const result = await executor(latest, controller.signal, heartbeat);
+        result.usage = { ...result.usage, wallTimeMs: result.usage?.wallTimeMs ?? Date.now() - startedAt };
         graph = this.store.load(graphId);
         const current = graph.tasks.find(task => task.id === ready.id)!;
         if (current.cancellationRequestedAt) { current.state = 'cancelled'; current.lease = undefined; }
@@ -57,7 +59,9 @@ export class DurableAgentRuntime {
       this.scheduler.heartbeat(graph, taskId, this.workerId);
     });
     try {
+      const startedAt = Date.now();
       const result = await executor(leased, controller.signal, heartbeat);
+      result.usage = { ...result.usage, wallTimeMs: result.usage?.wallTimeMs ?? Date.now() - startedAt };
       this.store.update(graphId, graph => {
         const current = graph.tasks.find(task => task.id === taskId)!;
         if (current.cancellationRequestedAt) { current.state = 'cancelled'; current.lease = undefined; }

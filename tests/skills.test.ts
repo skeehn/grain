@@ -23,7 +23,8 @@ describe('markdown skills', () => {
     expect(skills[0].name).toBe('deploy');
     expect(skills[0].description).toBe('How to deploy the app');
     expect(skills[0].tags).toEqual(['deploy', 'ci']);
-    expect(skills[0].content).toBe('Run the deploy script.');
+    expect(skills[0].content).toBe(''); // index stays metadata-only until selected
+    expect((await mgr.getMarkdownSkill('deploy'))?.content).toBe('Run the deploy script.');
   });
 
   test('create/get/delete markdown skill round-trip', async () => {
@@ -32,6 +33,34 @@ describe('markdown skills', () => {
     expect(skill?.content).toContain('bun test');
     expect(await mgr.deleteMarkdownSkill('testing')).toBe(true);
     expect(await mgr.getMarkdownSkill('testing')).toBeUndefined();
+  });
+
+  test('discovers portable nested SKILL.md packages', async () => {
+    const { mkdirSync } = await import('fs'); mkdirSync(join(dir, 'release'), { recursive: true });
+    writeFileSync(join(dir, 'release', 'SKILL.md'), '---\nname: release\ndescription: Safe releases\ntags: [release]\n---\nVerify before publishing.\n');
+    const skills = await mgr.listMarkdownSkills(); expect(skills.map(skill => skill.name)).toContain('release');
+    expect((await mgr.getMarkdownSkill('release'))?.content).toContain('Verify before publishing');
+  });
+
+  test('rejects non-conforming portable packages and reports actionable validation', async () => {
+    const { mkdirSync } = await import('fs'); mkdirSync(join(dir, 'wrong-folder'), { recursive: true });
+    writeFileSync(join(dir, 'wrong-folder', 'SKILL.md'), '---\nname: Wrong_Name\ndescription: Bad package\n---\nDo not load.\n');
+    expect((await mgr.listMarkdownSkills()).map(skill => skill.name)).not.toContain('Wrong_Name');
+    const result = (await mgr.validatePortableSkills()).find(item => item.name === 'Wrong_Name');
+    expect(result?.valid).toBe(false);
+    expect(result?.errors.join(' ')).toContain('lowercase');
+    expect(result?.errors.join(' ')).toContain('parent directory');
+  });
+
+  test('portable validation enforces required description and accepts a conforming package', async () => {
+    const { mkdirSync } = await import('fs');
+    mkdirSync(join(dir, 'valid-skill'), { recursive: true });
+    mkdirSync(join(dir, 'missing-description'), { recursive: true });
+    writeFileSync(join(dir, 'valid-skill', 'SKILL.md'), '---\nname: valid-skill\ndescription: Use when validating portable skills.\n---\nValidate it.\n');
+    writeFileSync(join(dir, 'missing-description', 'SKILL.md'), '---\nname: missing-description\n---\nNo description.\n');
+    const results = await mgr.validatePortableSkills();
+    expect(results.find(item => item.name === 'valid-skill')?.valid).toBe(true);
+    expect(results.find(item => item.name === 'missing-description')?.errors).toContain('description is required');
   });
 
   test('skips malformed files without throwing', async () => {

@@ -40,6 +40,9 @@ export interface AgentTask {
   
   /** Resume an existing session */
   sessionId?: string;
+  provider?: string;
+  model?: string;
+  skills?: string[];
 
   /** Runtime-only cancellation and liveness hooks; never persisted. */
   signal?: AbortSignal;

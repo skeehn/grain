@@ -5,13 +5,24 @@ import { randomUUID } from 'crypto';
 import { appendFileSync } from 'fs';
 
 describe('verified learning ledger', () => {
-  test('requires independent passing evidence before promotion', () => {
+  test('requires two independent passing runs before promotion', () => {
     const ledger = new LearningLedger(join(process.env.GRAIN_HOME!, `learning-${randomUUID()}.jsonl`));
     const entry = ledger.propose('procedure', 'Run focused tests before the full suite', 'run-a');
     expect(() => ledger.promote(entry.id)).toThrow();
     expect(() => ledger.validate(entry.id, { runId: 'run-a', verifier: 'tests', outcome: 'passed' })).toThrow();
-    ledger.validate(entry.id, { runId: 'run-b', verifier: 'bun-test', outcome: 'passed' });
+    expect(ledger.validate(entry.id, { runId: 'run-b', verifier: 'bun-test', outcome: 'passed' }).status).toBe('evaluated');
+    expect(() => ledger.promote(entry.id)).toThrow('two independent');
+    expect(ledger.validate(entry.id, { runId: 'run-c', verifier: 'integration-test', outcome: 'passed' }).status).toBe('validated');
     expect(ledger.promote(entry.id).status).toBe('promoted');
+  });
+
+  test('high-risk procedures cannot auto-promote without user review', () => {
+    const ledger = new LearningLedger(join(process.env.GRAIN_HOME!, `learning-${randomUUID()}.jsonl`));
+    const entry = ledger.propose('procedure', 'Install a global executable script', 'run-a');
+    ledger.validate(entry.id, { runId: 'run-b', verifier: 'test', outcome: 'passed' });
+    ledger.validate(entry.id, { runId: 'run-c', verifier: 'test', outcome: 'passed' });
+    expect(() => ledger.promote(entry.id)).toThrow('user review');
+    expect(ledger.promote(entry.id, { userReviewed: true }).status).toBe('promoted');
   });
 
   test('deduplicates active candidate statements', () => {

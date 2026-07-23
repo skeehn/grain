@@ -9,20 +9,53 @@ import { homedir } from 'os';
 import { randomUUID } from 'crypto';
 import type { Message } from '../providers/types.js';
 
-const SESSION_SCHEMA_VERSION = 1;
+const SESSION_SCHEMA_VERSION = 2;
 const SESSION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
 const LOCK_TIMEOUT_MS = 5_000;
 const STALE_LOCK_MS = 30_000;
 
 export interface SessionRecord {
-  schema_version?: 1;
+  schema_version?: 1 | 2;
   id: string;
   title: string | null;
   /** Stable project identity; absent records are retained as legacy global sessions. */
   workspace?: string;
-  messages: Array<{ id: string; role: string; content_json: string; created_at: string }>;
+  messages: SessionMessageRecord[];
+  active_entry_id?: string;
   created_at: string;
   updated_at: string;
+}
+
+export interface SessionMessageRecord {
+  id: string;
+  role: string;
+  content_json: string;
+  created_at: string;
+  parent_id?: string;
+  branch_id?: string;
+  kind?: 'message';
+}
+
+export interface CompactionRecordV1 {
+  schema_version: 1;
+  id: string;
+  session_id: string;
+  parent_id?: string;
+  summary: string;
+  source_entry_ids: string[];
+  first_kept_entry_id?: string;
+  tokens_before: number;
+  tokens_after: number;
+  files_read: string[];
+  files_modified: string[];
+  commands: string[];
+  open_tasks: string[];
+  decisions: string[];
+  errors: string[];
+  verification: string[];
+  summary_model: string;
+  source_hash: string;
+  created_at: string;
 }
 
 interface LegacySessionStore { sessions: SessionRecord[] }
@@ -47,16 +80,26 @@ export function sessionArchivePath(id: string): string | null {
   return SESSION_ID.test(id) ? join(sessionsDirectory(), `${id}.archive.jsonl`) : null;
 }
 
+export function sessionCompactionPath(id: string): string | null {
+  return SESSION_ID.test(id) ? join(sessionsDirectory(), `${id}.compactions.jsonl`) : null;
+}
+
 function parseSession(value: unknown): SessionRecord | null {
   if (!value || typeof value !== 'object') return null;
   const raw = value as Partial<SessionRecord>;
   if (typeof raw.id !== 'string' || !SESSION_ID.test(raw.id) || !Array.isArray(raw.messages)) return null;
+  let previous: string | undefined;
   const messages = raw.messages.filter(message => {
     if (!message || typeof message !== 'object' || typeof message.id !== 'string'
       || (message.role !== 'user' && message.role !== 'assistant')
       || typeof message.content_json !== 'string' || typeof message.created_at !== 'string') return false;
     try { return Array.isArray(JSON.parse(message.content_json)); }
     catch { return false; }
+  }).map(message => {
+    const normalized: SessionMessageRecord = { ...message, kind: 'message', parent_id: message.parent_id || previous,
+      branch_id: message.branch_id || raw.id };
+    previous = normalized.id;
+    return normalized;
   });
   const now = new Date().toISOString();
   return {
@@ -64,7 +107,7 @@ function parseSession(value: unknown): SessionRecord | null {
     id: raw.id,
     title: typeof raw.title === 'string' ? raw.title : null,
     workspace: typeof raw.workspace === 'string' ? raw.workspace : undefined,
-    messages,
+    messages, active_entry_id: typeof raw.active_entry_id === 'string' ? raw.active_entry_id : messages.at(-1)?.id,
     created_at: typeof raw.created_at === 'string' ? raw.created_at : now,
     updated_at: typeof raw.updated_at === 'string' ? raw.updated_at : now,
   };
@@ -103,6 +146,12 @@ function archiveMessages(id: string, messages: SessionRecord['messages']): void 
     for (const message of messages) appendFileSync(fd, `${JSON.stringify(message)}\n`);
     fsyncSync(fd);
   } finally { closeSync(fd); }
+}
+
+function appendDurableJsonLine(path: string, value: unknown): void {
+  const fd = openSync(path, 'a', 0o600);
+  try { appendFileSync(fd, `${JSON.stringify(value)}\n`); fsyncSync(fd); }
+  finally { closeSync(fd); }
 }
 
 function waitBriefly(ms = 10): void {
@@ -174,6 +223,7 @@ export async function createSession(title?: string, workspace?: string): Promise
     title: title || null,
     workspace: workspace ? workspaceKey(workspace) : undefined,
     messages: [],
+    active_entry_id: undefined,
     created_at: now,
     updated_at: now,
   };
@@ -191,9 +241,10 @@ export async function addMessage(
   withSessionLock(sessionId, () => {
     const session = readSession(sessionId);
     if (!session) return;
-    session.messages.push({
-      id: randomUUID(), role, content_json: JSON.stringify(content), created_at: new Date().toISOString(),
-    });
+    const id = randomUUID();
+    session.messages.push({ id, role, content_json: JSON.stringify(content), created_at: new Date().toISOString(),
+      parent_id: session.active_entry_id, branch_id: session.id, kind: 'message' });
+    session.active_entry_id = id;
     session.updated_at = new Date().toISOString();
 
     const archived: SessionRecord['messages'] = [];
@@ -225,9 +276,54 @@ export async function getMessages(sessionId: string): Promise<Message[]> {
   ensureStorage();
   const session = readSession(sessionId);
   if (!session) return [];
-  return session.messages.flatMap(message => {
+  const byId = new Map(session.messages.map(message => [message.id, message]));
+  const active: SessionMessageRecord[] = [];
+  let cursor = session.active_entry_id ? byId.get(session.active_entry_id) : session.messages.at(-1);
+  const seen = new Set<string>();
+  while (cursor && !seen.has(cursor.id)) {
+    seen.add(cursor.id); active.push(cursor); cursor = cursor.parent_id ? byId.get(cursor.parent_id) : undefined;
+  }
+  active.reverse();
+  return active.flatMap(message => {
     try { return [{ role: message.role as 'user' | 'assistant', content: JSON.parse(message.content_json) }]; }
     catch { return []; }
+  });
+}
+
+export async function getSessionEntries(sessionId: string): Promise<SessionMessageRecord[]> {
+  ensureStorage();
+  return readSession(sessionId)?.messages.map(message => structuredClone(message)) || [];
+}
+
+export async function branchSession(sessionId: string, fromEntryId: string): Promise<void> {
+  ensureStorage();
+  withSessionLock(sessionId, () => {
+    const session = readSession(sessionId);
+    if (!session) throw new Error(`Unknown session ${sessionId}`);
+    if (!session.messages.some(message => message.id === fromEntryId)) throw new Error(`Unknown session entry ${fromEntryId}`);
+    session.active_entry_id = fromEntryId;
+    session.updated_at = new Date().toISOString();
+    durableWrite(sessionPath(sessionId)!, session);
+  });
+}
+
+export async function appendCompaction(sessionId: string, record: Omit<CompactionRecordV1, 'schema_version' | 'id' | 'session_id' | 'created_at'>): Promise<CompactionRecordV1> {
+  ensureStorage();
+  if (!readSession(sessionId)) throw new Error(`Unknown session ${sessionId}`);
+  const value: CompactionRecordV1 = { ...record, schema_version: 1, id: randomUUID(), session_id: sessionId, created_at: new Date().toISOString() };
+  appendDurableJsonLine(sessionCompactionPath(sessionId)!, value);
+  return value;
+}
+
+export async function listCompactions(sessionId: string): Promise<CompactionRecordV1[]> {
+  ensureStorage();
+  const path = sessionCompactionPath(sessionId);
+  if (!path || !existsSync(path)) return [];
+  return readFileSync(path, 'utf8').split('\n').filter(Boolean).flatMap(line => {
+    try {
+      const parsed = JSON.parse(line) as CompactionRecordV1;
+      return parsed.schema_version === 1 && parsed.session_id === sessionId && Array.isArray(parsed.source_entry_ids) ? [parsed] : [];
+    } catch { return []; }
   });
 }
 

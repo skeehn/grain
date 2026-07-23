@@ -2,7 +2,8 @@
  * Skills Manager
  *
  * Manages two skill formats:
- *   ~/.grain/skills/*.md   — human-authored context snippets, always injected
+ *   ~/.grain/skills/<name>/SKILL.md — portable Agent Skills, selected progressively
+ *   ~/.grain/skills/*.md   — legacy human-authored context snippets
  *   ~/.grain/skills/*.json — machine-learned patterns, keyword-matched
  */
 
@@ -17,6 +18,7 @@ import type {
   SkillMatch,
   SkillExample,
   CreateSkillConfig,
+  SkillValidationResult,
 } from './types.js';
 
 // ─── CWD language detection ────────────────────────────────────────────────────
@@ -126,17 +128,42 @@ function parseFrontmatter(raw: string): { meta: Record<string, any>; body: strin
   return { meta, body: fmMatch[2] ?? '' };
 }
 
+/** Validate the normative Agent Skills fields without applying legacy defaults. */
+export function validatePortableSkillSource(raw: string, directoryName: string, filePath = 'SKILL.md'): SkillValidationResult {
+  const { meta } = parseFrontmatter(raw); const errors: string[] = [];
+  const name = typeof meta.name === 'string' ? meta.name.trim() : '';
+  const description = typeof meta.description === 'string' ? meta.description.trim() : '';
+  if (!raw.startsWith('---\n') && !raw.startsWith('---\r\n')) errors.push('requires YAML frontmatter');
+  if (!name) errors.push('name is required');
+  else {
+    if (name.length > 64) errors.push('name must be at most 64 characters');
+    if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/u.test(name)) errors.push('name must contain lowercase letters, numbers, and single hyphens only');
+    if (name !== directoryName) errors.push(`name must match parent directory "${directoryName}"`);
+  }
+  if (!description) errors.push('description is required');
+  else if (description.length > 1024) errors.push('description must be at most 1024 characters');
+  if (typeof meta.compatibility === 'string' && meta.compatibility.length > 500) errors.push('compatibility must be at most 500 characters');
+  return { filePath, name: name || directoryName, valid: errors.length === 0, errors };
+}
+
 // ─── SkillManager ──────────────────────────────────────────────────────────────
 
 export class SkillManager {
   private jsonSkills: Map<string, Skill> = new Map();
   private mdSkills: Map<string, MarkdownSkill> = new Map();
   private skillsDir: string;
+  private skillRoots: string[];
   private initialized = false;
 
   constructor(skillsDir?: string) {
     this.skillsDir = skillsDir
       || path.join(process.env.GRAIN_HOME || path.join(os.homedir(), '.grain'), 'skills');
+    this.skillRoots = skillsDir ? [skillsDir] : [
+      this.skillsDir,
+      path.join(process.cwd(), '.agents', 'skills'),
+      path.join(process.cwd(), '.claude', 'skills'),
+      path.join(process.cwd(), '.grain', 'skills'),
+    ];
   }
 
   async initialize(): Promise<void> {
@@ -147,22 +174,32 @@ export class SkillManager {
   }
 
   private async loadAll(): Promise<void> {
-    let files: string[] = [];
-    try { files = await fs.readdir(this.skillsDir); } catch { return; }
-
-    for (const file of files) {
-      const fp = path.join(this.skillsDir, file);
+    for (const root of this.skillRoots) {
+      let files: Array<import('fs').Dirent> = [];
+      try { files = await fs.readdir(root, { withFileTypes: true }); } catch { continue; }
+      for (const entry of files) {
+      const file = entry.name;
+      const fp = entry.isDirectory() ? path.join(root, file, 'SKILL.md') : path.join(root, file);
+      if (entry.isDirectory() && !existsSync(fp)) continue;
       if (file.endsWith('.md')) {
         try {
           const raw = await fs.readFile(fp, 'utf-8');
-          const { meta, body } = parseFrontmatter(raw);
+          const { meta } = parseFrontmatter(raw);
           const skill: MarkdownSkill = {
-            name: path.basename(file, '.md'),
+            name: meta.name || path.basename(file, '.md'),
             description: meta.description || '',
             tags: Array.isArray(meta.tags) ? meta.tags : (meta.tags ? [meta.tags] : []),
-            content: body.trim(),
+            content: '',
             filePath: fp,
           };
+          this.mdSkills.set(skill.name, skill);
+        } catch { /* skip bad files */ }
+      } else if (entry.isDirectory()) {
+        try {
+          const raw = await fs.readFile(fp, 'utf-8'); const { meta } = parseFrontmatter(raw);
+          if (!validatePortableSkillSource(raw, file, fp).valid) continue;
+          const skill: MarkdownSkill = { name: meta.name || file, description: meta.description || '',
+            tags: Array.isArray(meta.tags) ? meta.tags : (meta.tags ? [meta.tags] : []), content: '', filePath: fp, portable: true };
           this.mdSkills.set(skill.name, skill);
         } catch { /* skip bad files */ }
       } else if (file.endsWith('.json')) {
@@ -184,7 +221,13 @@ export class SkillManager {
           }
         } catch { /* skip bad files */ }
       }
+      }
     }
+  }
+
+  private async materialize(skill: MarkdownSkill): Promise<MarkdownSkill> {
+    const raw = await fs.readFile(skill.filePath, 'utf8'); const { body } = parseFrontmatter(raw);
+    return { ...skill, content: body.trim() };
   }
 
   /**
@@ -267,6 +310,7 @@ export class SkillManager {
       selected = Array.from(this.mdSkills.values()).slice(0, MAX_MD_SKILLS);
     }
 
+    selected = await Promise.all(selected.map(skill => this.materialize(skill)));
     const parts: string[] = ['## Skills\n'];
     for (const skill of selected) {
       parts.push(`### ${skill.name}${skill.description ? ` — ${skill.description}` : ''}`);
@@ -282,23 +326,44 @@ export class SkillManager {
     return Array.from(this.mdSkills.values());
   }
 
+  /** Validate every discovered portable package, including packages excluded from activation. */
+  async validatePortableSkills(): Promise<SkillValidationResult[]> {
+    const results: SkillValidationResult[] = [];
+    for (const root of this.skillRoots) {
+      let entries: Array<import('fs').Dirent> = [];
+      try { entries = await fs.readdir(root, { withFileTypes: true }); } catch { continue; }
+      for (const entry of entries) {
+        if (!entry.isDirectory()) continue;
+        const fp = path.join(root, entry.name, 'SKILL.md');
+        if (!existsSync(fp)) continue;
+        try { results.push(validatePortableSkillSource(await fs.readFile(fp, 'utf8'), entry.name, fp)); }
+        catch (error) { results.push({ filePath: fp, name: entry.name, valid: false,
+          errors: [error instanceof Error ? error.message : String(error)] }); }
+      }
+    }
+    return results;
+  }
+
   /** Get a Markdown skill by name */
   async getMarkdownSkill(name: string): Promise<MarkdownSkill | undefined> {
     await this.initialize();
-    return this.mdSkills.get(name);
+    const skill = this.mdSkills.get(name); return skill ? this.materialize(skill) : undefined;
   }
 
   /** Create a Markdown skill */
   async createMarkdownSkill(name: string, description: string, content: string, tags: string[] = []): Promise<MarkdownSkill> {
     await this.initialize();
-    const slug = name.toLowerCase().replace(/[^a-z0-9-_]/g, '-').replace(/-+/g, '-');
-    const fp = path.join(this.skillsDir, `${slug}.md`);
+    const slug = name.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
+    if (!slug || slug.length > 64) throw new Error('Skill name must produce a 1-64 character lowercase hyphenated name');
+    if (!description.trim() || description.trim().length > 1024) throw new Error('Skill description must contain 1-1024 characters');
+    const directory = path.join(this.skillsDir, slug); await fs.mkdir(directory, { recursive: true });
+    const fp = path.join(directory, 'SKILL.md');
 
     const tagsLine = tags.length > 0 ? `\ntags: [${tags.join(', ')}]` : '';
-    const raw = `---\ndescription: ${description}${tagsLine}\n---\n\n${content.trim()}\n`;
+    const raw = `---\nname: ${slug}\ndescription: ${description}${tagsLine}\n---\n\n${content.trim()}\n`;
     writeFileSync(fp, raw, 'utf-8');
 
-    const skill: MarkdownSkill = { name: slug, description, tags, content: content.trim(), filePath: fp };
+    const skill: MarkdownSkill = { name: slug, description, tags, content: content.trim(), filePath: fp, portable: true };
     this.mdSkills.set(slug, skill);
     return skill;
   }
@@ -308,8 +373,10 @@ export class SkillManager {
     await this.initialize();
     const skill = this.mdSkills.get(name);
     if (!skill) return false;
+    if (!path.resolve(skill.filePath).startsWith(`${path.resolve(this.skillsDir)}${path.sep}`)) return false;
     try {
       await fs.unlink(skill.filePath);
+      if (path.basename(skill.filePath) === 'SKILL.md') try { await fs.rmdir(path.dirname(skill.filePath)); } catch {}
       this.mdSkills.delete(name);
       return true;
     } catch {

@@ -230,8 +230,8 @@ export async function executeBash(
   // ── TB bridge: proxy to container via JSON-line protocol ──────────────────
   if (isBridge()) {
     const { output, exitCode } = await executeBashBridge(input.command, timeoutMs);
-    if (exitCode !== 0 && exitCode !== 124) {
-      return { content: output || `Command failed with exit code ${exitCode}`, is_error: false };
+    if (exitCode !== 0) {
+      return { content: `${output || `Command failed with exit code ${exitCode}`}\n[exit code: ${exitCode}]`, is_error: true };
     }
     return { content: output || '(no output)' };
   }

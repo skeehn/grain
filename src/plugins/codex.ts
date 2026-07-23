@@ -36,6 +36,14 @@ export class CodexPlugin implements AgentPlugin {
 
   private binaryPath: string;
 
+  private subscriptionEnvironment(): NodeJS.ProcessEnv {
+    const env = { ...process.env };
+    // Keep the external Codex adapter bound to `codex login` rather than an
+    // unrelated direct OpenAI API key inherited from Grain's provider config.
+    delete env.OPENAI_API_KEY;
+    return env;
+  }
+
   constructor(binaryPath = "codex") {
     this.binaryPath = binaryPath;
   }
@@ -44,6 +52,7 @@ export class CodexPlugin implements AgentPlugin {
     return new Promise((resolve) => {
       const proc = spawn(this.binaryPath, ["--version"], {
         stdio: "ignore",
+        env: this.subscriptionEnvironment(),
       });
       proc.on("close", (code: number | null) => resolve(code === 0));
       proc.on("error", () => resolve(false));
@@ -55,6 +64,7 @@ export class CodexPlugin implements AgentPlugin {
       let output = "";
       const proc = spawn(this.binaryPath, ["--version"], {
         stdio: ["ignore", "pipe", "ignore"],
+        env: this.subscriptionEnvironment(),
       });
       
       proc.stdout.on("data", (chunk: Buffer) => {
@@ -92,6 +102,7 @@ export class CodexPlugin implements AgentPlugin {
       "--skip-git-repo-check",  // Allow running outside git repos
       task.prompt,
     ];
+    if (task.model) args.splice(args.length - 1, 0, '--model', task.model);
 
     const startTime = Date.now();
 
@@ -106,6 +117,7 @@ export class CodexPlugin implements AgentPlugin {
           ? task.constraints.timeoutSeconds * 1000
           : 180_000,
         signal: task.signal,
+        env: this.subscriptionEnvironment(),
       });
       const heartbeat = task.onHeartbeat ? setInterval(task.onHeartbeat, 10_000) : undefined;
 

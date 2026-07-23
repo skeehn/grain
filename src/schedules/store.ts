@@ -15,19 +15,36 @@ export interface ScheduledJob {
   lastRunAt?: string;
   lastRunId?: string;
   lastError?: string;
+  timezone: string;
+  misfirePolicy: 'skip' | 'run_once';
+  maxRetries: number;
+  retryBackoffMs: number;
+  runRetentionDays: number;
+  secretsPolicy: 'provider_only' | 'inherit';
+  leaseOwner?: string;
+  leaseUntil?: string;
 }
 
-interface ScheduleFile { schemaVersion: 1; jobs: ScheduledJob[]; }
+interface ScheduleFile { schemaVersion: 2; jobs: ScheduledJob[]; }
+
+function normalizeJob(job: Partial<ScheduledJob>): ScheduledJob {
+  return { ...job, timezone: job.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
+    misfirePolicy: job.misfirePolicy || 'skip', maxRetries: job.maxRetries ?? 2,
+    retryBackoffMs: job.retryBackoffMs ?? 5_000, runRetentionDays: job.runRetentionDays ?? 30,
+    secretsPolicy: job.secretsPolicy || 'provider_only' } as ScheduledJob;
+}
 
 function defaultScheduleHome(): string {
   return process.env.GRAIN_HOME || join(homedir(), '.grain');
 }
 
 function readStore(path: string): ScheduleFile {
-  if (!existsSync(path)) return { schemaVersion: 1, jobs: [] };
+  if (!existsSync(path)) return { schemaVersion: 2, jobs: [] };
   try {
-    const parsed = JSON.parse(readFileSync(path, 'utf8')) as ScheduleFile;
-    if (parsed?.schemaVersion === 1 && Array.isArray(parsed.jobs)) return parsed;
+    const parsed = JSON.parse(readFileSync(path, 'utf8')) as { schemaVersion?: number; jobs?: Array<Partial<ScheduledJob>> };
+    if ((parsed?.schemaVersion === 1 || parsed?.schemaVersion === 2) && Array.isArray(parsed.jobs)) {
+      return { schemaVersion: 2, jobs: parsed.jobs.map(normalizeJob) };
+    }
     throw new Error('unsupported schema');
   } catch (error: any) {
     throw new Error(`Schedule store is corrupt: ${path} (${error?.message || error})`);
@@ -94,17 +111,30 @@ export function normalizeCron(expression: string): string {
   return fields.join(' ');
 }
 
-export function cronMatches(expression: string, date: Date): boolean {
+function cronMatchesParts(expression: string, parts: { minute: number; hour: number; day: number; month: number; weekday: number }): boolean {
   const [minute, hour, day, month, weekday] = normalizeCron(expression).split(' ');
-  const dayOfMonth = fieldMatches(day, date.getDate(), 1, 31);
-  const dayOfWeek = fieldMatches(weekday, date.getDay(), 0, 6);
+  const dayOfMonth = fieldMatches(day, parts.day, 1, 31);
+  const dayOfWeek = fieldMatches(weekday, parts.weekday, 0, 6);
   // Vixie cron treats day-of-month and day-of-week as OR when both are
   // restricted; when either starts with *, the other field controls.
   const calendarDay = day.startsWith('*') ? dayOfWeek : weekday.startsWith('*') ? dayOfMonth : dayOfMonth || dayOfWeek;
-  return fieldMatches(minute, date.getMinutes(), 0, 59)
-    && fieldMatches(hour, date.getHours(), 0, 23)
-    && fieldMatches(month, date.getMonth() + 1, 1, 12)
+  return fieldMatches(minute, parts.minute, 0, 59)
+    && fieldMatches(hour, parts.hour, 0, 23)
+    && fieldMatches(month, parts.month, 1, 12)
     && calendarDay;
+}
+
+export function cronMatches(expression: string, date: Date, timezone?: string): boolean {
+  if (!timezone) return cronMatchesParts(expression, { minute: date.getMinutes(), hour: date.getHours(), day: date.getDate(), month: date.getMonth() + 1, weekday: date.getDay() });
+  const values: Record<string, number> = {};
+  try {
+    for (const part of new Intl.DateTimeFormat('en-US', { timeZone: timezone, minute: 'numeric', hour: 'numeric', hourCycle: 'h23',
+      day: 'numeric', month: 'numeric', weekday: 'short' }).formatToParts(date)) {
+      if (part.type !== 'literal') values[part.type] = part.type === 'weekday'
+        ? ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].indexOf(part.value) : Number(part.value);
+    }
+  } catch { throw new Error(`Invalid timezone: ${timezone}`); }
+  return cronMatchesParts(expression, { minute: values.minute, hour: values.hour, day: values.day, month: values.month, weekday: values.weekday });
 }
 
 export class ScheduleStore {
@@ -114,14 +144,15 @@ export class ScheduleStore {
 
   list(): ScheduledJob[] { return readStore(this.path).jobs.sort((a, b) => a.name.localeCompare(b.name)); }
 
-  add(input: { name: string; cron: string; prompt: string; workspace: string }): ScheduledJob {
+  add(input: { name: string; cron: string; prompt: string; workspace: string; timezone?: string }): ScheduledJob {
     if (!input.name.trim() || !input.prompt.trim() || !input.workspace.trim()) throw new Error('Job name, prompt, and workspace are required');
     return withStoreLock(this.path, () => {
       const store = readStore(this.path);
       if (store.jobs.some(job => job.name === input.name.trim())) throw new Error(`Scheduled job already exists: ${input.name.trim()}`);
       const now = new Date().toISOString();
-      const job: ScheduledJob = { id: randomUUID(), name: input.name.trim(), cron: normalizeCron(input.cron), prompt: input.prompt.trim(),
-        workspace: input.workspace, enabled: true, createdAt: now, updatedAt: now };
+      if (input.timezone) cronMatches('* * * * *', new Date(), input.timezone);
+      const job = normalizeJob({ id: randomUUID(), name: input.name.trim(), cron: normalizeCron(input.cron), prompt: input.prompt.trim(),
+        workspace: input.workspace, enabled: true, createdAt: now, updatedAt: now, timezone: input.timezone });
       store.jobs.push(job); writeStore(this.path, store); return job;
     });
   }
@@ -140,12 +171,32 @@ export class ScheduleStore {
   }
 
   markRun(id: string, result: { runId?: string; error?: string }, at = new Date()): ScheduledJob {
-    return this.update(id, job => { job.lastRunAt = at.toISOString(); job.lastRunId = result.runId; job.lastError = result.error; });
+    return this.update(id, job => { job.lastRunAt = at.toISOString(); job.lastRunId = result.runId; job.lastError = result.error;
+      job.leaseOwner = undefined; job.leaseUntil = undefined; });
   }
 
   due(at = new Date()): ScheduledJob[] {
     const minute = at.toISOString().slice(0, 16);
-    return this.list().filter(job => job.enabled && cronMatches(job.cron, at) && job.lastRunAt?.slice(0, 16) !== minute);
+    return this.list().filter(job => job.enabled && cronMatches(job.cron, at, job.timezone) && job.lastRunAt?.slice(0, 16) !== minute
+      && (!job.leaseUntil || Date.parse(job.leaseUntil) <= at.getTime()));
+  }
+
+  /** Atomically lease due work so concurrent schedulers cannot execute it twice. */
+  claimDue(owner: string, at = new Date(), limit = 1, leaseMs = 15 * 60_000): ScheduledJob[] {
+    if (!owner.trim()) throw new Error('Schedule lease owner is required');
+    return withStoreLock(this.path, () => {
+      const store = readStore(this.path); const minute = at.toISOString().slice(0, 16); const claimed: ScheduledJob[] = [];
+      for (const job of store.jobs) {
+        if (claimed.length >= Math.max(1, limit)) break;
+        const leaseExpired = !job.leaseUntil || Date.parse(job.leaseUntil) <= at.getTime();
+        if (job.enabled && leaseExpired && cronMatches(job.cron, at, job.timezone) && job.lastRunAt?.slice(0, 16) !== minute) {
+          job.leaseOwner = owner; job.leaseUntil = new Date(at.getTime() + leaseMs).toISOString(); job.updatedAt = new Date().toISOString();
+          claimed.push({ ...job });
+        }
+      }
+      if (claimed.length) writeStore(this.path, store);
+      return claimed;
+    });
   }
 
   private update(idOrName: string, mutate: (job: ScheduledJob) => void): ScheduledJob {

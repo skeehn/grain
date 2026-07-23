@@ -1,9 +1,11 @@
 import { platform } from 'os';
 
-export function getSystemPrompt(concise = false, task = ''): string {
-  const cwd = process.cwd();
-  const plat = platform();
-  const shell = process.env.SHELL || '/bin/bash';
+export interface PromptEnvironment { cwd: string; platform: string; shell: string }
+
+export function getSystemPrompt(concise = false, task = '', environment?: PromptEnvironment): string {
+  const cwd = environment?.cwd || process.cwd();
+  const plat = environment?.platform || platform();
+  const shell = environment?.shell || process.env.SHELL || '/bin/bash';
   const webStandards = /\b(web|website|frontend|ui|ux|css|react|landing page)\b/i.test(task) ? `
 
 ### Web Design Quality

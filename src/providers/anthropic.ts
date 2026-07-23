@@ -1,5 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk';
-import type { Provider, Message, Tool, StreamEvent } from './types.js';
+import type { Provider, ProviderStreamOptions, Message, Tool, StreamEvent } from './types.js';
 import { applyToolCache, applyHistoryCache, cachedSystem } from './cache.js';
 
 const DEFAULT_MODEL = 'claude-sonnet-4-20250514';
@@ -16,7 +16,7 @@ export class AnthropicProvider implements Provider {
     });
   }
 
-  async *stream(messages: Message[], system: string, tools: Tool[]): AsyncIterable<StreamEvent> {
+  async *stream(messages: Message[], system: string, tools: Tool[], options?: ProviderStreamOptions): AsyncIterable<StreamEvent> {
     let currentToolId = '';
     const apiMessages = messages.map(m => ({
       role: m.role as 'user' | 'assistant',
@@ -45,7 +45,7 @@ export class AnthropicProvider implements Provider {
       system: cachedSystem(system),
       messages: apiMessages,
       tools: apiTools,
-    });
+    }, { signal: options?.signal });
 
     let inputTokens = 0;
     let cacheReadTokens = 0;

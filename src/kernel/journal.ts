@@ -134,6 +134,7 @@ export class RunJournal {
       timestamp: new Date().toISOString(),
       type,
       previous_hash: this.previousHash,
+      correlation_id: this.metadata.correlation_id || this.metadata.run_id,
       payload,
     } as const;
     const event: RunEvent<T> = { ...unsigned, hash: eventHash(unsigned) };

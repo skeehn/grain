@@ -41,7 +41,8 @@ class GrainAgent(BaseAgent):
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
-            env={**os.environ, "GRAIN_BENCHMARK": "1", "GRAIN_DISABLE_GLOBAL_RECALL": "1"},
+            env={**os.environ, "GRAIN_BENCHMARK": "1", "GRAIN_DISABLE_GLOBAL_RECALL": "1",
+                 "GRAIN_BENCHMARK_WORKDIR": os.environ.get("GRAIN_BENCHMARK_WORKDIR", "/app")},
         )
         assert process.stdin and process.stdout and process.stderr
         tool_calls = 0
@@ -57,8 +58,12 @@ class GrainAgent(BaseAgent):
             if event.get("type") != "bash":
                 protocol_errors.append(f"unknown bridge event: {event.get('type')}")
                 continue
+            command = event.get("cmd")
+            if not isinstance(command, str) or not command.strip() or len(command) > 100_000:
+                protocol_errors.append("invalid bridge command")
+                continue
             tool_calls += 1
-            result = await environment.exec(event["cmd"])
+            result = await environment.exec(command)
             response = {
                 "output": (result.stdout or "") + (result.stderr or ""),
                 "exit_code": result.return_code,

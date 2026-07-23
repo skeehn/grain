@@ -1,5 +1,5 @@
 import { describe, test, expect } from 'bun:test';
-import { compact, needsCompaction, countTokens } from '../src/agent/context.js';
+import { compact, needsCompaction, countTokens, fitMessagesToTokenBudget } from '../src/agent/context.js';
 import type { Message } from '../src/providers/types.js';
 
 const user = (text: string): Message => ({ role: 'user', content: [{ type: 'text', text }] });
@@ -125,5 +125,41 @@ describe('boundToolResult', () => {
     expect(out).toContain('trimmed from the middle');
     expect(out.startsWith('A')).toBe(true);  // head preserved
     expect(out.endsWith('B')).toBe(true);     // tail preserved
+  });
+});
+
+describe('fitMessagesToTokenBudget', () => {
+  test('keeps tool calls and matching results together at a tight history seam', () => {
+    const msgs: Message[] = [user('old '.repeat(4_000))];
+    for (let index = 0; index < 5; index++) msgs.push(...toolTurn(`pair_${index}`));
+    msgs.push(assistant('latest answer'));
+
+    const result = fitMessagesToTokenBudget(msgs, 220);
+    expect(result.estimatedTokens).toBeLessThanOrEqual(220);
+    expect(result.omittedMessages).toBeGreaterThan(0);
+    const uses = new Set(result.messages.flatMap(message => message.content)
+      .filter((block): block is Extract<(typeof msgs)[number]['content'][number], { type: 'tool_use' }> => block.type === 'tool_use')
+      .map(block => block.id));
+    for (const block of result.messages.flatMap(message => message.content)) {
+      if (block.type === 'tool_result') expect(uses.has(block.tool_use_id)).toBe(true);
+    }
+  });
+
+  test('bounds oversized recent text without mutating durable history', () => {
+    const source = 'important-start\n' + 'x'.repeat(80_000) + '\nimportant-end';
+    const msgs = [user(source)];
+    const result = fitMessagesToTokenBudget(msgs, 512);
+    expect(result.estimatedTokens).toBeLessThanOrEqual(512);
+    expect(result.truncatedBlocks).toBeGreaterThan(0);
+    expect((result.messages[0].content[0] as any).text).toContain('important-start');
+    expect((result.messages[0].content[0] as any).text).toContain('important-end');
+    expect((msgs[0].content[0] as any).text).toBe(source);
+  });
+
+  test('retains the newest user instruction when older history is omitted', () => {
+    const msgs: Message[] = [user('old '.repeat(5_000)), assistant('old response'), user('DO THE NEW THING')];
+    const result = fitMessagesToTokenBudget(msgs, 256);
+    expect(JSON.stringify(result.messages)).toContain('DO THE NEW THING');
+    expect(result.messages[0].role).toBe('user');
   });
 });

@@ -7,11 +7,11 @@ afterEach(() => { delete process.env.GRAIN_SUBAGENT; });
 // so they're deterministic (no model / network). The full spawn→worktree→merge
 // path is verified end-to-end manually (see PR description).
 describe('run_agents guards', () => {
-  test('refuses to nest inside a sub-agent', async () => {
+  test('a child cannot expand without durable scheduler identity', async () => {
     process.env.GRAIN_SUBAGENT = '1';
     const r = await runAgentsTool.execute({ tasks: [{ objective: 'x' }] });
     expect(r.is_error).toBe(true);
-    expect(r.content).toContain('inside a sub-agent');
+    expect(r.content).toContain('scheduler graph identity');
   });
 
   test('rejects an empty task list', async () => {

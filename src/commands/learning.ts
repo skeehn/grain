@@ -1,6 +1,7 @@
 import { LearningLedger } from '../learning/index.js';
+import { migrateLearningLedgerToEngram } from '../learning/index.js';
 
-export function handleLearningCommand(subcommand = 'list', argument?: string, extra?: string): void {
+export async function handleLearningCommand(subcommand = 'list', argument?: string, extra?: string): Promise<void> {
   const ledger = new LearningLedger();
   if (subcommand === 'list') {
     const entries = ledger.list();
@@ -18,12 +19,15 @@ export function handleLearningCommand(subcommand = 'list', argument?: string, ex
   }
   if (subcommand === 'promote') {
     if (!argument) throw new Error('Usage: grain learning promote <id>');
-    console.log(JSON.stringify(ledger.promote(argument), null, 2)); return;
+    console.log(JSON.stringify(ledger.promote(argument, { userReviewed: true }), null, 2)); return;
   }
   if (subcommand === 'validate') {
     if (!argument || !extra) throw new Error('Usage: grain learning validate <id> <independent-run-id>');
-    const validated = ledger.validate(argument, { runId: extra, verifier: 'manual-confirmed-run', outcome: 'passed' });
-    console.log(JSON.stringify(ledger.promote(validated.id), null, 2)); return;
+    console.log(JSON.stringify(ledger.validate(argument, { runId: extra, verifier: 'manual-confirmed-run', outcome: 'passed' }), null, 2)); return;
+  }
+  if (subcommand === 'migrate') {
+    if (!argument) throw new Error('Usage: grain learning migrate <repository-scope>');
+    console.log(JSON.stringify(await migrateLearningLedgerToEngram(argument), null, 2)); return;
   }
   throw new Error(`Unknown learning command: ${subcommand}`);
 }

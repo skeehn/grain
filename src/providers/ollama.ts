@@ -1,6 +1,6 @@
 // Ollama provider for local models (free, offline)
 import { spawn } from 'child_process';
-import type { Provider, Message, StreamEvent, Tool } from './types.js';
+import type { Provider, ProviderStreamOptions, Message, StreamEvent, Tool } from './types.js';
 
 export class OllamaProvider implements Provider {
   name = 'ollama';
@@ -12,7 +12,7 @@ export class OllamaProvider implements Provider {
     this.baseUrl = baseUrl;
   }
 
-  async *stream(messages: Message[], system: string, tools: Tool[]): AsyncIterable<StreamEvent> {
+  async *stream(messages: Message[], system: string, tools: Tool[], options?: ProviderStreamOptions): AsyncIterable<StreamEvent> {
     // Convert messages to Ollama format
     const ollamaMessages = messages.map(msg => {
       if (msg.role === 'assistant') {
@@ -45,6 +45,7 @@ export class OllamaProvider implements Provider {
         messages: ollamaMessages,
         stream: true,
       }),
+      signal: options?.signal,
     });
 
     if (!response.ok) {

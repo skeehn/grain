@@ -1,7 +1,7 @@
 {
   "name": "grain",
   "version": "0.2.0",
-  "description": "Self-improving AI coding agent with persistent memory",
+  "description": "Local-first coding agent with durable orchestration, governed learning, and persistent memory",
   "keywords": ["ai", "agent", "coding", "llm", "bedrock", "anthropic", "knowledge-graph"],
   "author": "Stephen Keehn <stephen@skeehn.com>",
   "license": "MIT",
@@ -15,21 +15,22 @@
   "homepage": "https://github.com/skeehn/grain#readme",
   "type": "module",
   "bin": {
-    "grain": "./dist/grain"
+    "grain": "./dist/cli.js"
   },
   "files": [
-    "dist/grain",
+    "dist/cli.js",
     "README.md",
     "LICENSE"
   ],
   "scripts": {
-    "build": "bun build --compile --target=bun --outfile dist/grain src/cli.ts",
+    "build": "bun scripts/build.ts",
     "dev": "bun run src/cli.ts",
     "test": "bun test",
     "typecheck": "tsc --noEmit",
     "check": "bun test && bun run typecheck && bun run build && bun run install:smoke",
     "install:smoke": "bun scripts/install-smoke.ts",
     "benchmark:report": "bun scripts/benchmark-report.ts",
+    "benchmark:harbor:verify": "bun scripts/benchmark-report.ts",
     "qualify:local": "bun scripts/qualification.ts",
     "release": "bash scripts/release.sh"
   },

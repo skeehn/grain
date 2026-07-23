@@ -43,6 +43,15 @@ export class ClaudeCodePlugin implements AgentPlugin {
   private binaryPath: string;
   private defaultModel?: string;
 
+  private subscriptionEnvironment(): NodeJS.ProcessEnv {
+    const env = { ...process.env };
+    // This adapter represents the installed Claude Code login. Direct API
+    // credentials belong to Grain's Anthropic/Bedrock providers and must not
+    // silently override a user's Claude subscription inside the child CLI.
+    delete env.ANTHROPIC_API_KEY; delete env.ANTHROPIC_AUTH_TOKEN;
+    return env;
+  }
+
   constructor(binaryPath = "claude", defaultModel?: string) {
     this.binaryPath = binaryPath;
     this.defaultModel = defaultModel;
@@ -52,6 +61,7 @@ export class ClaudeCodePlugin implements AgentPlugin {
     return new Promise((resolve) => {
       const proc = spawn(this.binaryPath, ["--version"], {
         stdio: "ignore",
+        env: this.subscriptionEnvironment(),
       });
       proc.on("close", (code) => resolve(code === 0));
       proc.on("error", () => resolve(false));
@@ -63,6 +73,7 @@ export class ClaudeCodePlugin implements AgentPlugin {
       let output = "";
       const proc = spawn(this.binaryPath, ["--version"], {
         stdio: ["ignore", "pipe", "ignore"],
+        env: this.subscriptionEnvironment(),
       });
       
       proc.stdout.on("data", (chunk) => {
@@ -109,9 +120,11 @@ export class ClaudeCodePlugin implements AgentPlugin {
     }
     
     // Add model preference
-    if (this.defaultModel) {
-      args.push("--model", this.defaultModel);
+    if (task.model || this.defaultModel) {
+      args.push("--model", task.model || this.defaultModel!);
     }
+    if (task.sandbox === 'read-only') args.push('--permission-mode', 'plan');
+    else args.push('--permission-mode', 'acceptEdits');
 
     // Resume existing session if provided
     if (task.sessionId) {
@@ -129,6 +142,7 @@ export class ClaudeCodePlugin implements AgentPlugin {
           ? task.constraints.timeoutSeconds * 1000
           : 180_000, // 3 min default
         signal: task.signal,
+        env: this.subscriptionEnvironment(),
       });
       const heartbeat = task.onHeartbeat ? setInterval(task.onHeartbeat, 10_000) : undefined;
 

@@ -24,15 +24,21 @@ export interface ContextCandidate {
   required?: boolean;
   source?: string;
   freshness?: string;
+  sourceIds?: string[];
+  sourceHash?: string;
+  /** Retrieved memory and repository text is data, never model instruction. */
+  untrusted?: boolean;
+  ranking?: Record<string, number>;
 }
 
 export interface PackedContextItem extends ContextCandidate {
   estimatedTokens: number;
   truncated: boolean;
+  decisionReason: string;
 }
 
 export interface ContextManifest {
-  schemaVersion: 1;
+  schemaVersion: 2;
   provider: string;
   model: string;
   contextWindow: number;
@@ -40,8 +46,11 @@ export interface ContextManifest {
   inputBudgetTokens: number;
   estimatedInputTokens: number;
   selected: PackedContextItem[];
-  omitted: Array<{ id: string; kind: ContextKind; reason: string; estimatedTokens: number }>;
+  omitted: Array<{ id: string; kind: ContextKind; reason: string; estimatedTokens: number; sourceIds?: string[]; sourceHash?: string }>;
   tools: string[];
+  tokenEstimator: { name: string; version: string };
+  allocation: Record<ContextKind, number>;
+  compactionIds: string[];
 }
 
 export interface ContextPackResult {

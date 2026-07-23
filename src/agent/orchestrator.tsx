@@ -19,6 +19,7 @@ export interface OrchestratorOpts {
   attachments?: string[];
   workspace?: boolean;
   classic?: boolean;
+  alternateScreen?: boolean;
 }
 
 export async function orchestrate(opts: OrchestratorOpts): Promise<void> {

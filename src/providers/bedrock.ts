@@ -1,5 +1,5 @@
 import AnthropicBedrock from '@anthropic-ai/bedrock-sdk';
-import type { Provider, Message, Tool, StreamEvent, ContentBlock } from './types.js';
+import type { Provider, ProviderStreamOptions, Message, Tool, StreamEvent, ContentBlock } from './types.js';
 import { applyToolCache, applyHistoryCache, cachedSystem } from './cache.js';
 
 const DEFAULT_MODEL = 'us.anthropic.claude-sonnet-4-5-20250929-v1:0';
@@ -16,7 +16,7 @@ export class BedrockProvider implements Provider {
     });
   }
 
-  async *stream(messages: Message[], system: string, tools: Tool[]): AsyncIterable<StreamEvent> {
+  async *stream(messages: Message[], system: string, tools: Tool[], options?: ProviderStreamOptions): AsyncIterable<StreamEvent> {
     let currentToolId = '';
     const apiMessages = messages.map(m => ({
       role: m.role as 'user' | 'assistant',
@@ -60,7 +60,7 @@ export class BedrockProvider implements Provider {
           system: cachedSys,
           messages: apiMessages,
           tools: apiTools,
-        });
+        }, { signal: options?.signal });
 
         for await (const event of stream) {
           if (event.type === 'content_block_start') {

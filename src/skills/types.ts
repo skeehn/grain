@@ -54,6 +54,15 @@ export interface MarkdownSkill {
   content: string;
   /** Absolute path on disk */
   filePath: string;
+  /** True for an Agent Skills package at `<name>/SKILL.md`. */
+  portable?: boolean;
+}
+
+export interface SkillValidationResult {
+  filePath: string;
+  name: string;
+  valid: boolean;
+  errors: string[];
 }
 
 export interface SkillMatch {

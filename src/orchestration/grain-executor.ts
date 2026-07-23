@@ -30,7 +30,7 @@ export function grainBinary(): { cmd: string; prefixArgs: string[] } {
 
 /** Run one grain subagent to completion in `cwd`, honoring cancellation + heartbeat. */
 function runGrain(
-  prompt: string, cwd: string, task: AgentTask, signal: AbortSignal, heartbeat: () => void,
+  graphId: string, prompt: string, cwd: string, task: AgentTask, signal: AbortSignal, heartbeat: () => void,
 ): Promise<{ output: string; code: number }> {
   const { cmd, prefixArgs } = grainBinary();
   const args = [...prefixArgs, '-p', prompt, '--yes', '--concise'];
@@ -39,8 +39,10 @@ function runGrain(
   args.push('--max-turns', String(task.budget.maxTurns));
 
   return new Promise((resolve, reject) => {
-    // GRAIN_SUBAGENT=1 disables run_agents inside the child (no nested fleets).
-    const child = spawn(cmd, args, { cwd, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, GRAIN_MACHINE: '0', GRAIN_SUBAGENT: '1' } });
+    // A child may propose more work, but only the durable scheduler identified
+    // by these IDs is allowed to add it to the graph.
+    const child = spawn(cmd, args, { cwd, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, GRAIN_MACHINE: '0',
+      GRAIN_SUBAGENT: '1', GRAIN_GRAPH_ID: graphId, GRAIN_PARENT_TASK_ID: task.id } });
     let output = '';
     const cap = (b: Buffer) => { output += b.toString(); if (output.length > 200_000) output = output.slice(-200_000); };
     child.stdout.on('data', cap);
@@ -70,9 +72,11 @@ export class GrainNativeExecutor {
         .filter(d => d?.result)
         .map(d => `- ${d!.role} (${d!.objective}): ${d!.result!.summary}`)
         .join('\n');
+      const reviewedWorktree = deps.flatMap(dependency => dependency?.result?.evidence || [])
+        .find(item => item.startsWith('worktree:'))?.slice('worktree:'.length);
 
       const transaction = task.authority.write ? this.worktrees.prepare(this.repositoryRoot, graphId, task.id) : undefined;
-      const workdir = transaction?.worktreePath || this.repositoryRoot;
+      const workdir = transaction?.worktreePath || reviewedWorktree || this.repositoryRoot;
       const before = task.authority.write ? '' : git(workdir, ['status', '--porcelain=v1', '--untracked-files=all']);
 
       const prompt = [
@@ -86,7 +90,7 @@ export class GrainNativeExecutor {
         'Finish with a concise summary of what you did and concrete evidence.',
       ].filter(Boolean).join('\n\n');
 
-      const { output, code } = await runGrain(prompt, workdir, task, signal, heartbeat);
+      const { output, code } = await runGrain(graphId, prompt, workdir, task, signal, heartbeat);
       const summary = output.replace(/\s+$/, '').split('\n').slice(-12).join('\n').slice(0, 2000) || 'sub-agent completed';
       if (code !== 0) throw new Error(`grain sub-agent exited ${code}: ${summary.slice(-400)}`);
 

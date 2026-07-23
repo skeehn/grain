@@ -1,5 +1,5 @@
 export type LearningKind = 'fact' | 'decision' | 'procedure' | 'failure_pattern' | 'preference' | 'model_capability';
-export type LearningStatus = 'candidate' | 'validated' | 'promoted' | 'rejected' | 'stale' | 'superseded';
+export type LearningStatus = 'candidate' | 'evaluated' | 'validated' | 'promoted' | 'rejected' | 'stale' | 'superseded';
 
 export interface LearningEvidence {
   runId: string;
@@ -7,6 +7,7 @@ export interface LearningEvidence {
   outcome: 'passed' | 'failed';
   commit?: string;
   detail?: string;
+  benchmarkIsolated?: boolean;
 }
 
 export interface LearningEntry {
@@ -22,6 +23,7 @@ export interface LearningEntry {
   tags: string[];
   expiresAt?: string;
   supersedes?: string;
+  requiresUserReview?: boolean;
 }
 
 export type LearningEvent =

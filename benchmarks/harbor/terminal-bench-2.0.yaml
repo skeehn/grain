@@ -1,0 +1,14 @@
+# Harbor 0.20 JobConfig. Run the canary in benchmarks/README.md first.
+jobs_dir: .grain/cache/harbor/terminal-bench-2.0
+n_concurrent_trials: 4
+n_attempts: 1
+
+agents:
+  - name: benchmarks.harbor.grain_agent:GrainAgent
+    model_name: poolside/laguna-xs-2.1:free
+  - name: benchmarks.harbor.grain_agent:GrainAgent
+    model_name: anthropic/claude-sonnet-4.6
+
+datasets:
+  - name: terminal-bench
+    version: "2.0"

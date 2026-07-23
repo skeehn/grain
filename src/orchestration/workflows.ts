@@ -20,7 +20,7 @@ export class WorkflowRunner {
   }
 
   async executeConcurrent(graphId: string, executor: AgentExecutor, maxConcurrency = 4): Promise<TaskGraph> {
-    if (!Number.isInteger(maxConcurrency) || maxConcurrency < 1 || maxConcurrency > 16) throw new Error('Concurrency must be between 1 and 16');
+    if (!Number.isInteger(maxConcurrency) || maxConcurrency < 1 || maxConcurrency > 8) throw new Error('Concurrency must be between 1 and 8');
     const runtime = new DurableAgentRuntime(this.store);
     for (let wave = 0; wave < 100; wave++) {
       const graph = runtime.recover(graphId);
@@ -40,8 +40,8 @@ export class WorkflowRunner {
 export interface RepairAttemptResult { passed: boolean; fingerprint: string; summary: string; evidence: string[]; }
 
 export class RepairLoopRunner {
-  async execute(repair: (attempt: number, prior?: RepairAttemptResult) => Promise<RepairAttemptResult>, maxAttempts = 3): Promise<RepairAttemptResult> {
-    if (maxAttempts < 1 || maxAttempts > 10) throw new Error('Repair attempts must be between 1 and 10');
+  async execute(repair: (attempt: number, prior?: RepairAttemptResult) => Promise<RepairAttemptResult>, maxAttempts = 5): Promise<RepairAttemptResult> {
+    if (maxAttempts < 1 || maxAttempts > 20) throw new Error('Repair attempts must be between 1 and 20');
     let prior: RepairAttemptResult | undefined;
     const fingerprints = new Set<string>();
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {

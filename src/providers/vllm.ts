@@ -20,7 +20,7 @@
  * }
  */
 
-import type { Provider, Message, ContentBlock, Tool, StreamEvent } from './types.js';
+import type { Provider, ProviderStreamOptions, Message, ContentBlock, Tool, StreamEvent } from './types.js';
 
 interface VLLMConfig {
   endpoint?: string;
@@ -56,7 +56,8 @@ export class VLLMProvider implements Provider {
   async *stream(
     messages: Message[],
     system: string,
-    tools: Tool[]
+    tools: Tool[],
+    options?: ProviderStreamOptions,
   ): AsyncIterable<StreamEvent> {
     try {
       const openaiMessages = this.formatMessages(messages, system);
@@ -87,6 +88,7 @@ export class VLLMProvider implements Provider {
         method: 'POST',
         headers,
         body: JSON.stringify(body),
+        signal: options?.signal,
       });
 
       if (!response.ok) {

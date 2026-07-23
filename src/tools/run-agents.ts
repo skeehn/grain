@@ -46,9 +46,33 @@ export const runAgentsTool: ExecutableTool = {
     required: ['tasks'],
   },
   async execute(input: { objective?: string; tasks: SubtaskInput[]; concurrency?: number }): Promise<ToolResult> {
-    // A sub-agent must never spawn its own fleet — that path has no depth bound.
+    // Nested agents never launch processes themselves. They submit expansion
+    // requests to their durable parent graph; the outer scheduler owns limits,
+    // leases, execution, and recovery.
     if (process.env.GRAIN_SUBAGENT === '1') {
-      return { content: 'run_agents is unavailable inside a sub-agent (no nested orchestration). Do the work directly.', is_error: true };
+      const graphId = process.env.GRAIN_GRAPH_ID; const parentTaskId = process.env.GRAIN_PARENT_TASK_ID;
+      if (!graphId || !parentTaskId) return { content: 'Nested orchestration requires scheduler graph identity.', is_error: true };
+      const tasks = Array.isArray(input.tasks) ? input.tasks : [];
+      if (tasks.length < 1 || tasks.length > 8) return { content: 'Nested expansion requires 1-8 tasks.', is_error: true };
+      try {
+        const store = new TaskGraphStore(); const scheduler = new AgentScheduler(); const created: string[] = [];
+        store.update(graphId, graph => {
+          for (let index = 0; index < tasks.length; index++) {
+            const task = tasks[index];
+            if (!task.objective?.trim()) throw new Error(`Task ${index} is missing an objective.`);
+            const dependencies = (task.depends_on || []).map(dependencyIndex => {
+              if (dependencyIndex < 0 || dependencyIndex >= index) {
+                throw new Error(`Task ${index} depends_on ${dependencyIndex}, which must be an earlier task index`);
+              }
+              return created[dependencyIndex];
+            });
+            const expanded = scheduler.expand(graph, { parentTaskId, role: asRole(task.role), objective: task.objective,
+              expectedArtifact: task.deliverable || task.objective, write: !!task.write, profile: undefined, dependencies });
+            expanded.provider = task.provider; expanded.model = task.model; created.push(expanded.id);
+          }
+        });
+        return { content: `Queued ${created.length} scheduler-owned child task(s): ${created.join(', ')}` };
+      } catch (error) { return { content: error instanceof Error ? error.message : String(error), is_error: true }; }
     }
     const cwd = process.cwd();
     const tasks = Array.isArray(input.tasks) ? input.tasks : [];
@@ -58,7 +82,7 @@ export const runAgentsTool: ExecutableTool = {
 
     const scheduler = new AgentScheduler();
     const store = new TaskGraphStore();
-    const graph = scheduler.createGraph('swarm');
+    const graph = scheduler.createGraph('swarm', { maxConcurrency: Math.max(1, Math.min(8, input.concurrency || 4)) });
     const idByIndex: string[] = [];
     try {
       for (let i = 0; i < tasks.length; i++) {

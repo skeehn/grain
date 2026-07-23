@@ -1,5 +1,8 @@
 # molt - Issues Found & Fixes Needed
 
+> Historical audit snapshot. Many items below have since shipped or changed.
+> Current status lives in [`docs/GRAIN-1.0-ROADMAP.md`](./docs/GRAIN-1.0-ROADMAP.md).
+
 **Date:** June 24, 2026  
 **Testing Session:** Real-world usage testing  
 **Status:** Issues identified, prioritized  

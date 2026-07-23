@@ -1,0 +1,84 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+jobs:
+  qualify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - run: bun install --frozen-lockfile
+      - name: Require tag and source versions to agree
+        run: |
+          expected="${GITHUB_REF_NAME#v}"
+          package_version="$(bun -e 'console.log((await Bun.file("package.json").json()).version)')"
+          source_version="$(sed -n "s/.*GRAIN_VERSION = '\([^']*\)'.*/\1/p" src/config.ts)"
+          test "$expected" = "$package_version"
+          test "$expected" = "$source_version"
+      - run: bun run qualify:local 50
+
+  build:
+    needs: qualify
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@v5
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - run: bun install --frozen-lockfile
+      - name: Build standalone macOS and Linux binaries
+        run: |
+          mkdir release-dist
+          bun build --compile --minify --target=bun-darwin-arm64 --outfile=release-dist/grain-darwin-arm64 src/cli.ts
+          bun build --compile --minify --target=bun-darwin-x64-baseline --outfile=release-dist/grain-darwin-x64 src/cli.ts
+          bun build --compile --minify --target=bun-linux-arm64 --outfile=release-dist/grain-linux-arm64 src/cli.ts
+          bun build --compile --minify --target=bun-linux-x64-baseline --outfile=release-dist/grain-linux-x64 src/cli.ts
+          cd release-dist
+          sha256sum grain-* > SHA256SUMS
+      - name: Generate SPDX SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          path: .
+          format: spdx-json
+          output-file: release-dist/grain.spdx.json
+          upload-artifact: false
+      - name: Attest binaries, checksums, and SBOM
+        uses: actions/attest@v4
+        with:
+          subject-path: |
+            release-dist/grain-*
+            release-dist/SHA256SUMS
+            release-dist/grain.spdx.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: grain-release
+          path: release-dist/
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v4
+        with:
+          name: grain-release
+          path: release-dist
+      - name: Publish immutable release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" release-dist/* --verify-tag --generate-notes --title "Grain $GITHUB_REF_NAME"
