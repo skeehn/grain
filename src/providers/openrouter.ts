@@ -83,7 +83,7 @@ export class OpenRouterProvider implements Provider {
     this.options = options;
     this.name = options.name;
     this.model = model || options.defaultModel;
-    this.apiKey = options.apiKey || process.env[options.apiKeyEnv] || '';
+    this.apiKey = options.apiKey ?? process.env[options.apiKeyEnv] ?? '';
   }
 
   private convertMessages(messages: Message[]): unknown[] {

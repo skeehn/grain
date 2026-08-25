@@ -43,19 +43,21 @@ export function applySearchReplace(
   const lines = content.split('\n');
   let matchStart = -1;
   let matchEnd = -1;
+  let matches = 0;
   const oldLineCount = oldString.split('\n').length;
   const maxWindow = oldLineCount * 2 + 5;
   for (let i = 0; i < lines.length; i++) {
     for (let j = i + 1; j <= Math.min(i + maxWindow, lines.length); j++) {
       const chunk = lines.slice(i, j).join('\n');
       if (normalizeWhitespace(chunk) === normalizedOld) {
-        matchStart = i;
-        matchEnd = j;
+        matches++;
+        if (matchStart < 0) { matchStart = i; matchEnd = j; }
         break;
       }
     }
-    if (matchStart >= 0) break;
+    if (matches > 1) break;
   }
+  if (matches > 1) return { ok: false, error: `Found ${matches} normalized-whitespace occurrences. Add more context.` };
   if (matchStart >= 0) {
     lines.splice(matchStart, matchEnd - matchStart, ...newString.split('\n'));
     return { ok: true, next: lines.join('\n'), how: 'fuzzy' };

@@ -386,12 +386,14 @@ export async function agentLoop(opts: AgentOpts): Promise<void> {
     journal.transition('failed', { error: message, phase: 'attachment_setup' });
     throw error;
   }
+  const previewByInput = new WeakMap<object, ReturnType<typeof previewToolEdit>>();
   const gateway = new ToolGateway({
     autoApprove: Boolean(opts.autoApprove), allowDestructive: Boolean(opts.allowDestructive),
     benchmark: Boolean(opts.benchmark), interactive: Boolean(process.stdin.isTTY), journal,
     preview: (name, input) => {
       if (!WRITE_EDIT_TOOLS.has(name)) return;
       const previews = previewToolEdit(name, input);
+      if (input && typeof input === 'object') previewByInput.set(input, previews);
       const text = formatApplyPreview(previews);
       if (text) ui.dim(text);
       for (const preview of previews) {
@@ -403,7 +405,8 @@ export async function agentLoop(opts: AgentOpts): Promise<void> {
         opts.onEvent?.({ type: 'approval', name, risk: policy.risk, decision: 'allowed' });
         return true;
       }
-      const previews = WRITE_EDIT_TOOLS.has(name) ? previewToolEdit(name, input) : [];
+      const cached = input && typeof input === 'object' ? previewByInput.get(input) : undefined;
+      const previews = WRITE_EDIT_TOOLS.has(name) ? (cached ?? previewToolEdit(name, input)) : [];
       const files = previews.filter(preview => !preview.error)
         .map(preview => `${preview.path} (+${preview.added} -${preview.removed})`);
       const prompt = files.length
@@ -844,12 +847,13 @@ export async function agentLoop(opts: AgentOpts): Promise<void> {
           // instead of declaring a broken change done. Bounded, skipped in
           // benchmark mode or when GRAIN_NO_VERIFY is set.
           if (allFilesChanged.length > 0 && !opts.benchmark && !process.env.GRAIN_NO_VERIFY && verifyAttempts < MAX_VERIFY_ATTEMPTS) {
-            const verify = detectVerifyCommand(process.cwd(), allFilesChanged);
+            const verifyCwd = workspaceRoot || process.cwd();
+            const verify = detectVerifyCommand(verifyCwd, allFilesChanged);
             if (verify) {
               verifyAttempts++;
               ui.tool('verify', { _streaming: true });
               ui.dim(`  → ${verify.label}`);
-              const res = await executeBash({ command: verify.command, timeout: 180 }, process.cwd());
+              const res = await executeBash({ command: verify.command, timeout: 180 }, verifyCwd);
               ui.result(res.content, res.is_error);
               if (res.is_error) {
                 opts.onEvent?.({ type: 'verification', passed: false, detail: verify.label });

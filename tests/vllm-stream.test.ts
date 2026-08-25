@@ -62,4 +62,35 @@ describe('vLLM streaming', () => {
     expect(requestUrl).toBe('http://127.0.0.1:9000/v1/chat/completions');
     expect(new Headers(requestHeaders).get('Authorization')).toBe('Bearer local-secret');
   });
+
+  test('preserves a /v1 base path and a full completions URL', async () => {
+    const seen: string[] = [];
+    globalThis.fetch = (async (input) => {
+      seen.push(String(input));
+      return responseFrom([{ choices: [{ delta: {}, finish_reason: 'stop' }] }]);
+    }) as typeof fetch;
+
+    for await (const _ of new VLLMProvider('test-model', { endpoint: 'http://127.0.0.1:8000/v1' }).stream([], 'system', [], undefined)) { /* consume */ }
+    for await (const _ of new VLLMProvider('test-model', { endpoint: 'http://127.0.0.1:8000/v1/' }).stream([], 'system', [], undefined)) { /* consume */ }
+    for await (const _ of new VLLMProvider('test-model', { endpoint: 'http://127.0.0.1:8000/v1/chat/completions' }).stream([], 'system', [], undefined)) { /* consume */ }
+
+    expect(seen).toEqual([
+      'http://127.0.0.1:8000/v1/chat/completions',
+      'http://127.0.0.1:8000/v1/chat/completions',
+      'http://127.0.0.1:8000/v1/chat/completions',
+    ]);
+  });
+
+  test('does not send an env key when apiKey is explicitly empty', async () => {
+    process.env.VLLM_API_KEY = 'env-secret';
+    let requestHeaders: HeadersInit | undefined;
+    globalThis.fetch = (async (_input, init) => {
+      requestHeaders = init?.headers;
+      return responseFrom([{ choices: [{ delta: {}, finish_reason: 'stop' }] }]);
+    }) as typeof fetch;
+
+    for await (const _ of new VLLMProvider('test-model', { apiKey: '' }).stream([], 'system', [], undefined)) { /* consume */ }
+
+    expect(new Headers(requestHeaders).has('Authorization')).toBe(false);
+  });
 });

@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { classifyTool, decidePolicy } from '../src/policy/index.js';
+import { classifyTool, decidePolicy, ToolGateway } from '../src/policy/index.js';
 
 const base = { autoApprove: false, allowDestructive: false, benchmark: false, interactive: false };
 
@@ -35,6 +35,17 @@ describe('tool approval policy', () => {
     expect(decidePolicy('write', {}, benchmark).decision).toBe('deny');
     expect(decidePolicy('bash', { command: 'rm -rf /app/build' }, base).decision).toBe('deny');
   });
+  test('preview callback failures do not abort tool execution', async () => {
+    const gateway = new ToolGateway({
+      ...base,
+      autoApprove: true,
+      preview: () => { throw new Error('render failed'); },
+    });
+    const result = await gateway.execute('read', { path: 'missing-for-preview-test.txt' });
+    expect(result.is_error).toBe(true);
+    expect(String(result.content)).not.toContain('render failed');
+  });
+
   test('ask_user is read-only and never requires approval or is denied', () => {
     // Asking the user a question has no side effects — approving it would be
     // absurd, and denying it in non-interactive mode breaks the clarify path.

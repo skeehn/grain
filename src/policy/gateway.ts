@@ -19,7 +19,7 @@ export class ToolGateway {
     const invocationId = randomUUID();
     const policy = decidePolicy(name, input, this.options);
     this.options.journal?.append('tool_proposed', { id: toolUseId || invocationId, invocation_id: invocationId, name, input, risk: policy.risk });
-    this.options.preview?.(name, input);
+    try { this.options.preview?.(name, input); } catch { /* preview is presentation-only */ }
     let allowed = policy.decision === 'allow';
     if (policy.decision === 'ask' && this.options.approve) allowed = await this.options.approve(name, input, policy);
     this.options.journal?.append('policy_decided', { invocation_id: invocationId, name, risk: policy.risk,

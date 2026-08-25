@@ -2,8 +2,10 @@ export type EditorAction = 'submit' | 'cancel' | 'tab' | 'clear' | 'changed' | '
 
 /** `@path` token immediately before the cursor, if the user is attaching a file. */
 export function mentionAtCursor(value: string, cursor: number): { start: number; query: string } | null {
-  const before = value.slice(0, cursor);
-  const match = /(?:^|[\s])@([^\s]*)$/u.exec(before);
+  const chars = Array.from(value);
+  const before = chars.slice(0, Math.max(0, Math.min(cursor, chars.length)));
+  const text = before.join('');
+  const match = /(?:^|[\s])@([^\s]*)$/u.exec(text);
   if (!match) return null;
   return { start: before.lastIndexOf('@'), query: match[1] };
 }

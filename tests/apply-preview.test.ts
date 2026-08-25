@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { mkdirSync, writeFileSync } from 'fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { formatApplyPreview, previewToolEdit } from '../src/agent/apply-preview.js';
 import { setWorkspaceRoot } from '../src/workspace/index.js';
@@ -32,5 +32,16 @@ describe('apply preview', () => {
     expect(preview.error).toBeUndefined();
     expect(preview.unified).toContain('+    return a + b + 0');
     expect(preview.unified).toContain('-    return a + b');
+    expect(readFileSync(join(dir, 'lib.py'), 'utf8')).toBe('def add(a, b):\n    return a + b\n');
+  });
+
+  test('reports a rejected read instead of a create preview', () => {
+    const dir = join(root, 'preview-read-fail');
+    mkdirSync(join(dir, 'src'), { recursive: true });
+    setWorkspaceRoot(dir);
+    const [preview] = previewToolEdit('write', { path: 'src', content: 'package main\n' });
+    expect(preview.created).toBe(false);
+    expect(preview.error).toBeTruthy();
+    expect(preview.unified).toBe('');
   });
 });

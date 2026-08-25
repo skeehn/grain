@@ -289,10 +289,12 @@ async function runWorkspaceTui(options: TuiAppOptions): Promise<void> {
   /** `↑12.4k ↓3.1k · 18.2%/200k · $0.04` — only the parts that are known. */
   const sessionAccounting = (): string => {
     const stats = getSessionStats();
-    if (!stats.upTokens && !stats.downTokens) return '';
-    const parts = [`↑${fmtTokens(stats.upTokens)} ↓${fmtTokens(stats.downTokens)}`];
+    if (!stats.upTokens && !stats.downTokens && !stats.childTools) return '';
+    const parts: string[] = [];
+    if (stats.upTokens || stats.downTokens) parts.push(`↑${fmtTokens(stats.upTokens)} ↓${fmtTokens(stats.downTokens)}`);
     if (stats.contextWindow) parts.push(`${Math.min(100, (stats.lastInputTokens / stats.contextWindow) * 100).toFixed(0)}%/${fmtTokens(stats.contextWindow)}`);
     if (stats.costUsd) parts.push(`$${stats.costUsd.toFixed(2)}`);
+    if (stats.childTools) parts.push('child tools');
     return parts.join(' · ');
   };
 
@@ -389,6 +391,7 @@ async function runWorkspaceTui(options: TuiAppOptions): Promise<void> {
       }
       add('info', 'Queued for the next safe turn boundary.'); return;
     }
+    applyDiffLog.length = 0;
     busy = true; status = 'starting'; view = 'chat'; add('user', prompt);
     activeController = new AbortController();
     const root = job?.workspace || workspace.root; const previous = process.cwd();

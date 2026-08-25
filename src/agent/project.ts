@@ -41,7 +41,7 @@ function makefileTargets(cwd: string): string[] {
 function justTargets(cwd: string): string[] {
   const body = readText(join(cwd, 'justfile'));
   if (!body) return [];
-  return [...body.matchAll(/^([A-Za-z0-9][A-Za-z0-9_-]*)\s*(?::|=)/gm)].map(match => match[1]);
+  return [...body.matchAll(/^([A-Za-z0-9][A-Za-z0-9_-]*)(?:\s+[^:\n]*)?:(?!=)/gm)].map(match => match[1]);
 }
 
 function jsRunner(cwd: string): { run: string; exec: string; bun: boolean } {

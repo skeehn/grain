@@ -39,6 +39,14 @@ describe('TUI line editor', () => {
     expect(editor.mention()).toBeNull();
   });
 
+  test('mention indexes are code points so emoji before @ still replaces', () => {
+    const editor = new LineEditor();
+    editor.feed('🙂 @sr');
+    expect(editor.mention()).toEqual({ start: 2, query: 'sr' });
+    editor.replaceMention('src/main.rs');
+    expect(editor.value()).toBe('🙂 @src/main.rs ');
+  });
+
   test('recalls committed history', () => {
     const editor = new LineEditor(); editor.feed('first'); editor.commit(); editor.feed('second'); editor.commit();
     editor.feed('\x1b[A'); expect(editor.value()).toBe('second');

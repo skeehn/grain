@@ -1,8 +1,11 @@
 /** Unified diffs for apply-preview. No extra deps; LCS is fine for ordinary source files. */
 
 export interface DiffStats { added: number; removed: number }
+export interface FileDiff extends DiffStats { unified: string }
 
 type Edit = { kind: 'eq' | 'del' | 'ins'; line: string }
+
+const MAX_DIFF_CELLS = 2_000_000;
 
 function linesOf(text: string): string[] {
   if (text === '') return [];
@@ -37,31 +40,18 @@ function diffEdits(a: string[], b: string[]): Edit[] {
   return edits;
 }
 
-export function diffStats(before: string, after: string): DiffStats {
-  if (before === after) return { added: 0, removed: 0 };
-  const a = linesOf(before);
-  const b = linesOf(after);
-  if (a.length * b.length > 16_000_000) {
-    return { added: b.length, removed: a.length };
-  }
+function countsOf(edits: Edit[]): DiffStats {
   let added = 0;
   let removed = 0;
-  for (const edit of diffEdits(a, b)) {
+  for (const edit of edits) {
     if (edit.kind === 'ins') added++;
     else if (edit.kind === 'del') removed++;
   }
   return { added, removed };
 }
 
-export function unifiedDiff(path: string, before: string, after: string, context = 3, maxHunkLines = 240): string {
+function formatUnified(path: string, edits: Edit[], context: number, maxHunkLines: number): string {
   const header = `--- ${path}\n+++ ${path}`;
-  if (before === after) return `${header}\n`;
-  const a = linesOf(before);
-  const b = linesOf(after);
-  if (a.length * b.length > 16_000_000) {
-    return `${header}\n@@ rewrite @@\n-${a.length} lines\n+${b.length} lines\n`;
-  }
-  const edits = diffEdits(a, b);
   let oldLine = 1;
   let newLine = 1;
   const tagged = edits.map(edit => {
@@ -102,4 +92,25 @@ export function unifiedDiff(path: string, before: string, after: string, context
     }
   }
   return `${out.join('\n')}\n`;
+}
+
+export function diffFile(path: string, before: string, after: string, context = 3, maxHunkLines = 240): FileDiff {
+  const header = `--- ${path}\n+++ ${path}`;
+  if (before === after) return { added: 0, removed: 0, unified: `${header}\n` };
+  const a = linesOf(before);
+  const b = linesOf(after);
+  if (a.length * b.length > MAX_DIFF_CELLS) {
+    return { added: b.length, removed: a.length, unified: `${header}\n@@ rewrite @@\n-${a.length} lines\n+${b.length} lines\n` };
+  }
+  const edits = diffEdits(a, b);
+  return { ...countsOf(edits), unified: formatUnified(path, edits, context, maxHunkLines) };
+}
+
+export function diffStats(before: string, after: string): DiffStats {
+  const { added, removed } = diffFile('', before, after);
+  return { added, removed };
+}
+
+export function unifiedDiff(path: string, before: string, after: string, context = 3, maxHunkLines = 240): string {
+  return diffFile(path, before, after, context, maxHunkLines).unified;
 }

@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from 'bun:test';
-import { mkdtempSync, rmSync, writeFileSync } from 'fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { inspectProject } from '../src/agent/project.js';
@@ -29,9 +29,18 @@ describe('inspectProject', () => {
 
   test('Python repo with tests/ uses pytest', () => {
     const d = projectDir({ 'pyproject.toml': '[project]\nname="x"\n' });
-    writeFileSync(join(d, 'tests'), ''); // file named tests is enough for hasPytest? existsSync tests as file yes
-    // treat as present
+    mkdirSync(join(d, 'tests'));
     expect(inspectProject(d).test?.command).toBe('python3 -m pytest -q');
+  });
+
+  test('justfile variable assignments are not recipes', () => {
+    const d = projectDir({ justfile: 'check := "cargo check"\n' });
+    expect(inspectProject(d).verify).toBeNull();
+  });
+
+  test('justfile recipes with parameters still count', () => {
+    const d = projectDir({ justfile: 'check target:\n    echo {{target}}\n' });
+    expect(inspectProject(d).verify?.command).toBe('just check');
   });
 
   test('TypeScript bun repo uses bun test', () => {

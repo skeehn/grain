@@ -66,4 +66,16 @@ describe('executePatch', () => {
     expect(res.is_error).toBeFalsy();
     expect(readFileSync(file, 'utf-8')).toContain('return 2;');
   });
+
+  test('fuzzy match errors when more than one normalized occurrence exists', async () => {
+    writeFileSync(file, 'function  foo() {\n\treturn   1;\n}\n\nfunction  foo() {\n\treturn   1;\n}\n');
+    const res = await executePatch({
+      path: file,
+      old_string: 'function foo() {\nreturn 1;\n}',
+      new_string: 'function foo() {\n  return 2;\n}',
+    });
+    expect(res.is_error).toBe(true);
+    expect(String(res.content)).toMatch(/occurrences/i);
+    expect(readFileSync(file, 'utf-8')).toContain('return   1;');
+  });
 });

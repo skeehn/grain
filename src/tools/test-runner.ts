@@ -13,7 +13,7 @@ export const testRunnerTool = {
       framework: { 
         type: 'string', 
         description: 'Optional: force framework (jest, vitest, pytest, cargo, go)',
-        enum: ['jest', 'vitest', 'pytest', 'cargo', 'go', 'npm', 'bun'],
+        enum: ['jest', 'vitest', 'pytest', 'cargo', 'go', 'npm', 'pnpm', 'yarn', 'bun'],
       },
       watch: { type: 'boolean', description: 'Watch mode (not recommended - use for development)', default: false },
       coverage: { type: 'boolean', description: 'Generate coverage report', default: false },
@@ -39,7 +39,9 @@ function detectTestFramework(): string | null {
   if (command.includes('vitest')) return 'vitest';
   if (command.includes('jest')) return 'jest';
   if (command.startsWith('bun')) return 'bun';
-  if (/\bnpm\b|\byarn\b|\bpnpm\b/.test(command)) return 'npm';
+  if (command.startsWith('pnpm')) return 'pnpm';
+  if (command.startsWith('yarn')) return 'yarn';
+  if (command.startsWith('npm')) return 'npm';
   if (command.includes('test')) return inspection.kinds.includes('javascript') || inspection.kinds.includes('typescript') ? 'npm' : null;
   return null;
 }
@@ -94,11 +96,11 @@ function parseTestOutput(output: string, framework: string): TestResult {
       result.total = result.passed + result.failed;
     }
   } else if (framework === 'go') {
-    const ok = [...output.matchAll(/^ok\s+\S+/gm)].length;
-    const fail = [...output.matchAll(/^FAIL\s+\S+/gm)].length;
-    result.passed = ok;
-    result.failed = fail;
-    result.total = ok + fail;
+    result.passed = [...output.matchAll(/^\s*--- PASS:/gm)].length;
+    result.failed = [...output.matchAll(/^\s*--- FAIL:/gm)].length;
+    result.skipped = [...output.matchAll(/^\s*--- SKIP:/gm)].length;
+    result.total = result.passed + result.failed + result.skipped;
+    result.failures = [...output.matchAll(/^\s*--- FAIL:.*$/gm)].slice(0, 3).map(match => match[0]);
   }
   
   return result;
@@ -162,9 +164,19 @@ export async function executeTestRunner(input: {
       
     case 'go':
       cmd = 'go';
-      args = ['test', './...'];
-      if (input.pattern) args = ['test', input.pattern];
+      args = ['test', '-v', './...'];
+      if (input.pattern) args = ['test', '-v', input.pattern];
       if (input.coverage) args.push('-cover');
+      break;
+
+    case 'pnpm':
+      cmd = 'pnpm';
+      args = ['test'];
+      break;
+
+    case 'yarn':
+      cmd = 'yarn';
+      args = ['test'];
       break;
       
     case 'npm':

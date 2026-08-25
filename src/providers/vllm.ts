@@ -10,7 +10,9 @@ export interface VLLMConfig {
 
 function completionsUrl(endpoint?: string): string {
   const root = (endpoint || VLLM_DEFAULT_ENDPOINT).replace(/\/+$/, '');
-  return root.endsWith('/v1/chat/completions') ? root : `${root}/v1/chat/completions`;
+  if (root.endsWith('/v1/chat/completions')) return root;
+  if (root.endsWith('/v1')) return `${root}/chat/completions`;
+  return `${root}/v1/chat/completions`;
 }
 
 /** Local vLLM (or any OpenAI-compatible server) — no key required. */

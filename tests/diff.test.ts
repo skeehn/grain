@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { diffStats, unifiedDiff } from '../src/workspace/diff.js';
+import { diffFile, diffStats, unifiedDiff } from '../src/workspace/diff.js';
 
 describe('unifiedDiff', () => {
   test('identical files produce an empty hunk list', () => {
@@ -18,6 +18,11 @@ describe('unifiedDiff', () => {
     expect(diff).toContain('+delta');
     expect(diff).toMatch(/@@ -\d+,\d+ \+\d+,\d+ @@/);
     expect(diffStats(before, after)).toEqual({ added: 2, removed: 1 });
+    expect(diffFile('note.txt', before, after)).toEqual({
+      added: 2,
+      removed: 1,
+      unified: diff,
+    });
   });
 
   test('keeps surrounding context lines', () => {
