@@ -56,6 +56,10 @@ export function getModelCapabilities(provider: string, model: string): ModelCapa
   if (provider === 'opencode') {
     return { ...base, contextWindow: 200_000, maxOutputTokens: 32_000, supportsTools: false };
   }
+  if (provider === 'grok') {
+    return { ...base, contextWindow: 256_000, maxOutputTokens: 64_000, supportsTools: false,
+      supportsImages: true, supportsReasoning: true };
+  }
   if (provider === 'ollama' || provider === 'vllm') {
     return { ...base, contextWindow: 32_768, maxOutputTokens: 4_096,
       preferredToolNames: ['read', 'grep', 'patch', 'write', 'bash', 'run_tests', 'finish'] };

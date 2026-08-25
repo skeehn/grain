@@ -1,7 +1,7 @@
 import { platform } from 'os';
 import { describeToolchain, inspectProject } from './agent/project.js';
 
-export interface PromptEnvironment { cwd: string; platform: string; shell: string }
+export interface PromptEnvironment { cwd: string; platform: string; shell: string; agentRouting?: boolean }
 
 export function getSystemPrompt(concise = false, task = '', environment?: PromptEnvironment): string {
   const cwd = environment?.cwd || process.cwd();
@@ -53,6 +53,17 @@ const rules = `Rules:
 - Run verification after changes
 - Call finish only when the requested outcome is verified`;
 
+  const agentRouting = environment?.agentRouting !== false ? `
+
+## Agents
+You are the Grain-native main agent. Grain brokers your tools (read, patch, write, verify, diffs).
+Keep that loop unless the user asked to switch models.
+To run a subscription coding agent as a sub-agent, call delegate with:
+- provider claude-code — Claude Code CLI (own tools, own login)
+- provider codex — OpenAI Codex CLI
+- provider grok — Grok CLI / grokbot
+Grain-native alternatives: provider openrouter or provider xai (Grok API, Grain tools).` : '';
+
   const base = `You are Grain, a world-class coding agent operating inside a replayable, policy-controlled harness.
 
 ${rules}
@@ -62,7 +73,7 @@ Platform: ${plat}
 Shell: ${shell}
 
 Detected toolchain:
-${toolchain}${qualityStandards}`;
+${toolchain}${qualityStandards}${agentRouting}`;
 
   if (concise) return `${base}
 

@@ -8,6 +8,7 @@
 import type { ExecutableTool, ToolResult } from "../providers/types.js";
 import type { PluginRegistry } from "../plugins/registry.js";
 import type { AgentTask } from "../plugins/types.js";
+import { normalizeProvider } from "../config.js";
 
 export function createSpawnAgentTool(registry: PluginRegistry): ExecutableTool {
   return {
@@ -34,7 +35,7 @@ Example:
       properties: {
         agent: {
           type: "string",
-          description: "Which agent to spawn. Options: claude-code, codex, aider, or 'auto' to route automatically",
+          description: "Which agent to spawn. Options: claude-code, codex, grok (grokbot), opencode, hermes, or 'auto' to route automatically",
         },
         task: {
           type: "string",
@@ -81,23 +82,24 @@ Example:
 
         let result: any;
 
-        if (input.agent === "auto") {
+        const agent = input.agent === 'auto' ? 'auto' : normalizeProvider(String(input.agent || ''));
+        if (agent === "auto") {
           // Auto-route based on task content
           result = await registry.execute(task);
         } else {
           // Use specified agent
-          const plugin = registry.getPlugin(input.agent);
+          const plugin = registry.getPlugin(agent);
           if (!plugin) {
             const available = (await registry.discoverInstalled()).map(p => p.name);
             return {
-              content: `Agent "${input.agent}" not found.\n\nInstalled agents: ${available.join(", ") || "none"}`,
+              content: `Agent "${agent}" not found.\n\nInstalled agents: ${available.join(", ") || "none"}`,
               is_error: true,
             };
           }
 
           if (!(await plugin.isInstalled())) {
           return {
-            content: `Agent "${input.agent}" is registered but not installed on this system.`,
+            content: `Agent "${agent}" is registered but not installed on this system.`,
             is_error: true,
           };
           }

@@ -18,7 +18,10 @@ describe('CLI-agent providers', () => {
     expect(getProvider('claude-code').name).toBe('claude-code');
     expect(getProvider('codex').name).toBe('codex');
     expect(getProvider('opencode').name).toBe('opencode');
+    expect(getProvider('grok').name).toBe('grok');
+    expect(getProvider('grokbot').name).toBe('grok');
     expect(isCliAgentProvider('claude-code')).toBe(true);
+    expect(isCliAgentProvider('grok')).toBe(true);
     expect(isCliAgentProvider('anthropic')).toBe(false);
   });
 
@@ -30,6 +33,8 @@ describe('CLI-agent providers', () => {
   test('reports the child agent context window instead of the generic default', () => {
     expect(getModelCapabilities('claude-code', 'opus').contextWindow).toBe(200_000);
     expect(getModelCapabilities('codex', 'auto').contextWindow).toBe(272_000);
+    expect(getModelCapabilities('grok', 'auto').contextWindow).toBe(256_000);
+    expect(getModelCapabilities('grok', 'auto').supportsTools).toBe(false);
     // Grain does not hand its own tools to an agent that runs its own loop.
     expect(getModelCapabilities('claude-code', 'opus').supportsTools).toBe(false);
   });

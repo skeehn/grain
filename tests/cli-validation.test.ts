@@ -19,6 +19,12 @@ describe('validateInvocation', () => {
     expect(validateInvocation(parse('--provider', 'openrouter', '-p', 'hi'))).toBeNull();
   });
 
+  test('accepts grokbot as an alias for the grok CLI provider', () => {
+    const parsed = parse('--provider', 'grokbot', '-p', 'hi');
+    expect(validateInvocation(parsed)).toBeNull();
+    expect(parsed.provider).toBe('grok');
+  });
+
   test('rejects an empty print-mode task', () => {
     expect(validateInvocation(parse('-p', ''))).toContain('No task provided');
     // `-p` with no following value leaves prompt undefined in print mode.

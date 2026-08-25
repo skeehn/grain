@@ -2,7 +2,7 @@
 import { orchestrate } from './agent/orchestrator.js';
 import {
   loadConfig, saveConfig, getConfigDir, validateConfig,
-  loadGrainEnv, saveKeyToEnv, listEnvKeys, GRAIN_VERSION, VALID_PROVIDERS,
+  loadGrainEnv, saveKeyToEnv, listEnvKeys, GRAIN_VERSION, VALID_PROVIDERS, normalizeProvider,
 } from './config.js';
 import * as renderer from './tui/renderer.js';
 import { existsSync, writeFileSync } from 'fs';
@@ -251,8 +251,11 @@ export function parseArgs(argv: string[]): ParsedArgs {
  */
 export function validateInvocation(parsed: ParsedArgs): string | null {
   const customProviders = Object.keys(loadConfig(process.cwd()).providers || {});
-  if (parsed.provider && !VALID_PROVIDERS.includes(parsed.provider as any) && !customProviders.includes(parsed.provider)) {
-    return `Invalid provider "${parsed.provider}". Valid: ${[...VALID_PROVIDERS, ...customProviders].join(', ')}`;
+  if (parsed.provider) {
+    parsed.provider = normalizeProvider(parsed.provider);
+    if (!VALID_PROVIDERS.includes(parsed.provider as any) && !customProviders.includes(parsed.provider)) {
+      return `Invalid provider "${parsed.provider}". Valid: ${[...VALID_PROVIDERS, ...customProviders].join(', ')}`;
+    }
   }
   // In print/automation mode there is no conversational prompt to fall back on,
   // so an empty task is a usage error rather than an empty agent run.
@@ -398,12 +401,13 @@ async function handleConfig(sub?: string, key?: string, value?: string): Promise
 
     if (key === 'provider') {
       const configured = Object.keys(config.providers || {});
-      if (!value || (!VALID_PROVIDERS.includes(value as any) && !configured.includes(value))) {
+      const provider = value ? normalizeProvider(value) : '';
+      if (!provider || (!VALID_PROVIDERS.includes(provider as any) && !configured.includes(provider))) {
         console.error(`Invalid provider "${value}". Valid: ${[...VALID_PROVIDERS, ...configured].join(', ')}`);
         process.exit(1);
       }
-      saveConfig({ provider: value });
-      console.log(`${ok} provider = ${c.cyan}${value}${c.reset}\n`);
+      saveConfig({ provider });
+      console.log(`${ok} provider = ${c.cyan}${provider}${c.reset}\n`);
       return;
     }
 
@@ -749,11 +753,12 @@ every write or risky action by default.
 
 ${bold('MODELS')}  ${dim('one picker for subscriptions, APIs, and local models')}
   /model                           browse everything you can actually run
+  --model grok                     Grok CLI / grokbot (own tools, own login)
   --model claude-code:opus         Claude through your Claude Code subscription
   --model codex                    OpenAI Codex through your ChatGPT subscription
-  --model openrouter:<id>          any OpenRouter model · ollama:<id> runs locally
-  Subscription agents need no API key — Grain drives the CLI you already signed
-  into, so they keep working when an API key has no credit.
+  --model openrouter:<id>          Grain-native OpenRouter · xai:<id> Grok API
+  Subscription CLIs need no Grain API key. Grain-native models keep Grain's
+  tools, diffs, and /undo; delegate subscriptions as sub-agents.
 
 ${bold('AUTOMATION')}
   grain -p "task" --yes             non-interactive script/CI task

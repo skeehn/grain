@@ -2,7 +2,7 @@ export type AgentRole = 'coordinator' | 'driver' | 'navigator' | 'researcher' | 
 export type TaskState = 'pending' | 'ready' | 'running' | 'waiting' | 'succeeded' | 'failed' | 'cancelled' | 'needs_reconciliation';
 export type IsolationMode = 'shared_readonly' | 'worktree';
 
-export type ExecutorKind = 'grain-native' | 'direct-api' | 'claude-code' | 'codex' | 'opencode' | 'hermes' | 'stdio';
+export type ExecutorKind = 'grain-native' | 'direct-api' | 'claude-code' | 'codex' | 'opencode' | 'grok' | 'hermes' | 'stdio';
 export type AgentProfileMode = 'primary' | 'subagent' | 'all';
 export type PermissionDecision = 'allow' | 'ask' | 'deny';
 

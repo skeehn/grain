@@ -4,7 +4,16 @@ import { basename, join } from 'path';
 import { loadConfig } from '../config.js';
 import { DEFAULT_RUN_TREE_LIMITS, type AgentProfileV1, type ExecutorKind, type PermissionDecision } from './types.js';
 
-const EXECUTORS: ExecutorKind[] = ['grain-native', 'direct-api', 'claude-code', 'codex', 'opencode', 'hermes', 'stdio'];
+const EXECUTORS: ExecutorKind[] = ['grain-native', 'direct-api', 'claude-code', 'codex', 'opencode', 'grok', 'hermes', 'stdio'];
+
+const BUILTIN_PROFILES = [
+  ['default', '---\nid: default\ndescription: Grain native main agent\nexecutor: grain-native\nmode: primary\npermissions: {"read":"allow","write":"ask","bash":"ask"}\n---\nUse Grain\'s coding runtime, tools, diffs, and verification. Switch models with /model.'],
+  ['openrouter', '---\nid: openrouter\ndescription: Grain native via OpenRouter\nexecutor: grain-native\nprovider: openrouter\nmode: primary\npermissions: {"read":"allow","write":"ask","bash":"ask"}\n---\nGrain-native main agent on OpenRouter. Delegate subscriptions with the delegate tool.'],
+  ['xai', '---\nid: xai\ndescription: Grain native via xAI Grok API\nexecutor: direct-api\nprovider: xai\nmodel: grok-code-fast-1\nmode: primary\npermissions: {"read":"allow","write":"ask","bash":"ask"}\n---\nGrain-native main agent on the xAI Grok API.'],
+  ['claude-code', '---\nid: claude-code\ndescription: Claude Code subscription\nexecutor: claude-code\nmode: all\npermissions: {"read":"allow","write":"ask","bash":"ask"}\n---\nClaude Code CLI. Own tools and login. Use as the main agent or as a sub-agent.'],
+  ['codex', '---\nid: codex\ndescription: OpenAI Codex subscription\nexecutor: codex\nmode: all\npermissions: {"read":"allow","write":"ask","bash":"ask"}\n---\nCodex CLI. Own tools and login. Use as the main agent or as a sub-agent.'],
+  ['grok', '---\nid: grok\ndescription: Grok CLI / grokbot\nexecutor: grok\nmode: all\npermissions: {"read":"allow","write":"ask","bash":"ask"}\n---\nGrok Build TUI. Own tools and login. Use as the main agent or as a sub-agent.'],
+] as const;
 const DECISIONS: PermissionDecision[] = ['allow', 'ask', 'deny'];
 
 function scalar(value: string): unknown {
@@ -52,6 +61,7 @@ function profilesIn(directory: string): AgentProfileV1[] {
 
 export function loadAgentProfiles(workspaceRoot?: string): AgentProfileV1[] {
   const config = loadConfig(workspaceRoot); const profiles = new Map<string, AgentProfileV1>();
+  for (const [id, source] of BUILTIN_PROFILES) profiles.set(id, parseAgentProfileMarkdown(source, `${id}.md`));
   const globalDir = join(process.env.GRAIN_HOME || join(homedir(), '.grain'), 'agents');
   for (const profile of profilesIn(globalDir)) profiles.set(profile.id, profile);
   if (workspaceRoot) for (const profile of profilesIn(join(workspaceRoot, '.grain', 'agents'))) profiles.set(profile.id, profile);
@@ -61,7 +71,6 @@ export function loadAgentProfiles(workspaceRoot?: string): AgentProfileV1[] {
       budget: { ...base.budget, ...(partial.budget || {}) }, recursion: { ...base.recursion, ...(partial.recursion || {}) },
       permissions: { ...base.permissions, ...(partial.permissions || {}) } });
   }
-  if (!profiles.has('default')) profiles.set('default', parseAgentProfileMarkdown('---\nid: default\ndescription: Grain native coding agent\nexecutor: grain-native\npermissions: {"read":"allow","write":"ask","bash":"ask"}\n---\nUse Grain\'s coding runtime and verification gates.', 'default.md'));
   return [...profiles.values()];
 }
 

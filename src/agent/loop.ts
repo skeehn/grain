@@ -521,8 +521,9 @@ export async function agentLoop(opts: AgentOpts): Promise<void> {
 
     // Build system prompt with context + skills
     let system = getSystemPrompt(opts.concise, opts.prompt || '', opts.benchmark ? {
-      cwd: process.env.GRAIN_BENCHMARK_WORKDIR || '/app', platform: 'linux', shell: '/bin/bash',
-    } : { cwd: workspaceRoot || process.cwd(), platform: process.platform, shell: process.env.SHELL || '/bin/bash' });
+      cwd: process.env.GRAIN_BENCHMARK_WORKDIR || '/app', platform: 'linux', shell: '/bin/bash', agentRouting: false,
+    } : { cwd: workspaceRoot || process.cwd(), platform: process.platform, shell: process.env.SHELL || '/bin/bash',
+      agentRouting: !delegatedAgent });
     let retrievedMemoryContext = '';
     let retrievedCodeContext = '';
     if (opts.mode === 'plan') system += '\n\nThe user selected Plan mode. Explain the approach, affected files, risks, and verification before proposing any write or command that changes state.';

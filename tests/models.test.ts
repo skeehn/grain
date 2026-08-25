@@ -5,6 +5,8 @@ describe('model catalog', () => {
   test('leads with subscription agents so a user without API credit can still work', () => {
     expect(MODEL_CATALOG[0].provider).toBe('claude-code');
     expect(MODEL_CATALOG.some(c => c.provider === 'codex')).toBe(true);
+    expect(MODEL_CATALOG.some(c => c.provider === 'grok')).toBe(true);
+    expect(MODEL_CATALOG.some(c => c.provider === 'xai')).toBe(true);
     expect(MODEL_CATALOG.some(c => c.model === 'openrouter/free')).toBe(true);
     expect(MODEL_CATALOG.some(c => c.model === 'nousresearch/hermes-3-llama-3.1-405b:free')).toBe(false);
   });
@@ -47,6 +49,11 @@ describe('model catalog', () => {
     expect(resolveModelSelection('xai:grok-code-fast-1', 'openrouter')).toEqual({ provider: 'xai', model: 'grok-code-fast-1' });
     expect(resolveModelSelection('claude-code:opus', 'openrouter')).toEqual({ provider: 'claude-code', model: 'opus' });
     expect(resolveModelSelection('codex', 'openrouter')).toEqual({ provider: 'codex', model: 'auto' });
+    expect(resolveModelSelection('grok', 'openrouter')).toEqual({ provider: 'grok', model: 'auto' });
+    expect(resolveModelSelection('grokbot', 'openrouter')).toEqual({ provider: 'grok', model: 'auto' });
+    expect(resolveModelSelection('xai', 'openrouter')).toEqual({ provider: 'xai', model: 'grok-code-fast-1' });
+    expect(resolveModelSelection('openrouter', 'codex')).toEqual({ provider: 'openrouter', model: 'openrouter/free' });
+    expect(resolveModelSelection('claude', 'openrouter')).toEqual({ provider: 'claude-code', model: 'auto' });
   });
 
   test('keeps colons that belong to the model id itself', () => {

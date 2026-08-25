@@ -69,6 +69,7 @@ const DEFAULTS: GrainConfig = {
       },
       "opencode": { enabled: true, preferredFor: ["feature-dev", "refactoring"] },
       "hermes": { enabled: true, preferredFor: ["documentation", "code-review"] },
+      "grok": { enabled: true, preferredFor: ["feature-dev", "bug-fixing"] },
     },
     routing: {
       prefer: "claude-code",
@@ -80,7 +81,20 @@ const DEFAULTS: GrainConfig = {
 };
 
 /** Providers backed by an installed, already-signed-in coding-agent CLI. */
-export const CLI_AGENT_PROVIDERS = ['claude-code', 'codex', 'opencode'] as const;
+export const CLI_AGENT_PROVIDERS = ['claude-code', 'codex', 'opencode', 'grok'] as const;
+
+/** Spoken / shorthand names that must resolve to a real provider id. */
+export const PROVIDER_ALIASES: Record<string, string> = {
+  grokbot: 'grok',
+  claude: 'claude-code',
+  'quad-code': 'claude-code',
+  'grok-api': 'xai',
+};
+
+export function normalizeProvider(name: string): string {
+  const trimmed = name.trim().toLowerCase();
+  return PROVIDER_ALIASES[trimmed] || trimmed;
+}
 
 export const VALID_PROVIDERS = [
   'bedrock', 'anthropic', 'openrouter', 'groq', 'xai', 'ollama', 'vllm', ...CLI_AGENT_PROVIDERS,

@@ -22,6 +22,7 @@ import { ClaudeCodePlugin } from '../plugins/claude-code.js';
 import { CodexPlugin } from '../plugins/codex.js';
 import { OpenCodePlugin } from '../plugins/opencode.js';
 import { HermesPlugin } from '../plugins/hermes.js';
+import { GrokPlugin } from '../plugins/grok.js';
 import { createSpawnAgentTool } from './spawn-agent.js';
 import { loadConfig } from '../config.js';
 import { setWorkspaceRoot } from '../workspace/index.js';
@@ -64,10 +65,12 @@ function getPluginRegistry(): PluginRegistry {
     const codexCfg = pluginsConfig.plugins?.['codex'];
     const opencodeCfg = pluginsConfig.plugins?.['opencode'];
     const hermesCfg = pluginsConfig.plugins?.['hermes'];
+    const grokCfg = pluginsConfig.plugins?.['grok'];
     _pluginRegistry.register(new ClaudeCodePlugin(expandTilde(claudeCfg?.binaryPath ?? 'claude'), claudeCfg?.defaultModel));
     _pluginRegistry.register(new CodexPlugin(expandTilde(codexCfg?.binaryPath ?? 'codex')));
     _pluginRegistry.register(new OpenCodePlugin(expandTilde(opencodeCfg?.binaryPath ?? 'opencode')));
     _pluginRegistry.register(new HermesPlugin(expandTilde(hermesCfg?.binaryPath ?? 'hermes')));
+    _pluginRegistry.register(new GrokPlugin(expandTilde(grokCfg?.binaryPath ?? 'grok')));
   }
   return _pluginRegistry;
 }

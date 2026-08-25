@@ -3,7 +3,7 @@ import { existsSync, statSync } from 'fs';
 import { resolve } from 'path';
 import { agentLoop, type AgentUi, type AgentWorkspaceEvent } from '../agent/loop.js';
 import { changedFileCount, undoLast } from '../agent/checkpoint.js';
-import { loadConfig, saveConfig, type GrainConfig } from '../config.js';
+import { loadConfig, saveConfig, normalizeProvider, CLI_AGENT_PROVIDERS, type GrainConfig } from '../config.js';
 import { listRuns, readRunEvents, RunEngine, RunJournal, RunService } from '../kernel/index.js';
 import { TaskGraphStore } from '../orchestration/store.js';
 import { AgentScheduler } from '../orchestration/scheduler.js';
@@ -77,10 +77,9 @@ export function panelLineKind(text: string): LineKind {
 
 export const HELP_LINES = [
   'MODELS',
-  '  /model                       pick from every model you can actually run',
-  '  /model claude-code:opus      Claude through your subscription (no API credit)',
-  '  /model codex                 OpenAI Codex through your subscription',
-  '  /model openrouter:MODEL_ID   any OpenRouter model · /model ollama:MODEL local',
+  '  /model                       pick subscriptions, APIs, and local models',
+  '  /model grok|codex|claude-code  child CLI (own tools) · grokbot = grok',
+  '  /model xai:MODEL · openrouter:MODEL  Grain-native tools, diffs, /undo',
   '  /effort low|medium|high      reasoning effort where the model supports it',
   'WORK',
   '  type a task · /open PATH project · /attach PATH · /mode ask|plan|execute',
@@ -94,8 +93,8 @@ export const HELP_LINES = [
   '  /diff changes · /tools activity · /context explain · /files tree',
   '  /memory [status|search QUERY|inspect ID] · /history · /wiki ACTION',
   'ORCHESTRATE',
-  '  /agent [NAME] · /agents MODE TASK · /workflow MODE TASK · /loop TASK',
-  '  /jobs [add|run|remove] …',
+  '  /agent [NAME]                Grain-native main, or a subscription sub-agent',
+  '  /agents MODE TASK · /workflow MODE TASK · /loop TASK · /jobs …',
   'MEMORY ADMIN',
   '  /memory edit ID CONTENT · /memory forget ID · /memory export|rebuild',
   'KEYS',
@@ -484,11 +483,17 @@ async function runWorkspaceTui(options: TuiAppOptions): Promise<void> {
   };
 
   const applyModelSelection = (provider: string, model: string) => {
+    const resolved = normalizeProvider(provider);
     const config = loadConfig();
-    saveConfig({ ...config, provider, model });
-    options.provider = provider; options.model = model;
-    const stats = getSessionStats(); stats.provider = provider; stats.model = model;
-    add('success', `Model: ${provider} · ${model}`);
+    saveConfig({ ...config, provider: resolved, model });
+    options.provider = resolved; options.model = model;
+    const stats = getSessionStats(); stats.provider = resolved; stats.model = model;
+    add('success', `Model: ${resolved} · ${model}`);
+    if ((CLI_AGENT_PROVIDERS as readonly string[]).includes(resolved)) {
+      add('info', 'This agent runs with its own tools and login. Grain-native tools, diffs, and /undo follow the working tree.');
+    } else {
+      add('info', 'Grain-native: this model uses Grain tools. Delegate claude-code, codex, or grok as sub-agents when useful.');
+    }
   };
 
   const openModelPicker = async () => {
@@ -522,9 +527,28 @@ async function runWorkspaceTui(options: TuiAppOptions): Promise<void> {
       return;
     }
     applyModelSelection(entry.provider, entry.model);
-    if (entry.kind === 'subscription') {
-      add('info', 'This agent runs with its own tools and its own login — no API credit is used.');
+  };
+
+  const applyAgentProfile = (selected: AgentProfileV1) => {
+    activeProfile = selected.id === 'default' ? undefined : selected;
+    add('success', `Agent: ${selected.id} · ${selected.executor} · ${selected.provider || 'inherited'}/${selected.model || 'auto'}`);
+    if (selected.executor === 'grain-native' || selected.executor === 'direct-api') {
+      add('info', 'Main agent is Grain-native. Subscriptions (claude-code, codex, grok) are available as sub-agents via delegate.');
+    } else {
+      add('info', 'This profile runs a subscription CLI as the session agent. /model still selects Grain-native models when you switch back with /agent default.');
     }
+  };
+
+  const openAgentPicker = async () => {
+    const profiles = loadAgentProfiles(workspace.root);
+    const items: OverlayItem<AgentProfileV1>[] = profiles.map(profile => ({
+      label: profile.id,
+      hint: `${profile.executor} · ${profile.provider || 'inherited'}/${profile.model || 'auto'}`,
+      value: profile,
+      current: (activeProfile?.id || 'default') === profile.id,
+    }));
+    const chosen = await pick('Choose an agent — Grain-native main, or a subscription CLI', items);
+    if (chosen.value) applyAgentProfile(chosen.value);
   };
 
   const handleCommand = async (value: string) => {
@@ -571,12 +595,11 @@ async function runWorkspaceTui(options: TuiAppOptions): Promise<void> {
     }
     if (command === 'agent') {
       const profiles = loadAgentProfiles(workspace.root);
-      if (!arg) { add('info', ['AGENT PROFILES', ...profiles.map(profile =>
-        `  ${profile.id}${activeProfile?.id === profile.id ? '  [active]' : ''} · ${profile.executor} · ${profile.provider || 'inherited'}/${profile.model || 'auto'}`), '',
-        'Select with /agent NAME'].join('\n')); return; }
-      const selected = profiles.find(profile => profile.id === arg);
-      if (!selected) { add('warn', `Unknown agent profile: ${arg}`); return; }
-      activeProfile = selected; add('success', `Agent: ${selected.id} · ${selected.executor} · ${selected.provider || 'inherited'}/${selected.model || 'auto'}`); return;
+      if (!arg) { await openAgentPicker(); return; }
+      const wanted = normalizeProvider(arg);
+      const selected = profiles.find(profile => profile.id === wanted || profile.id === arg);
+      if (!selected) { add('warn', `Unknown agent profile: ${arg}. Try grok, codex, claude-code, openrouter, xai, or default.`); return; }
+      applyAgentProfile(selected); return;
     }
     if (command === 'workflow' || command === 'loop') {
       const [requestedMode, ...words] = command === 'loop' ? ['repair-loop', ...arg.split(/\s+/u)] : arg.split(/\s+/u);

@@ -61,6 +61,7 @@ describe('TUI information layout', () => {
     expect(HELP_LINES).toContain('MODELS');
     expect(HELP_LINES).toContain('INSPECT');
     expect(HELP_LINES).toContain('ORCHESTRATE');
+    expect(HELP_LINES.some(line => line.includes('grok'))).toBe(true);
     expect(HELP_LINES).toContain('MEMORY ADMIN');
   });
 
