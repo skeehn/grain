@@ -1,8 +1,7 @@
 // Test runner integration - auto-run tests, parse output, track results
 import { spawn } from 'child_process';
-import { existsSync, readFileSync } from 'fs';
-import { resolve } from 'path';
 import type { ToolResult } from '../providers/types.js';
+import { inspectProject } from '../agent/project.js';
 
 export const testRunnerTool = {
   name: 'run_tests',
@@ -32,40 +31,16 @@ interface TestResult {
 }
 
 function detectTestFramework(): string | null {
-  const cwd = process.cwd();
-  
-  // Check package.json
-  const pkgPath = resolve(cwd, 'package.json');
-  if (existsSync(pkgPath)) {
-    let pkg: any;
-    try {
-      pkg = JSON.parse(readFileSync(pkgPath, 'utf-8'));
-    } catch (err: any) {
-      throw new Error(`Failed to parse package.json at ${pkgPath}: ${err.message}`);
-    }
-
-    if (pkg.devDependencies?.jest || pkg.dependencies?.jest) return 'jest';
-    if (pkg.devDependencies?.vitest || pkg.dependencies?.vitest) return 'vitest';
-    if (pkg.scripts?.test) return 'npm'; // Fallback to npm test
-  }
-  
-  // Check for pytest
-  if (existsSync(resolve(cwd, 'pytest.ini')) || 
-      existsSync(resolve(cwd, 'setup.py')) ||
-      existsSync(resolve(cwd, 'pyproject.toml'))) {
-    return 'pytest';
-  }
-  
-  // Check for Cargo
-  if (existsSync(resolve(cwd, 'Cargo.toml'))) {
-    return 'cargo';
-  }
-  
-  // Check for Go
-  if (existsSync(resolve(cwd, 'go.mod'))) {
-    return 'go';
-  }
-  
+  const inspection = inspectProject(process.cwd());
+  const command = inspection.test?.command || '';
+  if (command.startsWith('cargo')) return 'cargo';
+  if (command.startsWith('go ')) return 'go';
+  if (command.includes('pytest')) return 'pytest';
+  if (command.includes('vitest')) return 'vitest';
+  if (command.includes('jest')) return 'jest';
+  if (command.startsWith('bun')) return 'bun';
+  if (/\bnpm\b|\byarn\b|\bpnpm\b/.test(command)) return 'npm';
+  if (command.includes('test')) return inspection.kinds.includes('javascript') || inspection.kinds.includes('typescript') ? 'npm' : null;
   return null;
 }
 
@@ -118,6 +93,12 @@ function parseTestOutput(output: string, framework: string): TestResult {
       result.failed = parseInt(resultMatch[2]);
       result.total = result.passed + result.failed;
     }
+  } else if (framework === 'go') {
+    const ok = [...output.matchAll(/^ok\s+\S+/gm)].length;
+    const fail = [...output.matchAll(/^FAIL\s+\S+/gm)].length;
+    result.passed = ok;
+    result.failed = fail;
+    result.total = ok + fail;
   }
   
   return result;
@@ -181,8 +162,8 @@ export async function executeTestRunner(input: {
       
     case 'go':
       cmd = 'go';
-      args = ['test'];
-      if (input.pattern) args.push(input.pattern);
+      args = ['test', './...'];
+      if (input.pattern) args = ['test', input.pattern];
       if (input.coverage) args.push('-cover');
       break;
       

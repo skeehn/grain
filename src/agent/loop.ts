@@ -11,6 +11,7 @@ import { getSessionStats, recordUsage } from '../tui/status.js';
 import { retrieveCodeContext } from '../tools/code-index.js';
 import { executeBash } from '../tools/bash.js';
 import { detectVerifyCommand } from './verify.js';
+import { formatApplyPreview, previewToolEdit, WRITE_EDIT_TOOLS } from './apply-preview.js';
 import { newChangeset } from './checkpoint.js';
 import { watchTree } from './changed-files.js';
 import { drainPendingScreenshots, hasPendingScreenshots } from '../tools/screenshot.js';
@@ -84,6 +85,7 @@ export type AgentWorkspaceEvent =
   | { type: 'run'; runId: string; provider: string; model: string }
   | { type: 'status'; status: string; detail?: string }
   | { type: 'tool'; name: string; input?: unknown }
+  | { type: 'apply_diff'; path: string; unified: string }
   | { type: 'approval'; name: string; risk: string; decision: 'allowed' | 'denied' }
   | { type: 'verification'; passed: boolean; detail: string };
 
@@ -387,12 +389,27 @@ export async function agentLoop(opts: AgentOpts): Promise<void> {
   const gateway = new ToolGateway({
     autoApprove: Boolean(opts.autoApprove), allowDestructive: Boolean(opts.allowDestructive),
     benchmark: Boolean(opts.benchmark), interactive: Boolean(process.stdin.isTTY), journal,
-    approve: async (name, _input, policy) => {
+    preview: (name, input) => {
+      if (!WRITE_EDIT_TOOLS.has(name)) return;
+      const previews = previewToolEdit(name, input);
+      const text = formatApplyPreview(previews);
+      if (text) ui.dim(text);
+      for (const preview of previews) {
+        if (preview.unified) opts.onEvent?.({ type: 'apply_diff', path: preview.path, unified: preview.unified });
+      }
+    },
+    approve: async (name, input, policy) => {
       if (opts.approvedRisks?.has(policy.risk)) {
         opts.onEvent?.({ type: 'approval', name, risk: policy.risk, decision: 'allowed' });
         return true;
       }
-      const answer = await ui.userPrompt(`Approve ${policy.risk} tool "${name}"? [y] once · [a]llow this session · [N]o `);
+      const previews = WRITE_EDIT_TOOLS.has(name) ? previewToolEdit(name, input) : [];
+      const files = previews.filter(preview => !preview.error)
+        .map(preview => `${preview.path} (+${preview.added} -${preview.removed})`);
+      const prompt = files.length
+        ? `Apply ${files.join(', ')}? [y] once · [a]llow this session · [N]o `
+        : `Approve ${policy.risk} tool "${name}"? [y] once · [a]llow this session · [N]o `;
+      const answer = await ui.userPrompt(prompt);
       const choice = answer?.trim().toLowerCase();
       const allowed = choice === 'y' || choice === 'yes' || choice === 'a' || choice === 'allow';
       if (choice === 'a' || choice === 'allow') opts.approvedRisks?.add(policy.risk);
@@ -502,7 +519,7 @@ export async function agentLoop(opts: AgentOpts): Promise<void> {
     // Build system prompt with context + skills
     let system = getSystemPrompt(opts.concise, opts.prompt || '', opts.benchmark ? {
       cwd: process.env.GRAIN_BENCHMARK_WORKDIR || '/app', platform: 'linux', shell: '/bin/bash',
-    } : undefined);
+    } : { cwd: workspaceRoot || process.cwd(), platform: process.platform, shell: process.env.SHELL || '/bin/bash' });
     let retrievedMemoryContext = '';
     let retrievedCodeContext = '';
     if (opts.mode === 'plan') system += '\n\nThe user selected Plan mode. Explain the approach, affected files, risks, and verification before proposing any write or command that changes state.';
@@ -827,7 +844,7 @@ export async function agentLoop(opts: AgentOpts): Promise<void> {
           // instead of declaring a broken change done. Bounded, skipped in
           // benchmark mode or when GRAIN_NO_VERIFY is set.
           if (allFilesChanged.length > 0 && !opts.benchmark && !process.env.GRAIN_NO_VERIFY && verifyAttempts < MAX_VERIFY_ATTEMPTS) {
-            const verify = detectVerifyCommand(process.cwd());
+            const verify = detectVerifyCommand(process.cwd(), allFilesChanged);
             if (verify) {
               verifyAttempts++;
               ui.tool('verify', { _streaming: true });

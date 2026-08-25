@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { LineEditor } from '../src/tui/editor.js';
-import { formatViewTabs, HELP_LINES, wrapTuiText } from '../src/tui/app.js';
+import { formatViewTabs, HELP_LINES, panelLineKind, wrapTuiText } from '../src/tui/app.js';
 
 describe('TUI line editor', () => {
   test('edits Unicode by code point and moves the cursor', () => {
@@ -64,5 +64,12 @@ describe('TUI information layout', () => {
   test('wraps at words and preserves indentation', () => {
     expect(wrapTuiText('  alpha beta gamma', 12)).toEqual(['  alpha beta', '  gamma']);
     expect(wrapTuiText('supercalifragilistic', 10).every(line => line.length <= 10)).toBe(true);
+  });
+
+  test('colors unified-diff lines for the apply preview', () => {
+    expect(panelLineKind('APPLY  src/main.rs  edit  +2 -1')).toBe('heading');
+    expect(panelLineKind('+fn main() {}')).toBe('success');
+    expect(panelLineKind('-fn main() {}')).toBe('error');
+    expect(panelLineKind('+++ src/main.rs')).toBe('assistant');
   });
 });

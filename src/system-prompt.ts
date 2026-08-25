@@ -1,4 +1,5 @@
 import { platform } from 'os';
+import { describeToolchain, inspectProject } from './agent/project.js';
 
 export interface PromptEnvironment { cwd: string; platform: string; shell: string }
 
@@ -6,6 +7,7 @@ export function getSystemPrompt(concise = false, task = '', environment?: Prompt
   const cwd = environment?.cwd || process.cwd();
   const plat = environment?.platform || platform();
   const shell = environment?.shell || process.env.SHELL || '/bin/bash';
+  const toolchain = describeToolchain(inspectProject(cwd));
   const webStandards = /\b(web|website|frontend|ui|ux|css|react|landing page)\b/i.test(task) ? `
 
 ### Web Design Quality
@@ -20,7 +22,8 @@ export function getSystemPrompt(concise = false, task = '', environment?: Prompt
 
 ### Code Quality
 - Produce complete production-grade changes with no placeholders.
-- Follow the repository's language idioms and conventions.
+- Follow the repository's language idioms and conventions (Rust, Go, Python, TypeScript, or whatever the tree actually is).
+- Use the detected toolchain above; do not invent a different package manager or test runner.
 - Handle failures explicitly; never report success after an error.
 - Read relevant implementation and tests before editing.
 - Preserve unrelated work and minimize the affected path set.
@@ -56,7 +59,10 @@ ${rules}
 
 Working directory: ${cwd}
 Platform: ${plat}
-Shell: ${shell}${qualityStandards}`;
+Shell: ${shell}
+
+Detected toolchain:
+${toolchain}${qualityStandards}`;
 
   if (concise) return `${base}
 

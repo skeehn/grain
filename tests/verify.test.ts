@@ -31,4 +31,22 @@ describe('detectVerifyCommand', () => {
   test('nothing detectable → null (stays out of the way)', () => {
     expect(detectVerifyCommand(projectDir({ 'README.md': '# hi' }))).toBeNull();
   });
+
+  test('Python → compileall', () => {
+    const d = projectDir({ 'pyproject.toml': '[project]\nname="x"\n' });
+    expect(detectVerifyCommand(d)?.label).toBe('python compileall');
+    expect(detectVerifyCommand(d)?.command).toContain('compileall');
+  });
+
+  test('changed Python files in a Rust repo still use the Python check', () => {
+    const d = projectDir({ 'Cargo.toml': '[package]', 'pyproject.toml': '[project]\nname="x"\n' });
+    expect(detectVerifyCommand(d, ['src/lib.rs'])?.command).toContain('cargo check');
+    expect(detectVerifyCommand(d, ['pkg/mod.py'])?.command).toContain('compileall');
+  });
+
+  test('Makefile check is the generic fallback', () => {
+    const d = projectDir({ 'Makefile': 'check:\n\techo ok\n' });
+    expect(detectVerifyCommand(d)?.command).toBe('make check');
+  });
 });
+

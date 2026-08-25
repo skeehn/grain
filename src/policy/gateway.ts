@@ -8,6 +8,8 @@ import type { PolicyContext, ToolPolicyResult } from './types.js';
 export interface GatewayOptions extends PolicyContext {
   journal?: RunJournal;
   approve?: (name: string, input: unknown, policy: ToolPolicyResult) => Promise<boolean>;
+  /** Show a visual apply/diff before a workspace write is approved or executed. */
+  preview?: (name: string, input: unknown) => void;
 }
 
 export class ToolGateway {
@@ -17,6 +19,7 @@ export class ToolGateway {
     const invocationId = randomUUID();
     const policy = decidePolicy(name, input, this.options);
     this.options.journal?.append('tool_proposed', { id: toolUseId || invocationId, invocation_id: invocationId, name, input, risk: policy.risk });
+    this.options.preview?.(name, input);
     let allowed = policy.decision === 'allow';
     if (policy.decision === 'ask' && this.options.approve) allowed = await this.options.approve(name, input, policy);
     this.options.journal?.append('policy_decided', { invocation_id: invocationId, name, risk: policy.risk,

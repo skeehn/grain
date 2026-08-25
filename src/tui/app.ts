@@ -64,6 +64,9 @@ export function classifyTuiTaskError(message: string): { status: 'cancelled' | '
 
 /** Panel text is plain strings; infer just enough structure to style it. */
 export function panelLineKind(text: string): LineKind {
+  if (/^(APPLY  |@@ |diff --git )/u.test(text) || text === 'PENDING APPLY') return 'heading';
+  if (text.startsWith('+') && !text.startsWith('+++')) return 'success';
+  if (text.startsWith('-') && !text.startsWith('---')) return 'error';
   if (/^[A-Z][A-Z0-9 ·/-]+$/u.test(text.trim()) && text.trim().length > 2) return 'heading';
   if (/^\s*(×|error|failed)/i.test(text)) return 'error';
   if (/^\s*(✓|◆)/.test(text)) return 'success';
@@ -206,6 +209,7 @@ async function runWorkspaceTui(options: TuiAppOptions): Promise<void> {
   let overlay: OverlayState<unknown> | undefined;
   let spinnerTick = 0;
   const steeringQueue: string[] = [];
+  const applyDiffLog: string[] = [];
   const pendingAttachments: string[] = [...(options.attachments || [])];
   let activeProfile: AgentProfileV1 | undefined;
   const SPINNER = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
@@ -317,7 +321,15 @@ async function runWorkspaceTui(options: TuiAppOptions): Promise<void> {
     tool: (name, _input) => { status = `tool · ${name}`; add('tool', name); },
     result: (output, isError) => add(isError ? 'error' : 'result', output),
     success: message => add('success', message), newLine: () => add('dim', ''), clearLine: () => {},
-    warn: message => add('warn', message), error: message => add('error', message), info: message => add('info', message), dim: message => add('dim', message),
+    warn: message => add('warn', message), error: message => add('error', message), info: message => add('info', message),
+    dim: message => {
+      const text = typeof message === 'string' ? message : JSON.stringify(message);
+      if (/\n--- |\n@@ |^APPLY  /m.test(text)) {
+        for (const line of text.split('\n')) add(panelLineKind(line), line);
+        return;
+      }
+      add('dim', message);
+    },
     retryNotice: (attempt, max, seconds) => add('info', `retrying ${attempt}/${max} in ${seconds}s`),
     spinner: label => { status = label || 'thinking'; render(); return { stop: () => { status = 'working'; render(); } }; },
     userPrompt: label => new Promise(resolvePrompt => {
@@ -329,9 +341,10 @@ async function runWorkspaceTui(options: TuiAppOptions): Promise<void> {
     view = target; const root = workspace.root;
     try {
       if (target === 'diff') {
-        if (!root) panels.set(target, ['No project is open. Use /open PATH first.']);
+        const pending = applyDiffLog.length ? ['PENDING APPLY', ...applyDiffLog, ''] : [];
+        if (!root) panels.set(target, pending.length ? pending : ['No project is open. Use /open PATH first.']);
         else {
-          panels.set(target, collectWorkingTreeDiff(root).split('\n').slice(0, 500));
+          panels.set(target, [...pending, ...collectWorkingTreeDiff(root).split('\n')].slice(0, 500));
         }
       } else if (target === 'tools') {
         const recent = currentRunId ? readRunEvents(currentRunId).filter(event => event.type === 'tool_started' || event.type === 'tool_completed').slice(-20)
@@ -414,6 +427,10 @@ async function runWorkspaceTui(options: TuiAppOptions): Promise<void> {
           if (event.type === 'run') currentRunId = event.runId;
           if (event.type === 'status') status = event.detail || event.status;
           if (event.type === 'tool') status = `tool · ${event.name}`;
+          if (event.type === 'apply_diff') {
+            applyDiffLog.push(...event.unified.split('\n'));
+            if (applyDiffLog.length > 800) applyDiffLog.splice(0, applyDiffLog.length - 800);
+          }
           render();
         } });
       status = 'ready';
