@@ -128,6 +128,17 @@ describe('OpenRouter streaming', () => {
     });
   });
 
+  test('yields reasoning tokens so the harness is not idle while the model thinks', async () => {
+    globalThis.fetch = (async () => responseFrom([
+      { choices: [{ delta: { reasoning: 'plan the edit' } }] },
+      { choices: [{ delta: { content: 'done' }, finish_reason: 'stop' }] },
+    ])) as typeof fetch;
+    const events: StreamEvent[] = [];
+    for await (const event of new OpenRouterProvider().stream([], 'system', [])) events.push(event);
+    expect(events).toContainEqual({ type: 'reasoning_delta', text: 'plan the edit' });
+    expect(events).toContainEqual({ type: 'text_delta', text: 'done' });
+  });
+
   test('surfaces malformed stream data instead of silently dropping it', async () => {
     globalThis.fetch = (async () => responseFrom(['{bad json'])) as typeof fetch;
     const events: StreamEvent[] = [];

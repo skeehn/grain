@@ -346,7 +346,9 @@ export async function agentLoop(opts: AgentOpts): Promise<void> {
   // Handing it Grain's schemas would burn context on tools it cannot call.
   const delegatedAgent = isCliAgentProvider(provider.name);
   if (delegatedAgent) availableTools = [];
-  ui.info(`Using ${provider.name} / ${provider.model}`);
+  ui.info(delegatedAgent
+    ? `Using ${provider.name} / ${provider.model} (child CLI owns tools; /undo follows the working tree)`
+    : `Using ${provider.name} / ${provider.model}`);
 
   // Seed the status line with the active model + its window.
   {
@@ -354,6 +356,7 @@ export async function agentLoop(opts: AgentOpts): Promise<void> {
     stats.provider = provider.name;
     stats.model = provider.model;
     stats.contextWindow = getModelCapabilities(provider.name, provider.model).contextWindow;
+    stats.childTools = delegatedAgent;
   }
 
   // Stream long-running command output live to the terminal (interactive only;
@@ -664,12 +667,22 @@ export async function agentLoop(opts: AgentOpts): Promise<void> {
       // A delegated CLI agent edits the tree directly instead of calling Grain's
       // tools, so watch the working tree to learn what it touched.
       const observeTree = delegatedAgent && workspaceRoot ? watchTree(workspaceRoot) : undefined;
+      let reasoningAnnounced = false;
 
       for await (const event of withInactivityTimeout(provider.stream(requestMessages, requestSystem, packed.tools, { signal: opts.signal }), STREAM_TIMEOUT, opts.signal)) {
         if (event.type === 'text_delta') {
           if (!spinnerStopped) { spin.stop(); ui.clearLine(); spinnerStopped = true; }
           textBuffer += event.text;
           ui.stream(event.text);
+        } else if (event.type === 'reasoning_delta') {
+          // Reasoning tokens are activity. Yielding them keeps the inactivity
+          // watchdog alive; they must not land in the durable assistant text.
+          if (!spinnerStopped) { spin.stop(); ui.clearLine(); spinnerStopped = true; }
+          if (!reasoningAnnounced) {
+            reasoningAnnounced = true;
+            ui.dim('thinking…');
+            opts.onEvent?.({ type: 'status', status: 'running', detail: 'thinking' });
+          }
         } else if (event.type === 'tool_use_start') {
           hasToolUse = true;
           currentToolId = event.id;

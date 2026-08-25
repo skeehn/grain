@@ -60,6 +60,19 @@ const OPENROUTER_OPTIONS: OpenAICompatibleOptions = {
 
 type ToolState = { id: string; name: string; started: boolean; ended: boolean };
 
+/** OpenAI-compatible reasoning tokens arrive under several field names. */
+export function reasoningDeltaText(delta: unknown): string {
+  if (!delta || typeof delta !== 'object') return '';
+  const record = delta as Record<string, unknown>;
+  if (typeof record.reasoning === 'string') return record.reasoning;
+  if (typeof record.reasoning_content === 'string') return record.reasoning_content;
+  if (record.reasoning && typeof record.reasoning === 'object') {
+    const nested = (record.reasoning as Record<string, unknown>).content;
+    if (typeof nested === 'string') return nested;
+  }
+  return '';
+}
+
 export class OpenRouterProvider implements Provider {
   name: string;
   model: string;
@@ -267,6 +280,8 @@ export class OpenRouterProvider implements Provider {
 
           const choice = parsed.choices?.[0];
           const delta = choice?.delta;
+          const thinking = reasoningDeltaText(delta);
+          if (thinking) yield { type: 'reasoning_delta', text: thinking };
           if (typeof delta?.content === 'string' && delta.content) yield { type: 'text_delta', text: delta.content };
           for (const call of delta?.tool_calls || []) {
             const index = Number.isInteger(call.index) ? call.index : 0;

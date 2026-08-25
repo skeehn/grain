@@ -62,6 +62,7 @@ export function normalizeProviderError(provider: string, error: unknown, status?
 
 export type StreamEvent =
   | { type: 'text_delta'; text: string }
+  | { type: 'reasoning_delta'; text: string }
   | { type: 'tool_use_start'; id: string; name: string }
   | { type: 'tool_use_delta'; id: string; input_json: string }
   | { type: 'tool_use_end'; id: string }

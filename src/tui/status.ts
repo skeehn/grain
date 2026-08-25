@@ -8,10 +8,12 @@ export interface SessionStats {
   provider: string;
   model: string;
   costUsd: number;       // cumulative, when the provider reports it
+  /** True when a subscription CLI, not Grain, executes tools. */
+  childTools: boolean;
 }
 
 export function newSessionStats(): SessionStats {
-  return { upTokens: 0, downTokens: 0, lastInputTokens: 0, contextWindow: 0, provider: '', model: '', costUsd: 0 };
+  return { upTokens: 0, downTokens: 0, lastInputTokens: 0, contextWindow: 0, provider: '', model: '', costUsd: 0, childTools: false };
 }
 
 // Process-wide session stats: the agent loop updates it; the workspace prompt
@@ -59,6 +61,7 @@ export function statusLineText(stats: SessionStats, mode?: string, effort?: stri
   if (mode) parts.push(mode);
   const model = stats.model ? `${stats.provider} ${stats.model}` : '';
   if (model) parts.push(model);
+  if (stats.childTools) parts.push('child tools');
   if (effort) parts.push(effort);
   return parts.join(' · ');
 }
