@@ -30,6 +30,15 @@ describe('TUI line editor', () => {
     editor.feedAll('X'); expect(editor.value()).toBe('aXb');
   });
 
+  test('Tab-completes an @file mention at the cursor', () => {
+    const editor = new LineEditor();
+    editor.feed('fix @src/tui/ed');
+    expect(editor.mention()).toEqual({ start: 4, query: 'src/tui/ed' });
+    editor.replaceMention('src/tui/editor.ts');
+    expect(editor.value()).toBe('fix @src/tui/editor.ts ');
+    expect(editor.mention()).toBeNull();
+  });
+
   test('recalls committed history', () => {
     const editor = new LineEditor(); editor.feed('first'); editor.commit(); editor.feed('second'); editor.commit();
     editor.feed('\x1b[A'); expect(editor.value()).toBe('second');

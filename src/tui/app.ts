@@ -17,6 +17,7 @@ import { executeWorkspaceScan } from '../tools/workspace.js';
 import { WikiEngine } from '../wiki/index.js';
 import { parseComposerInput, type WorkspaceMode } from '../workspace/app.js';
 import { resolveWorkspace } from '../workspace/root.js';
+import { getWorkspaceFS } from '../workspace/index.js';
 import { detectTerminalCapabilities } from './capabilities.js';
 import { DifferentialRenderer } from './differential.js';
 import { blankFrame, putText } from './frame.js';
@@ -95,7 +96,7 @@ export const HELP_LINES = [
   'MEMORY ADMIN',
   '  /memory edit ID CONTENT · /memory forget ID · /memory export|rebuild',
   'KEYS',
-  '  Tab views · PgUp/PgDn scroll · Ctrl+L clear · Ctrl+C cancel, then quit',
+  '  Tab views · @file Tab attach · PgUp/PgDn scroll · Ctrl+C cancel, then quit',
 ];
 
 /** Transcript lines carry their role so the renderer can style them. */
@@ -438,15 +439,29 @@ async function runWorkspaceTui(options: TuiAppOptions): Promise<void> {
   };
 
   /** Open a modal list and resolve when the user picks or dismisses it. */
-  const pick = <T,>(title: string, items: OverlayItem<T>[]): Promise<{ value: T | null; item?: OverlayItem<T> }> =>
+  const pick = <T,>(title: string, items: OverlayItem<T>[], filter = ''): Promise<{ value: T | null; item?: OverlayItem<T> }> =>
     new Promise(resolvePick => {
-      const current = Math.max(0, items.findIndex(item => item.current));
+      const filtered = filter ? items.filter(item => `${item.label} ${item.hint ?? ''}`.toLowerCase().includes(filter.toLowerCase())) : items;
+      const current = Math.max(0, (filtered.length ? filtered : items).findIndex(item => item.current));
       overlay = {
-        title, items: items as OverlayItem<unknown>[], filter: '', index: current,
+        title, items: items as OverlayItem<unknown>[], filter, index: current,
         resolve: (value, item) => { overlay = undefined; render(); resolvePick({ value: value as T | null, item: item as OverlayItem<T> | undefined }); },
       } as OverlayState<unknown>;
       render();
     });
+
+  const openFileMention = async () => {
+    const mention = editor.mention();
+    if (!mention || !workspace.root) return false;
+    setToolCwd(workspace.root);
+    let files: string[] = [];
+    try { files = getWorkspaceFS().list('.', 5).filter(path => path && !path.endsWith('/')).slice(0, 400); }
+    catch { files = []; }
+    if (!files.length) { add('warn', 'No project files to attach.'); return true; }
+    const chosen = await pick('Attach a file  (@path)', files.map(path => ({ label: path, value: path })), mention.query);
+    if (chosen.value) editor.replaceMention(chosen.value);
+    return true;
+  };
 
   const applyModelSelection = (provider: string, model: string) => {
     const config = loadConfig();
@@ -682,7 +697,10 @@ async function runWorkspaceTui(options: TuiAppOptions): Promise<void> {
         render(); continue;
       }
       if (action === 'clear') { transcript.splice(0); scrollOffset = 0; }
-      if (action === 'tab' && !promptResolver) { const index = VIEWS.indexOf(view); scrollOffset = 0; void refreshView(VIEWS[(index + 1) % VIEWS.length]); continue; }
+      if (action === 'tab' && !promptResolver) {
+        if (editor.mention() && workspace.root) { void openFileMention(); continue; }
+        const index = VIEWS.indexOf(view); scrollOffset = 0; void refreshView(VIEWS[(index + 1) % VIEWS.length]); continue;
+      }
       if (action === 'submit') { void submit(); continue; }
     }
     render();
