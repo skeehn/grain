@@ -46,6 +46,10 @@ export interface OpenAICompatibleOptions {
   displayName: string;
   headers?: Record<string, string>;
   maxTokens?: number;
+  /** Explicit key; otherwise read from `apiKeyEnv`. Local servers may omit both. */
+  apiKey?: string;
+  /** Local OpenAI-compatible servers (vLLM) often have no key. Paid APIs must not set this. */
+  allowEmptyApiKey?: boolean;
 }
 
 const OPENROUTER_OPTIONS: OpenAICompatibleOptions = {
@@ -66,7 +70,7 @@ export class OpenRouterProvider implements Provider {
     this.options = options;
     this.name = options.name;
     this.model = model || options.defaultModel;
-    this.apiKey = process.env[options.apiKeyEnv] || '';
+    this.apiKey = options.apiKey || process.env[options.apiKeyEnv] || '';
   }
 
   private convertMessages(messages: Message[]): unknown[] {
@@ -95,7 +99,7 @@ export class OpenRouterProvider implements Provider {
   }
 
   async *stream(messages: Message[], system: string, tools: Tool[], options?: ProviderStreamOptions): AsyncIterable<StreamEvent> {
-    if (!this.apiKey) {
+    if (!this.apiKey && !this.options.allowEmptyApiKey) {
       yield { type: 'error', error: `${this.options.apiKeyEnv} is not set. Run: grain config set key ${this.options.apiKeyEnv} <key>` };
       return;
     }
@@ -174,13 +178,14 @@ export class OpenRouterProvider implements Provider {
       let response: Response;
       for (let attempt = 0; ; attempt++) {
         refreshTimeout();
+        const headers: Record<string, string> = {
+          'Content-Type': 'application/json',
+          ...this.options.headers,
+        };
+        if (this.apiKey) headers.Authorization = `Bearer ${this.apiKey}`;
         response = await fetch(this.options.baseUrl, {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${this.apiKey}`,
-            ...this.options.headers,
-          },
+          headers,
           body: JSON.stringify(body),
           signal: controller.signal,
         });
