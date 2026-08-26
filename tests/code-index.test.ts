@@ -1,6 +1,8 @@
 import { describe, test, expect, beforeAll } from 'bun:test';
-import { setCodeIndexRoot, buildIndex, codeDef, codeRefs, codeSearch } from '../src/tools/code-index.js';
+import { mkdirSync, mkdtempSync, writeFileSync } from 'fs';
+import { homedir, tmpdir } from 'os';
 import { join } from 'path';
+import { setCodeIndexRoot, buildIndex, codeDef, codeRefs, codeSearch, retrieveCodeContext } from '../src/tools/code-index.js';
 
 // Index grain's own repo (this test file's repo root).
 const REPO = join(import.meta.dir, '..');
@@ -36,4 +38,29 @@ describe('code index', () => {
   test('empty query returns nothing', () => {
     expect(codeSearch('')).toEqual([]);
   });
+
+  test('never crawls $HOME and skips hidden directories', () => {
+    try {
+      expect(buildIndexAfter(homedir())).toBe(0);
+      expect(retrieveCodeContext('hi')).toBe('');
+
+      const root = mkdtempSync(join(tmpdir(), 'grain-index-'));
+      mkdirSync(join(root, '.secret'), { recursive: true });
+      mkdirSync(join(root, 'src'), { recursive: true });
+      writeFileSync(join(root, '.secret', 'hidden.ts'), 'export function secretFn() {}\n');
+      writeFileSync(join(root, 'src', 'visible.ts'), 'export function visibleFn() {}\n');
+      setCodeIndexRoot(root);
+      expect(buildIndex()).toBeGreaterThan(0);
+      expect(codeDef('visibleFn').length).toBeGreaterThan(0);
+      expect(codeDef('secretFn')).toEqual([]);
+    } finally {
+      setCodeIndexRoot(REPO);
+      buildIndex();
+    }
+  });
 });
+
+function buildIndexAfter(root: string): number {
+  setCodeIndexRoot(root);
+  return buildIndex();
+}

@@ -16,7 +16,8 @@ import { destroyShell, TOOLS, setToolCwd } from '../tools/index.js';
 import { executeWorkspaceScan } from '../tools/workspace.js';
 import { WikiEngine } from '../wiki/index.js';
 import { parseComposerInput, type WorkspaceMode } from '../workspace/app.js';
-import { resolveWorkspace } from '../workspace/root.js';
+import { openWorkspace, type WorkspaceState } from '../workspace/root.js';
+import { homedir } from 'os';
 import { getWorkspaceFS } from '../workspace/index.js';
 import { detectTerminalCapabilities } from './capabilities.js';
 import { DifferentialRenderer } from './differential.js';
@@ -24,6 +25,7 @@ import { blankFrame, putText } from './frame.js';
 import { layoutRun } from './layout.js';
 import { projectRun } from './projector.js';
 import { resolveTheme, type GrainThemeName } from './theme.js';
+import { mascotFrame } from './mascot.js';
 import { LineEditor } from './editor.js';
 import { MODEL_CATALOG, resolveModelSelection } from './models.js';
 import { buildModelRegistry, invalidateModelRegistry, type ModelEntry } from '../providers/index.js';
@@ -82,7 +84,7 @@ export const HELP_LINES = [
   '  /model xai:MODEL · openrouter:MODEL  Grain-native tools, diffs, /undo',
   '  /effort low|medium|high      reasoning effort where the model supports it',
   'WORK',
-  '  type a task · /open PATH project · /attach PATH · /mode ask|plan|execute',
+  '  type a task · /open PATH or /cd PATH · /attach PATH · /mode ask|plan|execute',
   '  /steer MESSAGE while running · /budget turns N · /undo last change',
   'WORK MEMORY',
   '  /note TEXT                   remember a decision or constraint',
@@ -170,9 +172,11 @@ export function formatViewTabs(active: TuiView, width: number): string {
   return clip(compact, width);
 }
 
-function projectName(root?: string): string {
-  if (!root) return 'general chat';
-  const parts = root.split('/').filter(Boolean); return parts.at(-1) || root;
+export function projectName(state: { cwd?: string; projectRoot?: string; root?: string }): string {
+  const path = state.projectRoot || state.root || state.cwd;
+  if (!path) return 'folder';
+  const name = path.split('/').filter(Boolean).at(-1) || path;
+  return state.projectRoot || state.root ? name : `${name} · folder`;
 }
 
 export function collectWorkingTreeDiff(root: string): string {
@@ -194,8 +198,8 @@ async function runWorkspaceTui(options: TuiAppOptions): Promise<void> {
   let theme = resolveTheme(loadConfig().tui?.theme);
   let view: TuiView = 'chat'; const editor = new LineEditor(); let busy = false; let closed = false;
   let status = 'ready'; let currentRunId: string | undefined; let mode: WorkspaceMode = 'ask';
-  let workspace = resolveWorkspace(process.cwd());
-  if (workspace.root) setToolCwd(workspace.root);
+  let workspace: WorkspaceState = openWorkspace(process.cwd());
+  setToolCwd(workspace.projectRoot || workspace.cwd);
   const transcript: TranscriptLine[] = [
     { kind: 'info', text: 'Grain is ready. Type a task, /model to choose a model, or /help for controls.' },
   ];
@@ -216,16 +220,18 @@ async function runWorkspaceTui(options: TuiAppOptions): Promise<void> {
   const render = () => {
     if (closed) return;
     capabilities = detectTerminalCapabilities();
-    const frame = blankFrame(capabilities.columns, capabilities.rows);
-    frame.cells.forEach(cell => { cell.style.background = theme.canvas; cell.style.foreground = theme.text; });
+    const frame = blankFrame(capabilities.columns, capabilities.rows, { background: theme.canvas, foreground: theme.text });
     const width = frame.width; const height = frame.height;
     const connection = resolveTuiConnection(options, loadConfig());
+    const runStatus = busy ? (status.startsWith('tool') ? 'executing_tool' : 'running') : promptResolver ? 'waiting_input' : 'succeeded';
+    const rice = mascotFrame(runStatus, spinnerTick, capabilities.reducedMotion);
 
-    // ── Header: who you are talking to, and where.
+    // ── Header: field-instrument chrome (gold Grain + companion + connection).
     putText(frame, 0, 0, ' '.repeat(width), { background: theme.panel });
-    putText(frame, 0, 1, 'grain', { foreground: theme.accent, background: theme.panel, bold: true });
-    const place = `${projectName(workspace.root)}${workspace.root ? '' : ''}`;
-    let cursor = putText(frame, 0, 7, clip(place, Math.floor(width / 3)), { foreground: theme.text, background: theme.panel, bold: true });
+    let cursor = putText(frame, 0, 1, 'GRAIN', { foreground: theme.accent, background: theme.panel, bold: true });
+    cursor = putText(frame, 0, cursor + 1, rice, { foreground: theme.accent, background: theme.panel });
+    const place = projectName(workspace);
+    cursor = putText(frame, 0, cursor + 2, clip(place, Math.floor(width / 3)), { foreground: theme.text, background: theme.panel, bold: true });
     if (activeProfile) cursor = putText(frame, 0, cursor + 2, clip(`@${activeProfile.id}`, 18), { foreground: theme.evidence, background: theme.panel });
     const connectionLabel = `${connection.provider} · ${connection.model}`;
     if (width > 52) {
@@ -235,7 +241,7 @@ async function runWorkspaceTui(options: TuiAppOptions): Promise<void> {
 
     const tabs = formatViewTabs(view, width - 2);
     putText(frame, 1, 1, clip(tabs, width - 2), { foreground: theme.muted, background: theme.canvas });
-    putText(frame, 2, 0, '─'.repeat(width), { foreground: theme.line });
+    putText(frame, 2, 0, '─'.repeat(width), { foreground: theme.line, background: theme.canvas });
 
     // ── Body.
     const bodyHeight = Math.max(1, height - 6); const bodyWidth = Math.max(8, width - 4);
@@ -276,7 +282,7 @@ async function runWorkspaceTui(options: TuiAppOptions): Promise<void> {
     const composer = editor.displayValue();
     putText(frame, height - 1, prefix.length, clip(composer, width - prefix.length), { foreground: theme.text, background: theme.panel });
     if (!composer && !promptResolver) {
-      putText(frame, height - 1, prefix.length, clip('describe a task, or / for commands', width - prefix.length - 1),
+      putText(frame, height - 1, prefix.length, clip('type a task · enter sends · /help', width - prefix.length - 1),
         { foreground: theme.muted, background: theme.panel });
     }
     frame.cursor = { row: height - 1, column: Math.min(width - 1, prefix.length + editor.cursorColumn()), visible: true };
@@ -339,13 +345,13 @@ async function runWorkspaceTui(options: TuiAppOptions): Promise<void> {
   };
 
   const refreshView = async (target: TuiView) => {
-    view = target; const root = workspace.root;
+    view = target;
     try {
       if (target === 'diff') {
         const pending = applyDiffLog.length ? ['PENDING APPLY', ...applyDiffLog, ''] : [];
-        if (!root) panels.set(target, pending.length ? pending : ['No project is open. Use /open PATH first.']);
+        if (!workspace.projectRoot) panels.set(target, pending.length ? pending : ['Not a git project. /open PATH to a repository for diffs.']);
         else {
-          panels.set(target, [...pending, ...collectWorkingTreeDiff(root).split('\n')].slice(0, 500));
+          panels.set(target, [...pending, ...collectWorkingTreeDiff(workspace.projectRoot).split('\n')].slice(0, 500));
         }
       } else if (target === 'tools') {
         const recent = currentRunId ? readRunEvents(currentRunId).filter(event => event.type === 'tool_started' || event.type === 'tool_completed').slice(-20)
@@ -354,21 +360,21 @@ async function runWorkspaceTui(options: TuiAppOptions): Promise<void> {
       } else if (target === 'context') {
         const event = currentRunId ? [...readRunEvents(currentRunId)].reverse().find(item => item.type === 'model_requested') : undefined;
         const manifest = (event?.payload as any)?.context_manifest;
-        const sessionId = await getLastSession(root ? workspaceKey(root) : 'general');
+        const sessionId = await getLastSession(workspace.projectRoot ? workspaceKey(workspace.projectRoot) : `folder:${workspaceKey(workspace.cwd)}`);
         const compactions = sessionId ? await listCompactions(sessionId) : [];
         panels.set(target, [...(manifest ? JSON.stringify(manifest, null, 2).split('\n') : ['No model context has been packed in this task yet.']),
           '', 'COMPACTIONS', ...(compactions.length ? compactions.slice(-10).map(item =>
             `${item.id.slice(0, 8)}  ${item.tokens_before}→${item.tokens_after} tokens  ${item.source_entry_ids.length} sources`) : ['  none'])]);
       } else if (target === 'memory') {
         const connection = await executeEngram({ action: 'status' }); const stats = await executeEngram({ action: 'stats' });
-        const nodes = await executeEngram({ action: 'list', project: root });
+        const nodes = await executeEngram({ action: 'list', project: workspace.projectRoot });
         panels.set(target, [...formatEngramStatus(String(connection.content)).split('\n'), '', ...formatEngramStats(String(stats.content)).split('\n'),
           '', 'PROJECT MEMORY', ...String(nodes.content).split('\n').slice(0, 100)]);
       } else if (target === 'work') {
-        panels.set(target, workspace.root ? listWork(40, true).split('\n')
-          : ['No project is open. Use /open PATH to work in a repository.']);
+        panels.set(target, workspace.projectRoot ? listWork(40, true).split('\n')
+          : ['Folder mode — /note still stores memory. /open PATH to record a git work log.']);
       } else if (target === 'history') {
-        const sessions = await listSessions(root ? workspaceKey(root) : undefined);
+        const sessions = await listSessions(workspace.projectRoot ? workspaceKey(workspace.projectRoot) : `folder:${workspaceKey(workspace.cwd)}`);
         panels.set(target, sessions.length ? sessions.map(session => `${session.id.slice(0, 8)}  ${session.title || 'conversation'}  ${session.updated_at}`) : ['No conversation history.']);
       } else if (target === 'agents') {
         const graphs = new TaskGraphStore().list();
@@ -393,7 +399,8 @@ async function runWorkspaceTui(options: TuiAppOptions): Promise<void> {
     applyDiffLog.length = 0;
     busy = true; status = 'starting'; view = 'chat'; add('user', prompt);
     activeController = new AbortController();
-    const root = job?.workspace || workspace.root; const previous = process.cwd();
+    const root = job?.workspace || workspace.projectRoot; const previous = process.cwd();
+    const folder = workspace.cwd;
     if (job) process.chdir(job.workspace);
     try {
       if (activeProfile && !['grain-native', 'direct-api'].includes(activeProfile.executor)) {
@@ -422,8 +429,9 @@ async function runWorkspaceTui(options: TuiAppOptions): Promise<void> {
       await agentLoop({ prompt: profilePrompt, resume: true, oneShot: true, provider: activeProfile?.provider || options.provider,
         model: activeProfile?.model || options.model,
         autoApprove: options.autoApprove || mode === 'execute', concise: options.concise, maxTurns: options.maxTurns,
-        attachments, workspaceKey: root ? workspaceKey(root) : 'general', mode, approvedRisks, ui,
-        workspaceRoot: root, generalChat: !root, signal: activeController.signal,
+        attachments, workspaceKey: root ? workspaceKey(root) : `folder:${workspaceKey(folder)}`, mode, approvedRisks, ui,
+        workspaceRoot: root, cwd: folder, allowWrites: Boolean(root) || folder !== homedir(),
+        generalChat: !root, signal: activeController.signal,
         drainSteering: () => steeringQueue.splice(0),
         onEvent: (event: AgentWorkspaceEvent) => {
           if (event.type === 'run') currentRunId = event.runId;
@@ -471,8 +479,8 @@ async function runWorkspaceTui(options: TuiAppOptions): Promise<void> {
 
   const openFileMention = async () => {
     const mention = editor.mention();
-    if (!mention || !workspace.root) return false;
-    setToolCwd(workspace.root);
+    if (!mention) return false;
+    setToolCwd(workspace.projectRoot || workspace.cwd);
     let files: string[] = [];
     try { files = getWorkspaceFS().list('.', 5).filter(path => path && !path.endsWith('/')).slice(0, 400); }
     catch { files = []; }
@@ -501,7 +509,7 @@ async function runWorkspaceTui(options: TuiAppOptions): Promise<void> {
     const connection = resolveTuiConnection(options, config);
     status = 'loading models'; render();
     let entries: ModelEntry[] = [];
-    try { entries = await buildModelRegistry({ workspaceRoot: workspace.root }); }
+    try { entries = await buildModelRegistry({ workspaceRoot: workspace.projectRoot || workspace.cwd }); }
     catch (error) { add('warn', `Live catalog unavailable: ${error instanceof Error ? error.message : String(error)}`); }
     status = busy ? status : 'ready';
     const items: OverlayItem<ModelEntry | null>[] = entries.length
@@ -540,7 +548,7 @@ async function runWorkspaceTui(options: TuiAppOptions): Promise<void> {
   };
 
   const openAgentPicker = async () => {
-    const profiles = loadAgentProfiles(workspace.root);
+    const profiles = loadAgentProfiles(workspace.projectRoot);
     const items: OverlayItem<AgentProfileV1>[] = profiles.map(profile => ({
       label: profile.id,
       hint: `${profile.executor} · ${profile.provider || 'inherited'}/${profile.model || 'auto'}`,
@@ -565,26 +573,25 @@ async function runWorkspaceTui(options: TuiAppOptions): Promise<void> {
       const config = loadConfig();
       if (!arg) { await openModelPicker(); return; }
       if (arg === 'refresh') { invalidateModelRegistry(); add('info', 'Model catalog refreshed.'); await openModelPicker(); return; }
-      const selected = resolveModelSelection(arg, options.provider || config.provider, workspace.root);
+      const selected = resolveModelSelection(arg, options.provider || config.provider, workspace.projectRoot);
       applyModelSelection(selected.provider, selected.model);
       return;
     }
     if (command === 'note') {
       if (!arg.trim()) { add('warn', 'Usage: /note WHAT YOU WANT TO REMEMBER'); return; }
-      if (!workspace.root) { add('warn', 'Open a project first — notes live in the repository.'); return; }
       try { add('success', await addNote(arg.trim())); }
       catch (error) { add('error', error instanceof Error ? error.message : String(error)); }
       return;
     }
     if (command === 'work' || command === 'worklog') {
-      if (!workspace.root) { add('warn', 'Open a project first — the work record lives in the repository.'); return; }
+      if (!workspace.projectRoot) { add('info', 'No git project — notes go to /note (engram). /open PATH for a work log.'); return; }
       try { panels.set('work', listWork(40, true).split('\n')); view = 'work'; render(); }
       catch (error) { add('error', error instanceof Error ? error.message : String(error)); }
       return;
     }
     if (command === 'recall') {
       if (!arg.trim()) { add('warn', 'Usage: /recall QUERY [--all]  (--all searches every repository)'); return; }
-      if (!workspace.root) { add('warn', 'Open a project first.'); return; }
+      if (!workspace.projectRoot) { add('warn', 'Open a project to search its work log, or /memory search QUERY.'); return; }
       const allRepos = /(^|\s)--all(\s|$)/u.test(arg);
       status = 'recalling'; render();
       try {
@@ -594,7 +601,7 @@ async function runWorkspaceTui(options: TuiAppOptions): Promise<void> {
       status = busy ? status : 'ready'; render(); return;
     }
     if (command === 'agent') {
-      const profiles = loadAgentProfiles(workspace.root);
+      const profiles = loadAgentProfiles(workspace.projectRoot);
       if (!arg) { await openAgentPicker(); return; }
       const wanted = normalizeProvider(arg);
       const selected = profiles.find(profile => profile.id === wanted || profile.id === arg);
@@ -610,7 +617,7 @@ async function runWorkspaceTui(options: TuiAppOptions): Promise<void> {
       add('success', `Created ${graph.mode} workflow ${graph.id.slice(0, 8)} with ${graph.tasks.length} tasks.`); await refreshView('agents'); return;
     }
     if (command === 'budget') {
-      const [field, raw] = arg.split(/\s+/u); const config = loadConfig(workspace.root);
+      const [field, raw] = arg.split(/\s+/u); const config = loadConfig(workspace.projectRoot);
       if (!arg) { add('info', `Session turns: ${options.maxTurns || 'agent default'}\nRun-tree defaults: ${JSON.stringify(config.orchestration || {}) || 'built-in safe limits'}`); return; }
       if (field !== 'turns' || !Number.isInteger(Number(raw)) || Number(raw) < 1) { add('warn', 'Usage: /budget turns N'); return; }
       options.maxTurns = Math.min(200, Number(raw)); add('success', `Turn budget: ${options.maxTurns}`); return;
@@ -637,11 +644,10 @@ async function runWorkspaceTui(options: TuiAppOptions): Promise<void> {
     }
     if (command === 'settings') {
       const config = loadConfig(); const connection = resolveTuiConnection(options, config);
-      add('info', `Provider: ${connection.provider}\nModel: ${connection.model}\nEffort: ${config.effort || 'default'}\nTheme: ${config.tui?.theme}\nWorkspace: ${workspace.root || 'general chat'}\nRun: ${currentRunId || 'none'}`); return;
+      add('info', `Provider: ${connection.provider}\nModel: ${connection.model}\nEffort: ${config.effort || 'default'}\nTheme: ${config.tui?.theme}\nFolder: ${workspace.cwd}\nProject: ${workspace.projectRoot || '(none — /open PATH)'}\nRun: ${currentRunId || 'none'}`); return;
     }
     if (command === 'files') {
-      if (!workspace.root) { add('warn', 'No project is open. Use /open PATH.'); return; }
-      const result = await executeWorkspaceScan({ path: '.', max_depth: 3 }); add('info', result.content); return;
+      const result = await executeWorkspaceScan({ path: '.', max_depth: workspace.projectRoot ? 3 : 1 }); add('info', result.content); return;
     }
     if (command === 'undo') {
       if (!changedFileCount()) { add('info', 'Nothing to undo from the latest task.'); return; }
@@ -657,13 +663,13 @@ async function runWorkspaceTui(options: TuiAppOptions): Promise<void> {
         : normalized === 'inspect' ? await executeEngram({ action: 'get', query: argument })
         : normalized === 'forget' ? await executeEngram({ action: 'delete', query: argument })
         : normalized === 'edit' ? await executeEngram({ action: 'edit', query: memoryId, body: memoryBodyParts.join(' ') })
-        : normalized === 'export' ? await executeEngram({ action: 'export', project: workspace.root })
+        : normalized === 'export' ? await executeEngram({ action: 'export', project: workspace.projectRoot || workspace.cwd })
         : normalized === 'rebuild' ? await executeEngram({ action: 'rebuild' })
-        : await executeEngram({ action: 'search', query, project: workspace.root });
+        : await executeEngram({ action: 'search', query, project: workspace.projectRoot });
       panels.set('memory', String(result.content).split('\n')); view = 'memory'; render(); return;
     }
     if (command === 'wiki') {
-      if (!workspace.root) { add('warn', 'Open a project before using its wiki.'); return; }
+      if (!workspace.projectRoot) { add('warn', 'Open a project before using its wiki.'); return; }
       const [action = 'search', ...parts] = arg.split(/\s+/); const argument = parts.join(' '); const wiki = new WikiEngine();
       try {
         if (action === 'build') { const page = wiki.build(); add('success', `Built ${page.path} from ${page.sources.length} sources.`); }
@@ -679,12 +685,14 @@ async function runWorkspaceTui(options: TuiAppOptions): Promise<void> {
       if (!['solo', 'pair', 'research', 'plan', 'swarm', 'review-panel', 'repair-loop', 'migration-loop', 'benchmark-loop', 'recursive-delivery'].includes(agentMode) || !objective) { add('warn', 'Usage: /agents pair|plan|research|swarm|recursive-delivery TASK'); return; }
       const graph = createTemplate(agentMode as any, objective); new TaskGraphStore().save(graph); add('success', `Created ${graph.mode} graph ${graph.id.slice(0, 8)} with ${graph.tasks.length} tasks.`); await refreshView('agents'); return;
     }
-    if (command === 'open') {
+    if (command === 'open' || command === 'cd') {
       const path = resolve(arg || '.');
       if (!existsSync(path) || !statSync(path).isDirectory()) { add('error', `Not a directory: ${path}`); return; }
-      process.chdir(path); workspace = resolveWorkspace(path);
-      if (!workspace.root) { add('warn', `${path} has no project marker; remaining in general chat.`); }
-      else { process.chdir(workspace.root); setToolCwd(workspace.root); add('success', `Opened ${workspace.root}`); }
+      process.chdir(path);
+      workspace = openWorkspace(path);
+      setToolCwd(workspace.projectRoot || workspace.cwd);
+      if (workspace.projectRoot) add('success', `Opened project ${workspace.projectRoot}`);
+      else add('success', `Working in ${workspace.cwd} (folder — git optional)`);
       return;
     }
     if (command === 'jobs') {
@@ -693,8 +701,8 @@ async function runWorkspaceTui(options: TuiAppOptions): Promise<void> {
         if (action === 'add') {
           const separator = rest.indexOf('--'); if (!name || separator < 1 || separator === rest.length - 1) throw new Error('Usage: /jobs add NAME CRON -- TASK');
           const cron = rest.slice(0, separator).join(' '); const prompt = rest.slice(separator + 1).join(' ');
-          if (!workspace.root) throw new Error('Open a project before scheduling a coding task');
-          store.add({ name, cron, prompt, workspace: workspace.root });
+          if (!workspace.projectRoot) throw new Error('Open a project before scheduling a coding task');
+          store.add({ name, cron, prompt, workspace: workspace.projectRoot });
         } else if (action === 'remove') store.remove(name);
         else if (action === 'enable') store.setEnabled(name, true);
         else if (action === 'disable') store.setEnabled(name, false);
@@ -741,7 +749,7 @@ async function runWorkspaceTui(options: TuiAppOptions): Promise<void> {
       }
       if (action === 'clear') { transcript.splice(0); scrollOffset = 0; }
       if (action === 'tab' && !promptResolver) {
-        if (editor.mention() && workspace.root) { void openFileMention(); continue; }
+        if (editor.mention()) { void openFileMention(); continue; }
         const index = VIEWS.indexOf(view); scrollOffset = 0; void refreshView(VIEWS[(index + 1) % VIEWS.length]); continue;
       }
       if (action === 'submit') { void submit(); continue; }
@@ -761,7 +769,8 @@ async function runWorkspaceTui(options: TuiAppOptions): Promise<void> {
     process.stdout.write(`\x1b[?2004l\x1b[0m\x1b[?25h${alternate ? '\x1b[?1049l' : '\n'}`);
   };
   if (alternate) process.stdout.write('\x1b[?1049h'); process.stdout.write('\x1b[?2004h\x1b[2J\x1b[?25h');
-  process.stdin.setRawMode(true); process.stdin.resume(); process.stdin.on('data', inputHandler); process.stdout.on('resize', resize); process.on('SIGTERM', cleanup); process.on('exit', cleanup);
+  try { process.stdin.setRawMode(true); } catch { /* stdin already raw or closed */ }
+  process.stdin.resume(); process.stdin.on('data', inputHandler); process.stdout.on('resize', resize); process.on('SIGTERM', cleanup); process.on('exit', cleanup);
   render();
   if (options.prompt) void runTask(options.prompt, pendingAttachments.splice(0));
   try { await new Promise<void>(resolveClosed => { const timer = setInterval(() => { if (closed) { clearInterval(timer); resolveClosed(); } }, 50); }); }

@@ -7,8 +7,8 @@ import { resolveTheme, type GrainTheme } from './theme.js';
 const clip = (value: string, width: number) => value.length <= width ? value : `${value.slice(0, Math.max(0, width - 1))}…`;
 
 export function layoutRun(view: TuiViewModel, capabilities: TerminalCapabilities, theme: GrainTheme = resolveTheme('field'), tick = 0): TuiFrame {
-  const { columns: width, rows: height } = capabilities; const frame = blankFrame(width, height);
-  frame.cells.forEach(cell => { cell.style.background = theme.canvas; cell.style.foreground = theme.text; });
+  const { columns: width, rows: height } = capabilities;
+  const frame = blankFrame(width, height, { background: theme.canvas, foreground: theme.text });
   const logoColor = { foreground: grainLogoColor(view.run.status, theme), background: theme.panel, bold: true };
   if (view.run.status === 'created' && view.timeline.length <= 1) return welcomeFrame(frame, view, theme, tick, capabilities.reducedMotion);
   const rice = mascotFrame(view.run.status, tick, capabilities.reducedMotion);

@@ -5,8 +5,8 @@ import {
   loadGrainEnv, saveKeyToEnv, listEnvKeys, GRAIN_VERSION, VALID_PROVIDERS, normalizeProvider,
 } from './config.js';
 import * as renderer from './tui/renderer.js';
-import { existsSync, writeFileSync } from 'fs';
-import { join } from 'path';
+import { chmodSync, copyFileSync, existsSync, renameSync, writeFileSync } from 'fs';
+import { basename, join } from 'path';
 import { homedir, platform } from 'os';
 import * as readline from 'readline';
 import { spawn, execSync } from 'child_process';
@@ -298,10 +298,48 @@ export async function ensureEngramRunning(): Promise<void> {
 
 // ─── grain update ─────────────────────────────────────────────────────────────
 
+function grainInstallPath(): string {
+  if (basename(process.execPath) === 'grain') return process.execPath;
+  const argv1 = process.argv[1] || '';
+  if (basename(argv1) === 'grain') return argv1;
+  return join(homedir(), 'bin', 'grain');
+}
+
+function grainSourceDir(): string | null {
+  const candidates = [process.env.GRAIN_SRC, join(homedir(), 'conductor/repos/grain'), join(homedir(), 'grain')].filter(Boolean) as string[];
+  return candidates.find(dir => existsSync(join(dir, 'scripts/build.ts')) && existsSync(join(dir, 'src/cli.ts'))) || null;
+}
+
+function installGrainBinary(sourcePath: string, dest: string): void {
+  const tmp = `${dest}.new`;
+  copyFileSync(sourcePath, tmp);
+  chmodSync(tmp, 0o755);
+  renameSync(tmp, dest);
+}
+
 async function handleUpdate(): Promise<void> {
   console.log(`\n${bold('grain update')}\n`);
   console.log(`Current version: ${c.cyan}v${GRAIN_VERSION}${c.reset}`);
-  process.stdout.write('Checking for updates... ');
+
+  const src = grainSourceDir();
+  if (src) {
+    console.log(`Rebuilding from ${src}`);
+    try {
+      execSync('bun run build', { cwd: src, stdio: 'inherit' });
+      const built = join(src, 'dist/grain');
+      if (!existsSync(built)) throw new Error('build did not produce dist/grain');
+      const dest = grainInstallPath();
+      installGrainBinary(built, dest);
+      console.log(`\n${ok} Installed ${dest}`);
+      console.log('Restart grain to use the new binary.\n');
+    } catch (e: any) {
+      console.log(`${err} Source update failed: ${e.message}\n`);
+      process.exitCode = 1;
+    }
+    return;
+  }
+
+  process.stdout.write('Checking GitHub for updates... ');
 
   try {
     const res = await fetch('https://api.github.com/repos/skeehn/grain/releases/latest', {
@@ -320,14 +358,12 @@ async function handleUpdate(): Promise<void> {
 
     console.log(`${ok} New version available: ${c.green}v${latest}${c.reset}\n`);
 
-    // Find asset for this platform
-    const plat = platform(); // darwin | linux | win32
-    const arch = process.arch; // arm64 | x64
+    const plat = platform();
+    const arch = process.arch;
     const assetName = `grain-${plat}-${arch}`;
     const asset = release.assets?.find((a: any) => a.name === assetName || a.name === `${assetName}.js`);
 
     if (!asset) {
-      // No binary asset — fall back to npm / manual
       console.log(`No pre-built binary for ${plat}-${arch}.`);
       console.log(`Install manually:\n`);
       console.log(`  ${c.cyan}curl -fsSL https://raw.githubusercontent.com/skeehn/grain/main/install.sh | sh${c.reset}\n`);
@@ -341,13 +377,10 @@ async function handleUpdate(): Promise<void> {
     const binRes = await fetch(asset.browser_download_url);
     if (!binRes.ok) throw new Error(`Download failed: ${binRes.status}`);
     const buf = await binRes.arrayBuffer();
-
-    // Replace current binary
-    const currentBin = process.execPath === process.argv[1]
-      ? process.argv[1]                         // running as binary
-      : join(homedir(), 'bin', 'grain');        // symlinked install
-
-    writeFileSync(currentBin, Buffer.from(buf), { mode: 0o755 });
+    const dest = grainInstallPath();
+    const tmp = `${dest}.new`;
+    writeFileSync(tmp, Buffer.from(buf), { mode: 0o755 });
+    renameSync(tmp, dest);
     console.log(`${ok} Updated to v${latest}\n`);
     console.log(`Restart grain to use the new version.\n`);
   } catch (e: any) {

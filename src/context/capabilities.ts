@@ -4,12 +4,15 @@ import type { ModelCapabilities } from './types.js';
 const DEFAULT_CONTEXT = 128_000;
 
 /** Select tools at the trust boundary before provider-specific packing. */
+const FOLDER_READ_TOOLS = ['read', 'grep', 'search', 'inspect', 'workspace_scan', 'engram', 'ask_user', 'finish'];
+
 export function selectToolsForRun(
   tools: Tool[],
-  options: { generalChat?: boolean; benchmarkBridge?: boolean } = {},
+  options: { generalChat?: boolean; benchmarkBridge?: boolean; allowWrites?: boolean } = {},
 ): Tool[] {
   if (options.benchmarkBridge) return tools.filter(tool => tool.name === 'bash' || tool.name === 'finish');
-  if (options.generalChat) return tools.filter(tool => ['engram', 'ask_user', 'finish'].includes(tool.name));
+  const allowWrites = options.allowWrites ?? !options.generalChat;
+  if (!allowWrites) return tools.filter(tool => FOLDER_READ_TOOLS.includes(tool.name));
   return tools;
 }
 

@@ -3,6 +3,7 @@
 import { WorkLog, type WorkEntry } from '../docs/worklog.js';
 import { indexWorkEntry, recall, engramReachable } from '../docs/index-bridge.js';
 import { resolveWorkspace } from '../workspace/root.js';
+import { executeEngram } from '../tools/engram.js';
 
 function requireRoot(): string {
   const workspace = resolveWorkspace(process.cwd());
@@ -24,10 +25,15 @@ export function formatEntry(entry: WorkEntry, options: { verbose?: boolean } = {
 }
 
 export async function addNote(text: string, tags: string[] = []): Promise<string> {
-  const root = requireRoot();
-  const { entry, path } = new WorkLog(root).note(text, tags);
-  const indexed = await indexWorkEntry(entry, root);
-  return `Noted in ${path}${indexed.ok ? ' · indexed for recall' : ' · engram offline, saved to file only'}`;
+  const workspace = resolveWorkspace(process.cwd());
+  if (workspace.root) {
+    const { entry, path } = new WorkLog(workspace.root).note(text, tags);
+    const indexed = await indexWorkEntry(entry, workspace.root);
+    return `Noted in ${path}${indexed.ok ? ' · indexed for recall' : ' · engram offline, saved to file only'}`;
+  }
+  const result = await executeEngram({ action: 'add', body: text, tags: [...tags, 'note'], project: process.cwd() });
+  if (result.is_error) throw new Error(String(result.content));
+  return `${result.content} (folder note — /open PATH to also write a repo work log)`;
 }
 
 export function listWork(limit = 20, verbose = false): string {

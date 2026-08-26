@@ -1,5 +1,6 @@
 // Workspace scanner - understand project structure
-import { relative } from 'path';
+import { homedir } from 'os';
+import { relative, resolve } from 'path';
 import { getWorkspaceFS } from '../workspace/index.js';
 
 export const workspaceScanTool = {
@@ -35,7 +36,8 @@ export async function executeWorkspaceScan(input: { path?: string; max_depth?: n
   let rootPath: string;
   try { rootPath = getWorkspaceFS().resolve(input.path || '.', true); }
   catch (error: any) { return { content: `Workspace scan failed: ${error.message}` }; }
-  const maxDepth = Math.min(5, Math.max(1, input.max_depth || 3));
+  const atHome = resolve(rootPath) === resolve(homedir());
+  const maxDepth = atHome ? 1 : Math.min(5, Math.max(1, input.max_depth || 3));
 
   const result: ScanResult = {
     root: rootPath,
@@ -52,7 +54,7 @@ export async function executeWorkspaceScan(input: { path?: string; max_depth?: n
   // LocalWorkspaceFS.list applies .gitignore/.grainignore and skips dependency,
   // build, binary, and symlink trees. It also keeps this tool aligned with read/search.
   const files = getWorkspaceFS().list(input.path || '.', maxDepth);
-  const maxFiles = 5000;
+  const maxFiles = atHome ? 400 : 5000;
   const visibleFiles = files.slice(0, maxFiles);
   const directories = new Set<string>();
   for (const relativePath of visibleFiles) {

@@ -23,6 +23,15 @@ describe('TUI line editor', () => {
     expect(editor.value()).toBe('/help');
   });
 
+  test('Enter submits on LF and CRLF, not only CR', () => {
+    const lf = new LineEditor();
+    expect(lf.feedAll('/help\n')).toEqual(['changed', 'submit']);
+    expect(lf.value()).toBe('/help');
+    const crlf = new LineEditor();
+    expect(crlf.feedAll('/help\r\n')).toEqual(['changed', 'submit']);
+    expect(crlf.value()).toBe('/help');
+  });
+
   test('reassembles escape sequences split across terminal chunks', () => {
     const editor = new LineEditor(); editor.setValue('ab');
     expect(editor.feedAll('\x1b[')).toEqual([]);

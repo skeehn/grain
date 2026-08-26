@@ -153,12 +153,10 @@ export class OpenRouterProvider implements Provider {
         // canonical free router remains the degraded fallback.
       }
     }
-    // A specific free model can disappear or be saturated without warning.
-    // Keep the user's choice first, then let OpenRouter select another free
-    // model that supports this request (including its tool requirements).
-    if (this.name === 'openrouter' && this.model.endsWith(':free')) {
-      body.models = [OPENROUTER_FREE_MODEL];
-    }
+    // Never reroute a user-picked `:free` model through `openrouter/free`.
+    // That auto-router silently swapped in models that cannot call tools
+    // (e.g. dots-studio/*) and the TUI printed raw `<invoke>` XML instead
+    // of running Grain tools. Transient 429s are retried below on the same model.
     // Reasoning effort, in the shape this endpoint actually accepts.
     //
     // `reasoning: {effort}` is an OpenRouter extension. Sending it to any other

@@ -158,11 +158,17 @@ export class SkillManager {
   constructor(skillsDir?: string) {
     this.skillsDir = skillsDir
       || path.join(process.env.GRAIN_HOME || path.join(os.homedir(), '.grain'), 'skills');
+    const cwd = process.cwd();
+    const atHome = path.resolve(cwd) === path.resolve(os.homedir());
     this.skillRoots = skillsDir ? [skillsDir] : [
       this.skillsDir,
-      path.join(process.cwd(), '.agents', 'skills'),
-      path.join(process.cwd(), '.claude', 'skills'),
-      path.join(process.cwd(), '.grain', 'skills'),
+      // Home-directory `.agents` / `.claude` trees are huge host skill dumps,
+      // not this project's skills. Scanning them from `cd ~` blocked first turns.
+      ...(atHome ? [] : [
+        path.join(cwd, '.agents', 'skills'),
+        path.join(cwd, '.claude', 'skills'),
+        path.join(cwd, '.grain', 'skills'),
+      ]),
     ];
   }
 

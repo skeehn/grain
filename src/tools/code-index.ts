@@ -2,16 +2,23 @@
 // clone. A per-process symbol index (definitions) + ranked content search over
 // the repo. Built lazily on first query, refreshed per file by mtime.
 import { readdirSync, statSync, readFileSync } from 'fs';
-import { join, extname, relative, sep } from 'path';
+import { homedir } from 'os';
+import { join, extname, relative, resolve, sep } from 'path';
 
 export type SymbolKind = 'function' | 'class' | 'interface' | 'type' | 'struct' | 'enum' | 'trait' | 'const' | 'method';
 
 export interface SymbolDef { name: string; kind: SymbolKind; file: string; line: number }
 interface IndexedFile { path: string; mtimeMs: number; defs: SymbolDef[]; lines: string[] }
 
-const SKIP_DIRS = new Set(['node_modules', '.git', 'dist', 'build', 'target', '.next', 'vendor', '__pycache__', '.venv', 'venv', 'coverage', '.turbo']);
+const SKIP_DIRS = new Set([
+  'node_modules', '.git', 'dist', 'build', 'target', '.next', 'vendor', '__pycache__',
+  '.venv', 'venv', 'coverage', '.turbo', 'Library', 'Applications', 'Movies', 'Music',
+  'Pictures', 'Downloads', 'Desktop', 'Public', 'Applications (Parallels)',
+]);
 const CODE_EXT = new Set(['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '.py', '.rs', '.go', '.c', '.h', '.cpp', '.cc', '.hpp', '.java', '.rb', '.php', '.swift', '.kt', '.scala', '.sh']);
 const MAX_FILE_BYTES = 512 * 1024; // skip generated/minified giants
+const MAX_INDEX_FILES = 4_000;
+const MAX_INDEX_MS = 800;
 
 // Definition patterns per family. Each capture group 1 is the symbol name.
 const DEF_PATTERNS: Array<{ re: RegExp; kind: SymbolKind }> = [
@@ -43,21 +50,25 @@ export function setCodeIndexRoot(root: string): void {
   if (root !== ROOT) { ROOT = root; index.clear(); }
 }
 
-function walk(dir: string, out: string[]): void {
+function skipDir(name: string): boolean {
+  return name.startsWith('.') || SKIP_DIRS.has(name);
+}
+
+function walk(dir: string, out: string[], deadline: number): boolean {
+  if (out.length >= MAX_INDEX_FILES || Date.now() >= deadline) return false;
   let entries: import('fs').Dirent[];
-  try { entries = readdirSync(dir, { withFileTypes: true }); } catch { return; }
+  try { entries = readdirSync(dir, { withFileTypes: true }); } catch { return true; }
   for (const entry of entries) {
-    if (entry.name.startsWith('.') && entry.name !== '.') {
-      if (entry.isDirectory() && SKIP_DIRS.has(entry.name)) continue;
-    }
+    if (out.length >= MAX_INDEX_FILES || Date.now() >= deadline) return false;
+    if (skipDir(entry.name)) continue;
     const full = join(dir, entry.name);
     if (entry.isDirectory()) {
-      if (SKIP_DIRS.has(entry.name)) continue;
-      walk(full, out);
+      if (!walk(full, out, deadline)) return false;
     } else if (CODE_EXT.has(extname(entry.name))) {
       out.push(full);
     }
   }
+  return true;
 }
 
 function extractDefs(relPath: string, lines: string[]): SymbolDef[] {
@@ -75,8 +86,11 @@ function extractDefs(relPath: string, lines: string[]): SymbolDef[] {
 
 /** Build or refresh the index (only re-reads changed files). Returns file count. */
 export function buildIndex(): number {
+  // Never crawl $HOME. A lab pyproject.toml used to make Grain treat the
+  // whole home directory as a repo and freeze the TUI on the first message.
+  if (resolve(ROOT) === resolve(homedir())) return 0;
   const files: string[] = [];
-  walk(ROOT, files);
+  walk(ROOT, files, Date.now() + MAX_INDEX_MS);
   const seen = new Set<string>();
   for (const abs of files) {
     let st;
@@ -170,6 +184,7 @@ export function codeSearch(query: string, limit = 12): Array<{ file: string; lin
 
 /** Compact retrieval block for injection into the model's context on a big repo. */
 export function retrieveCodeContext(query: string, limit = 8): string {
+  if (resolve(ROOT) === resolve(homedir())) return '';
   const hits = codeSearch(query, limit);
   if (hits.length === 0) return '';
   return hits.map(h => `• ${h.file}:${h.line}${h.kind ? ` (${h.kind})` : ''} — ${h.text}`).join('\n');

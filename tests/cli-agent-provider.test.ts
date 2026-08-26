@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
-  buildAgentPrompt, CLI_AGENTS, CliAgentProvider, cliFailureMessage,
+  buildAgentPrompt, buildCliAgentArgv, CLI_AGENTS, CliAgentProvider, cliFailureMessage,
   forgetCliSession, isCliAgentProvider, recallCliSession, rememberCliSession,
 } from '../src/providers/cli-agent.js';
 import { getProvider } from '../src/providers/index.js';
@@ -86,6 +86,20 @@ describe('CLI-agent providers', () => {
         expect(model.hint.length).toBeGreaterThan(0);
       }
     }
+  });
+
+  test('Codex exec is non-interactive: JSON, no TTY color, no git-repo gate, auto-approve writes', () => {
+    const args = buildCliAgentArgv('codex', 'hi', undefined, { write: true });
+    expect(args.slice(0, 5)).toEqual(['exec', '--json', '--skip-git-repo-check', '--color', 'never']);
+    expect(args).toContain('--approve-for-me');
+    expect(args).toContain('workspace-write');
+    expect(args.at(-1)).toBe('hi');
+    const resumed = buildCliAgentArgv('codex', 'hi', 'sess-1', { write: false });
+    expect(resumed.slice(0, 3)).toEqual(['exec', 'resume', 'sess-1']);
+    expect(resumed).toContain('--skip-git-repo-check');
+    expect(resumed).toContain('never');
+    expect(resumed).toContain('read-only');
+    expect(resumed).not.toContain('--approve-for-me');
   });
 
   test('a missing binary surfaces as a stream error, never an unhandled throw', async () => {
