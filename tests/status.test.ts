@@ -40,5 +40,12 @@ describe('status line', () => {
     expect(line).toContain('↓12k');
     expect(line).toContain('execute');
     expect(line).toContain('poolside/laguna-m.1:free');
+    expect(line).not.toContain('child tools');
+  });
+
+  test('status line names when a subscription CLI owns tools', () => {
+    const s = newSessionStats();
+    s.provider = 'codex'; s.model = 'auto'; s.childTools = true;
+    expect(statusLineText(s, 'execute')).toContain('child tools');
   });
 });

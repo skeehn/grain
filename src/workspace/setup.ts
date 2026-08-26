@@ -4,7 +4,7 @@ import { join } from 'path';
 import { spawn } from 'child_process';
 import { getConfigDir, loadConfig, saveConfig, saveKeyToEnv, type GrainConfig } from '../config.js';
 
-export type SetupProvider = 'bedrock' | 'anthropic' | 'openrouter' | 'groq' | 'ollama' | 'claude-code' | 'codex' | 'opencode';
+export type SetupProvider = 'bedrock' | 'anthropic' | 'openrouter' | 'groq' | 'xai' | 'ollama' | 'claude-code' | 'codex' | 'opencode' | 'grok';
 export interface ProviderSetup { id: SetupProvider; label: string; envKey?: string; keyUrl?: string; detected: boolean; subscription?: boolean; }
 export interface SetupIO { prompt(message: string): Promise<string | null>; info(message: string): void; open(url: string): boolean; }
 
@@ -13,6 +13,7 @@ const PROVIDERS: Omit<ProviderSetup, 'detected'>[] = [
   { id: 'anthropic', label: 'Anthropic', envKey: 'ANTHROPIC_API_KEY', keyUrl: 'https://console.anthropic.com/settings/keys' },
   { id: 'openrouter', label: 'OpenRouter', envKey: 'OPENROUTER_API_KEY', keyUrl: 'https://openrouter.ai/keys' },
   { id: 'groq', label: 'Groq', envKey: 'GROQ_API_KEY', keyUrl: 'https://console.groq.com/keys' },
+  { id: 'xai', label: 'xAI / Grok API', envKey: 'XAI_API_KEY', keyUrl: 'https://console.x.ai' },
   { id: 'ollama', label: 'Ollama' },
 ];
 
@@ -20,6 +21,7 @@ const PROVIDERS: Omit<ProviderSetup, 'detected'>[] = [
 const AGENT_PROVIDERS: Array<Omit<ProviderSetup, 'detected'> & { binary: string }> = [
   { id: 'claude-code', label: 'Claude (Claude Code subscription)', binary: 'claude', subscription: true },
   { id: 'codex', label: 'Codex (ChatGPT subscription)', binary: 'codex', subscription: true },
+  { id: 'grok', label: 'Grok (Grok CLI / grokbot)', binary: 'grok', subscription: true },
   { id: 'opencode', label: 'OpenCode (local agent)', binary: 'opencode', subscription: true },
 ];
 

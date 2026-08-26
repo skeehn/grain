@@ -180,7 +180,7 @@ export function resolveModelForProvider(
   return { provider: config.provider, model: config.model, label: config.label };
 }
 
-const CLI_ALIAS_PROVIDERS = ['claude-code', 'codex', 'opencode'];
+const CLI_ALIAS_PROVIDERS = ['claude-code', 'codex', 'opencode', 'grok'];
 
 export function routeModel(
   complexity: TaskComplexity,

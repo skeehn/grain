@@ -3,6 +3,7 @@ import { ClaudeCodePlugin } from '../plugins/claude-code.js';
 import { CodexPlugin } from '../plugins/codex.js';
 import { OpenCodePlugin } from '../plugins/opencode.js';
 import { HermesPlugin } from '../plugins/hermes.js';
+import { GrokPlugin } from '../plugins/grok.js';
 import type { AgentPlugin, AgentTask as PluginTask } from '../plugins/types.js';
 import type { AgentExecutor } from './runtime.js';
 import type { AgentTask } from './types.js';
@@ -14,13 +15,14 @@ export class ExternalAgentExecutor {
   private readonly claude = new ClaudeCodePlugin();
   private readonly opencode = new OpenCodePlugin();
   private readonly hermes = new HermesPlugin();
+  private readonly grok = new GrokPlugin();
   private readonly worktrees = new WorktreeManager();
   private readonly store = new TaskGraphStore();
   constructor(private readonly repositoryRoot: string) {}
 
   private async pluginsFor(task: AgentTask): Promise<AgentPlugin[]> {
     const named: Partial<Record<NonNullable<AgentTask['executor']>, AgentPlugin>> = {
-      'claude-code': this.claude, codex: this.codex, opencode: this.opencode, hermes: this.hermes,
+      'claude-code': this.claude, codex: this.codex, opencode: this.opencode, grok: this.grok, hermes: this.hermes,
     };
     if (task.executor && named[task.executor]) {
       const selected = named[task.executor]!;

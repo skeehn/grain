@@ -11,6 +11,7 @@ import { getSessionStats, recordUsage } from '../tui/status.js';
 import { retrieveCodeContext } from '../tools/code-index.js';
 import { executeBash } from '../tools/bash.js';
 import { detectVerifyCommand } from './verify.js';
+import { formatApplyPreview, previewToolEdit, WRITE_EDIT_TOOLS } from './apply-preview.js';
 import { newChangeset } from './checkpoint.js';
 import { watchTree } from './changed-files.js';
 import { drainPendingScreenshots, hasPendingScreenshots } from '../tools/screenshot.js';
@@ -84,6 +85,7 @@ export type AgentWorkspaceEvent =
   | { type: 'run'; runId: string; provider: string; model: string }
   | { type: 'status'; status: string; detail?: string }
   | { type: 'tool'; name: string; input?: unknown }
+  | { type: 'apply_diff'; path: string; unified: string }
   | { type: 'approval'; name: string; risk: string; decision: 'allowed' | 'denied' }
   | { type: 'verification'; passed: boolean; detail: string };
 
@@ -346,7 +348,9 @@ export async function agentLoop(opts: AgentOpts): Promise<void> {
   // Handing it Grain's schemas would burn context on tools it cannot call.
   const delegatedAgent = isCliAgentProvider(provider.name);
   if (delegatedAgent) availableTools = [];
-  ui.info(`Using ${provider.name} / ${provider.model}`);
+  ui.info(delegatedAgent
+    ? `Using ${provider.name} / ${provider.model} (child CLI owns tools; /undo follows the working tree)`
+    : `Using ${provider.name} / ${provider.model}`);
 
   // Seed the status line with the active model + its window.
   {
@@ -354,6 +358,7 @@ export async function agentLoop(opts: AgentOpts): Promise<void> {
     stats.provider = provider.name;
     stats.model = provider.model;
     stats.contextWindow = getModelCapabilities(provider.name, provider.model).contextWindow;
+    stats.childTools = delegatedAgent;
   }
 
   // Stream long-running command output live to the terminal (interactive only;
@@ -381,15 +386,33 @@ export async function agentLoop(opts: AgentOpts): Promise<void> {
     journal.transition('failed', { error: message, phase: 'attachment_setup' });
     throw error;
   }
+  const previewByInput = new WeakMap<object, ReturnType<typeof previewToolEdit>>();
   const gateway = new ToolGateway({
     autoApprove: Boolean(opts.autoApprove), allowDestructive: Boolean(opts.allowDestructive),
     benchmark: Boolean(opts.benchmark), interactive: Boolean(process.stdin.isTTY), journal,
-    approve: async (name, _input, policy) => {
+    preview: (name, input) => {
+      if (!WRITE_EDIT_TOOLS.has(name)) return;
+      const previews = previewToolEdit(name, input);
+      if (input && typeof input === 'object') previewByInput.set(input, previews);
+      const text = formatApplyPreview(previews);
+      if (text) ui.dim(text);
+      for (const preview of previews) {
+        if (preview.unified) opts.onEvent?.({ type: 'apply_diff', path: preview.path, unified: preview.unified });
+      }
+    },
+    approve: async (name, input, policy) => {
       if (opts.approvedRisks?.has(policy.risk)) {
         opts.onEvent?.({ type: 'approval', name, risk: policy.risk, decision: 'allowed' });
         return true;
       }
-      const answer = await ui.userPrompt(`Approve ${policy.risk} tool "${name}"? [y] once · [a]llow this session · [N]o `);
+      const cached = input && typeof input === 'object' ? previewByInput.get(input) : undefined;
+      const previews = WRITE_EDIT_TOOLS.has(name) ? (cached ?? previewToolEdit(name, input)) : [];
+      const files = previews.filter(preview => !preview.error)
+        .map(preview => `${preview.path} (+${preview.added} -${preview.removed})`);
+      const prompt = files.length
+        ? `Apply ${files.join(', ')}? [y] once · [a]llow this session · [N]o `
+        : `Approve ${policy.risk} tool "${name}"? [y] once · [a]llow this session · [N]o `;
+      const answer = await ui.userPrompt(prompt);
       const choice = answer?.trim().toLowerCase();
       const allowed = choice === 'y' || choice === 'yes' || choice === 'a' || choice === 'allow';
       if (choice === 'a' || choice === 'allow') opts.approvedRisks?.add(policy.risk);
@@ -498,8 +521,9 @@ export async function agentLoop(opts: AgentOpts): Promise<void> {
 
     // Build system prompt with context + skills
     let system = getSystemPrompt(opts.concise, opts.prompt || '', opts.benchmark ? {
-      cwd: process.env.GRAIN_BENCHMARK_WORKDIR || '/app', platform: 'linux', shell: '/bin/bash',
-    } : undefined);
+      cwd: process.env.GRAIN_BENCHMARK_WORKDIR || '/app', platform: 'linux', shell: '/bin/bash', agentRouting: false,
+    } : { cwd: workspaceRoot || process.cwd(), platform: process.platform, shell: process.env.SHELL || '/bin/bash',
+      agentRouting: !delegatedAgent });
     let retrievedMemoryContext = '';
     let retrievedCodeContext = '';
     if (opts.mode === 'plan') system += '\n\nThe user selected Plan mode. Explain the approach, affected files, risks, and verification before proposing any write or command that changes state.';
@@ -664,12 +688,22 @@ export async function agentLoop(opts: AgentOpts): Promise<void> {
       // A delegated CLI agent edits the tree directly instead of calling Grain's
       // tools, so watch the working tree to learn what it touched.
       const observeTree = delegatedAgent && workspaceRoot ? watchTree(workspaceRoot) : undefined;
+      let reasoningAnnounced = false;
 
       for await (const event of withInactivityTimeout(provider.stream(requestMessages, requestSystem, packed.tools, { signal: opts.signal }), STREAM_TIMEOUT, opts.signal)) {
         if (event.type === 'text_delta') {
           if (!spinnerStopped) { spin.stop(); ui.clearLine(); spinnerStopped = true; }
           textBuffer += event.text;
           ui.stream(event.text);
+        } else if (event.type === 'reasoning_delta') {
+          // Reasoning tokens are activity. Yielding them keeps the inactivity
+          // watchdog alive; they must not land in the durable assistant text.
+          if (!spinnerStopped) { spin.stop(); ui.clearLine(); spinnerStopped = true; }
+          if (!reasoningAnnounced) {
+            reasoningAnnounced = true;
+            ui.dim('thinking…');
+            opts.onEvent?.({ type: 'status', status: 'running', detail: 'thinking' });
+          }
         } else if (event.type === 'tool_use_start') {
           hasToolUse = true;
           currentToolId = event.id;
@@ -814,12 +848,13 @@ export async function agentLoop(opts: AgentOpts): Promise<void> {
           // instead of declaring a broken change done. Bounded, skipped in
           // benchmark mode or when GRAIN_NO_VERIFY is set.
           if (allFilesChanged.length > 0 && !opts.benchmark && !process.env.GRAIN_NO_VERIFY && verifyAttempts < MAX_VERIFY_ATTEMPTS) {
-            const verify = detectVerifyCommand(process.cwd());
+            const verifyCwd = workspaceRoot || process.cwd();
+            const verify = detectVerifyCommand(verifyCwd, allFilesChanged);
             if (verify) {
               verifyAttempts++;
               ui.tool('verify', { _streaming: true });
               ui.dim(`  → ${verify.label}`);
-              const res = await executeBash({ command: verify.command, timeout: 180 }, process.cwd());
+              const res = await executeBash({ command: verify.command, timeout: 180 }, verifyCwd);
               ui.result(res.content, res.is_error);
               if (res.is_error) {
                 opts.onEvent?.({ type: 'verification', passed: false, detail: verify.label });

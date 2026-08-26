@@ -1,6 +1,7 @@
 import type { ToolResult } from '../providers/types.js';
 import { getWorkspaceFS } from '../workspace/index.js';
 import { WorkspaceTransactionManager } from '../workspace/index.js';
+import { unifiedDiff } from '../workspace/diff.js';
 import { randomUUID } from 'node:crypto';
 
 export const patchTool = {
@@ -22,69 +23,62 @@ function normalizeWhitespace(s: string): string {
   return s.replace(/\s+/g, ' ').trim();
 }
 
+export function applySearchReplace(
+  content: string,
+  oldString: string,
+  newString: string,
+): { ok: true; next: string; how: 'exact' | 'trimmed' | 'fuzzy' } | { ok: false; error: string } {
+  if (content.includes(oldString)) {
+    const count = content.split(oldString).length - 1;
+    if (count > 1) return { ok: false, error: `Found ${count} occurrences of old_string. Must be unique. Add more context.` };
+    return { ok: true, next: content.replace(oldString, () => newString), how: 'exact' };
+  }
+  const trimmedOld = oldString.trim();
+  if (trimmedOld && content.includes(trimmedOld)) {
+    const count = content.split(trimmedOld).length - 1;
+    if (count > 1) return { ok: false, error: `Found ${count} trimmed occurrences. Add more context.` };
+    return { ok: true, next: content.replace(trimmedOld, () => newString), how: 'trimmed' };
+  }
+  const normalizedOld = normalizeWhitespace(oldString);
+  const lines = content.split('\n');
+  let matchStart = -1;
+  let matchEnd = -1;
+  let matches = 0;
+  const oldLineCount = oldString.split('\n').length;
+  const maxWindow = oldLineCount * 2 + 5;
+  for (let i = 0; i < lines.length; i++) {
+    for (let j = i + 1; j <= Math.min(i + maxWindow, lines.length); j++) {
+      const chunk = lines.slice(i, j).join('\n');
+      if (normalizeWhitespace(chunk) === normalizedOld) {
+        matches++;
+        if (matchStart < 0) { matchStart = i; matchEnd = j; }
+        break;
+      }
+    }
+    if (matches > 1) break;
+  }
+  if (matches > 1) return { ok: false, error: `Found ${matches} normalized-whitespace occurrences. Add more context.` };
+  if (matchStart >= 0) {
+    lines.splice(matchStart, matchEnd - matchStart, ...newString.split('\n'));
+    return { ok: true, next: lines.join('\n'), how: 'fuzzy' };
+  }
+  return { ok: false, error: 'Could not find old_string. Verify the content matches exactly.' };
+}
+
 export async function executePatch(input: { path: string; old_string: string; new_string: string; expected_hash?: string }): Promise<ToolResult> {
   try {
     const workspace = getWorkspaceFS();
     const read = workspace.readRange(input.path, 1, Number.MAX_SAFE_INTEGER);
     const filePath = workspace.resolve(input.path, true);
-    let content = read.content;
-    const commit = (next: string) => {
-      const manager = new WorkspaceTransactionManager(workspace); const transaction = manager.begin({ invocationId: randomUUID(),
-        expectedInputs: [{ path: input.path, content_hash: input.expected_hash || read.hash }], operations: [{ type: 'write', path: input.path, content: next }] });
-      manager.approve(transaction.id); manager.apply(transaction.id); return transaction.id;
-    };
-
-    // Strategy 1: Exact match
-    if (content.includes(input.old_string)) {
-      const count = content.split(input.old_string).length - 1;
-      if (count > 1) {
-        return { content: `Found ${count} occurrences of old_string. Must be unique. Add more context.`, is_error: true };
-      }
-      content = content.replace(input.old_string, () => input.new_string);
-      const transaction = commit(content);
-      return { content: `Patched ${filePath}\n- ${input.old_string.split('\n').slice(0, 3).join('\n- ')}\n+ ${input.new_string.split('\n').slice(0, 3).join('\n+ ')}\ntransaction:${transaction}` };
-    }
-
-    // Strategy 2: Trimmed match
-    const trimmedOld = input.old_string.trim();
-    if (content.includes(trimmedOld)) {
-      const count = content.split(trimmedOld).length - 1;
-      if (count > 1) {
-        return { content: `Found ${count} trimmed occurrences. Add more context.`, is_error: true };
-      }
-      content = content.replace(trimmedOld, () => input.new_string);
-      return { content: `Patched ${filePath} (trimmed match)\ntransaction:${commit(content)}` };
-    }
-
-    // Strategy 3: Normalized whitespace match
-    const normalizedOld = normalizeWhitespace(input.old_string);
-    const lines = content.split('\n');
-    let matchStart = -1;
-    let matchEnd = -1;
-
-    // Only windows near the old_string's own line count can match — an
-    // unbounded scan is O(n^3) and hangs on large files.
-    const oldLineCount = input.old_string.split('\n').length;
-    const maxWindow = oldLineCount * 2 + 5;
-
-    for (let i = 0; i < lines.length; i++) {
-      for (let j = i + 1; j <= Math.min(i + maxWindow, lines.length); j++) {
-        const chunk = lines.slice(i, j).join('\n');
-        if (normalizeWhitespace(chunk) === normalizedOld) {
-          matchStart = i;
-          matchEnd = j;
-          break;
-        }
-      }
-      if (matchStart >= 0) break;
-    }
-
-    if (matchStart >= 0) {
-      lines.splice(matchStart, matchEnd - matchStart, ...input.new_string.split('\n'));
-      return { content: `Patched ${filePath} (fuzzy whitespace match at lines ${matchStart + 1}-${matchEnd})\ntransaction:${commit(lines.join('\n'))}` };
-    }
-
-    return { content: `Could not find old_string in ${filePath}. Verify the content matches exactly.`, is_error: true };
+    const applied = applySearchReplace(read.content, input.old_string, input.new_string);
+    if (!applied.ok) return { content: applied.error, is_error: true };
+    const manager = new WorkspaceTransactionManager(workspace);
+    const transaction = manager.begin({ invocationId: randomUUID(),
+      expectedInputs: [{ path: input.path, content_hash: input.expected_hash || read.hash }],
+      operations: [{ type: 'write', path: input.path, content: applied.next }] });
+    manager.approve(transaction.id); manager.apply(transaction.id);
+    const diff = unifiedDiff(input.path, read.content, applied.next).trimEnd();
+    return { content: `Patched ${filePath} (${applied.how})\n${diff}\ntransaction:${transaction.id}` };
   } catch (err: any) {
     return { content: `Error patching file: ${err.message}`, is_error: true };
   }

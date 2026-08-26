@@ -61,6 +61,7 @@ export async function discoverPlugins(pluginsConfig?: Record<string, any>): Prom
     { name: 'codex', binary: 'codex', enabled: pluginsConfig.codex?.enabled ?? true },
     { name: 'opencode', binary: 'opencode', enabled: pluginsConfig.opencode?.enabled ?? true },
     { name: 'hermes', binary: 'hermes', enabled: pluginsConfig.hermes?.enabled ?? true },
+    { name: 'grok', binary: 'grok', enabled: pluginsConfig.grok?.enabled ?? true },
     { name: 'aider', binary: 'aider', enabled: pluginsConfig.aider?.enabled ?? false },
   ];
   const results = await Promise.all(definitions.map(async definition => {

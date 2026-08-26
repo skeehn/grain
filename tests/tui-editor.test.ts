@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { LineEditor } from '../src/tui/editor.js';
-import { formatViewTabs, HELP_LINES, wrapTuiText } from '../src/tui/app.js';
+import { formatViewTabs, HELP_LINES, panelLineKind, wrapTuiText } from '../src/tui/app.js';
 
 describe('TUI line editor', () => {
   test('edits Unicode by code point and moves the cursor', () => {
@@ -30,6 +30,23 @@ describe('TUI line editor', () => {
     editor.feedAll('X'); expect(editor.value()).toBe('aXb');
   });
 
+  test('Tab-completes an @file mention at the cursor', () => {
+    const editor = new LineEditor();
+    editor.feed('fix @src/tui/ed');
+    expect(editor.mention()).toEqual({ start: 4, query: 'src/tui/ed' });
+    editor.replaceMention('src/tui/editor.ts');
+    expect(editor.value()).toBe('fix @src/tui/editor.ts ');
+    expect(editor.mention()).toBeNull();
+  });
+
+  test('mention indexes are code points so emoji before @ still replaces', () => {
+    const editor = new LineEditor();
+    editor.feed('🙂 @sr');
+    expect(editor.mention()).toEqual({ start: 2, query: 'sr' });
+    editor.replaceMention('src/main.rs');
+    expect(editor.value()).toBe('🙂 @src/main.rs ');
+  });
+
   test('recalls committed history', () => {
     const editor = new LineEditor(); editor.feed('first'); editor.commit(); editor.feed('second'); editor.commit();
     editor.feed('\x1b[A'); expect(editor.value()).toBe('second');
@@ -44,6 +61,7 @@ describe('TUI information layout', () => {
     expect(HELP_LINES).toContain('MODELS');
     expect(HELP_LINES).toContain('INSPECT');
     expect(HELP_LINES).toContain('ORCHESTRATE');
+    expect(HELP_LINES.some(line => line.includes('grok'))).toBe(true);
     expect(HELP_LINES).toContain('MEMORY ADMIN');
   });
 
@@ -55,5 +73,12 @@ describe('TUI information layout', () => {
   test('wraps at words and preserves indentation', () => {
     expect(wrapTuiText('  alpha beta gamma', 12)).toEqual(['  alpha beta', '  gamma']);
     expect(wrapTuiText('supercalifragilistic', 10).every(line => line.length <= 10)).toBe(true);
+  });
+
+  test('colors unified-diff lines for the apply preview', () => {
+    expect(panelLineKind('APPLY  src/main.rs  edit  +2 -1')).toBe('heading');
+    expect(panelLineKind('+fn main() {}')).toBe('success');
+    expect(panelLineKind('-fn main() {}')).toBe('error');
+    expect(panelLineKind('+++ src/main.rs')).toBe('assistant');
   });
 });

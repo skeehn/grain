@@ -1,8 +1,7 @@
 // Test runner integration - auto-run tests, parse output, track results
 import { spawn } from 'child_process';
-import { existsSync, readFileSync } from 'fs';
-import { resolve } from 'path';
 import type { ToolResult } from '../providers/types.js';
+import { inspectProject } from '../agent/project.js';
 
 export const testRunnerTool = {
   name: 'run_tests',
@@ -14,7 +13,7 @@ export const testRunnerTool = {
       framework: { 
         type: 'string', 
         description: 'Optional: force framework (jest, vitest, pytest, cargo, go)',
-        enum: ['jest', 'vitest', 'pytest', 'cargo', 'go', 'npm', 'bun'],
+        enum: ['jest', 'vitest', 'pytest', 'cargo', 'go', 'npm', 'pnpm', 'yarn', 'bun'],
       },
       watch: { type: 'boolean', description: 'Watch mode (not recommended - use for development)', default: false },
       coverage: { type: 'boolean', description: 'Generate coverage report', default: false },
@@ -32,40 +31,18 @@ interface TestResult {
 }
 
 function detectTestFramework(): string | null {
-  const cwd = process.cwd();
-  
-  // Check package.json
-  const pkgPath = resolve(cwd, 'package.json');
-  if (existsSync(pkgPath)) {
-    let pkg: any;
-    try {
-      pkg = JSON.parse(readFileSync(pkgPath, 'utf-8'));
-    } catch (err: any) {
-      throw new Error(`Failed to parse package.json at ${pkgPath}: ${err.message}`);
-    }
-
-    if (pkg.devDependencies?.jest || pkg.dependencies?.jest) return 'jest';
-    if (pkg.devDependencies?.vitest || pkg.dependencies?.vitest) return 'vitest';
-    if (pkg.scripts?.test) return 'npm'; // Fallback to npm test
-  }
-  
-  // Check for pytest
-  if (existsSync(resolve(cwd, 'pytest.ini')) || 
-      existsSync(resolve(cwd, 'setup.py')) ||
-      existsSync(resolve(cwd, 'pyproject.toml'))) {
-    return 'pytest';
-  }
-  
-  // Check for Cargo
-  if (existsSync(resolve(cwd, 'Cargo.toml'))) {
-    return 'cargo';
-  }
-  
-  // Check for Go
-  if (existsSync(resolve(cwd, 'go.mod'))) {
-    return 'go';
-  }
-  
+  const inspection = inspectProject(process.cwd());
+  const command = inspection.test?.command || '';
+  if (command.startsWith('cargo')) return 'cargo';
+  if (command.startsWith('go ')) return 'go';
+  if (command.includes('pytest')) return 'pytest';
+  if (command.includes('vitest')) return 'vitest';
+  if (command.includes('jest')) return 'jest';
+  if (command.startsWith('bun')) return 'bun';
+  if (command.startsWith('pnpm')) return 'pnpm';
+  if (command.startsWith('yarn')) return 'yarn';
+  if (command.startsWith('npm')) return 'npm';
+  if (command.includes('test')) return inspection.kinds.includes('javascript') || inspection.kinds.includes('typescript') ? 'npm' : null;
   return null;
 }
 
@@ -118,6 +95,12 @@ function parseTestOutput(output: string, framework: string): TestResult {
       result.failed = parseInt(resultMatch[2]);
       result.total = result.passed + result.failed;
     }
+  } else if (framework === 'go') {
+    result.passed = [...output.matchAll(/^\s*--- PASS:/gm)].length;
+    result.failed = [...output.matchAll(/^\s*--- FAIL:/gm)].length;
+    result.skipped = [...output.matchAll(/^\s*--- SKIP:/gm)].length;
+    result.total = result.passed + result.failed + result.skipped;
+    result.failures = [...output.matchAll(/^\s*--- FAIL:.*$/gm)].slice(0, 3).map(match => match[0]);
   }
   
   return result;
@@ -181,9 +164,19 @@ export async function executeTestRunner(input: {
       
     case 'go':
       cmd = 'go';
-      args = ['test'];
-      if (input.pattern) args.push(input.pattern);
+      args = ['test', '-v', './...'];
+      if (input.pattern) args = ['test', '-v', input.pattern];
       if (input.coverage) args.push('-cover');
+      break;
+
+    case 'pnpm':
+      cmd = 'pnpm';
+      args = ['test'];
+      break;
+
+    case 'yarn':
+      cmd = 'yarn';
+      args = ['test'];
       break;
       
     case 'npm':

@@ -58,9 +58,10 @@ const API_PROVIDERS: Array<{ provider: string; envKey: string; label: string; mo
     { id: 'openai/gpt-oss-120b', hint: 'very fast · tools' },
     { id: 'openai/gpt-oss-20b', hint: 'fastest · tools' },
   ] },
-  { provider: 'xai', envKey: 'XAI_API_KEY', label: 'xAI', models: [
-    { id: 'grok-code-fast-1', hint: 'coding · fast' },
-    { id: 'grok-4', hint: 'general' },
+  { provider: 'xai', envKey: 'XAI_API_KEY', label: 'xAI Grok API', models: [
+    { id: 'grok-code-fast-1', hint: 'Grain-native tools · coding · fast' },
+    { id: 'grok-4', hint: 'Grain-native tools · general' },
+    { id: 'grok-4-fast', hint: 'Grain-native tools · fast' },
   ] },
   { provider: 'bedrock', envKey: '', label: 'AWS Bedrock', models: [
     { id: 'us.anthropic.claude-sonnet-4-5-20250929-v1:0', hint: 'bedrock · balanced' },

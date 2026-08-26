@@ -1,9 +1,9 @@
 import type { ToolResult } from '../providers/types.js';
 import { getProvider } from '../providers/index.js';
-import { delegateToClaudeCode, delegateToCodex } from '../providers/subprocess.js';
+import { CliAgentProvider, isCliAgentProvider } from '../providers/cli-agent.js';
 import { executeTool, getChildTools } from './index.js';
 import { getSystemPrompt } from '../system-prompt.js';
-import { loadConfig } from '../config.js';
+import { loadConfig, normalizeProvider } from '../config.js';
 import type { Message, ContentBlock } from '../providers/types.js';
 
 const CHILD_MAX_TURNS = 20;
@@ -34,12 +34,12 @@ async function* childStreamWithTimeout<T>(source: AsyncIterable<T>, ms: number):
 
 export const delegateTool = {
   name: 'delegate',
-  description: 'Delegate a subtask to a child agent. The child runs in isolated context and returns its result.',
+  description: 'Delegate a subtask to a child agent. Use claude-code, codex, or grok for subscription CLIs (own tools and login). Use openrouter or xai for Grain-native models. The child runs in isolated context and returns its result.',
   input_schema: {
     type: 'object',
     properties: {
       task: { type: 'string', description: 'Description of the task to delegate' },
-      provider: { type: 'string', description: 'Provider to use (bedrock, anthropic, openrouter, ollama, claude-code, codex)' },
+      provider: { type: 'string', description: 'Provider: claude-code, codex, grok, grokbot, openrouter, xai, groq, ollama, anthropic, opencode' },
       model: { type: 'string', description: 'Model override for the child agent' },
     },
     required: ['task'],
@@ -49,28 +49,27 @@ export const delegateTool = {
 export async function executeDelegate(input: { task: string; provider?: string; model?: string }): Promise<ToolResult> {
   // Default to the PARENT's configured provider, not a hardcoded 'bedrock' the
   // user may have no credentials for (the old default silently failed).
-  const providerName = input.provider || loadConfig().provider || 'openrouter';
+  const providerName = normalizeProvider(input.provider || loadConfig().provider || 'openrouter');
 
-  // Handle subprocess providers
-  if (providerName === 'claude-code' || providerName === 'claude') {
+  if (isCliAgentProvider(providerName)) {
     try {
-      const result = await delegateToClaudeCode(input.task);
-      return { content: result.output, is_error: result.exitCode !== 0 };
+      const child = new CliAgentProvider(providerName, input.model, { fresh: true, write: true });
+      let text = '';
+      let error: string | undefined;
+      for await (const event of childStreamWithTimeout(
+        child.stream([{ role: 'user', content: [{ type: 'text', text: input.task }] }], '', [], undefined),
+        CHILD_STREAM_IDLE_MS,
+      )) {
+        if (event.type === 'text_delta') text += event.text;
+        if (event.type === 'error') error = event.error;
+      }
+      if (error) return { content: `${text}\n${error}`.trim(), is_error: true };
+      return { content: text || `${providerName} produced no output.` };
     } catch (err: any) {
-      return { content: `Delegation to claude-code failed: ${err.message}`, is_error: true };
+      return { content: `Delegation to ${providerName} failed: ${err.message}`, is_error: true };
     }
   }
 
-  if (providerName === 'codex') {
-    try {
-      const result = await delegateToCodex(input.task);
-      return { content: result.output, is_error: result.exitCode !== 0 };
-    } catch (err: any) {
-      return { content: `Delegation to codex failed: ${err.message}`, is_error: true };
-    }
-  }
-
-  // Standard LLM provider delegation
   try {
     const provider = getProvider(providerName, input.model);
     const system = getSystemPrompt();

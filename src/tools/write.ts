@@ -4,6 +4,7 @@ import type { ToolResult } from '../providers/types.js';
 import { getContextTracker } from '../agent/context-tracker.js';
 import { getWorkspaceFS } from '../workspace/index.js';
 import { WorkspaceTransactionManager } from '../workspace/index.js';
+import { unifiedDiff } from '../workspace/diff.js';
 import { randomUUID } from 'node:crypto';
 
 export const writeTool = {
@@ -72,6 +73,8 @@ function syntaxCheck(filePath: string): string | null {
 export async function executeWrite(input: { path: string; content: string; expected_hash?: string }): Promise<ToolResult> {
   try {
     const workspace = getWorkspaceFS();
+    let before = '';
+    try { before = workspace.readRange(input.path, 1, Number.MAX_SAFE_INTEGER).content; } catch { /* new file */ }
     const manager = new WorkspaceTransactionManager(workspace);
     const transaction = manager.begin({ invocationId: randomUUID(), expectedInputs: input.expected_hash ? [{ path: input.path, content_hash: input.expected_hash }] : [],
       operations: [{ type: 'write', path: input.path, content: input.content }] });
@@ -83,16 +86,18 @@ export async function executeWrite(input: { path: string; content: string; expec
     const tracker = getContextTracker();
     tracker.trackFileWrite(filePath);
 
+    const diff = unifiedDiff(input.path, before, input.content).trimEnd();
+
     // Auto syntax check
     const error = syntaxCheck(filePath);
     if (error) {
       return {
-        content: `Wrote ${bytes} bytes to ${filePath}\n\n⚠️ SYNTAX ERROR DETECTED:\n${error}\n\nPlease fix the error and write the file again.`,
+        content: `Wrote ${bytes} bytes to ${filePath}\n${diff}\n\n⚠️ SYNTAX ERROR DETECTED:\n${error}\n\nPlease fix the error and write the file again.`,
         is_error: false, // Not a tool error, but signals to LLM to fix
       };
     }
 
-    return { content: `✓ Wrote ${bytes} bytes to ${filePath}\nsha256:${written.content_hash}\ntransaction:${transaction.id}` };
+    return { content: `✓ Wrote ${bytes} bytes to ${filePath}\n${diff}\nsha256:${written.content_hash}\ntransaction:${transaction.id}` };
   } catch (err: any) {
     return { content: `Error writing file: ${err.message}`, is_error: true };
   }

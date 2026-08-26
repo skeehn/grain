@@ -16,7 +16,8 @@ export function mascotState(status: string): MascotState {
   if (status === 'needs_reconciliation') return 'recovery';
   if (status === 'succeeded') return 'complete';
   if (status === 'failed' || status === 'cancelled') return 'failed';
-  return status === 'running' ? 'thinking' : 'idle';
+  if (status === 'running' || status === 'thinking') return 'thinking';
+  return 'idle';
 }
 
 export function mascotFrame(status: string, tick: number, reducedMotion: boolean): string {

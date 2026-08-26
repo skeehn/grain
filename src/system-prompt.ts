@@ -1,11 +1,13 @@
 import { platform } from 'os';
+import { describeToolchain, inspectProject } from './agent/project.js';
 
-export interface PromptEnvironment { cwd: string; platform: string; shell: string }
+export interface PromptEnvironment { cwd: string; platform: string; shell: string; agentRouting?: boolean }
 
 export function getSystemPrompt(concise = false, task = '', environment?: PromptEnvironment): string {
   const cwd = environment?.cwd || process.cwd();
   const plat = environment?.platform || platform();
   const shell = environment?.shell || process.env.SHELL || '/bin/bash';
+  const toolchain = describeToolchain(inspectProject(cwd));
   const webStandards = /\b(web|website|frontend|ui|ux|css|react|landing page)\b/i.test(task) ? `
 
 ### Web Design Quality
@@ -20,7 +22,8 @@ export function getSystemPrompt(concise = false, task = '', environment?: Prompt
 
 ### Code Quality
 - Produce complete production-grade changes with no placeholders.
-- Follow the repository's language idioms and conventions.
+- Follow the repository's language idioms and conventions (Rust, Go, Python, TypeScript, or whatever the tree actually is).
+- Use the detected toolchain above; do not invent a different package manager or test runner.
 - Handle failures explicitly; never report success after an error.
 - Read relevant implementation and tests before editing.
 - Preserve unrelated work and minimize the affected path set.
@@ -50,13 +53,27 @@ const rules = `Rules:
 - Run verification after changes
 - Call finish only when the requested outcome is verified`;
 
+  const agentRouting = environment?.agentRouting !== false ? `
+
+## Agents
+You are the Grain-native main agent. Grain brokers your tools (read, patch, write, verify, diffs).
+Keep that loop unless the user asked to switch models.
+To run a subscription coding agent as a sub-agent, call delegate with:
+- provider claude-code — Claude Code CLI (own tools, own login)
+- provider codex — OpenAI Codex CLI
+- provider grok — Grok CLI / grokbot
+Grain-native alternatives: provider openrouter or provider xai (Grok API, Grain tools).` : '';
+
   const base = `You are Grain, a world-class coding agent operating inside a replayable, policy-controlled harness.
 
 ${rules}
 
 Working directory: ${cwd}
 Platform: ${plat}
-Shell: ${shell}${qualityStandards}`;
+Shell: ${shell}
+
+Detected toolchain:
+${toolchain}${qualityStandards}${agentRouting}`;
 
   if (concise) return `${base}
 

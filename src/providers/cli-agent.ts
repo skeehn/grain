@@ -14,7 +14,7 @@ import { join } from 'path';
 import { createHash } from 'crypto';
 import type { Message, Provider, ProviderStreamOptions, StreamEvent, Tool } from './types.js';
 
-export type CliAgentId = 'claude-code' | 'codex' | 'opencode';
+export type CliAgentId = 'claude-code' | 'codex' | 'opencode' | 'grok';
 
 export interface CliAgentDefinition {
   id: CliAgentId;
@@ -49,6 +49,14 @@ export const CLI_AGENTS: Record<CliAgentId, CliAgentDefinition> = {
     id: 'opencode', binary: 'opencode', displayName: 'OpenCode',
     defaultModel: 'auto', contextWindow: 200_000,
     models: [{ id: 'auto', label: 'opencode (default)', hint: 'local agent · uses its own configured model' }],
+  },
+  grok: {
+    id: 'grok', binary: 'grok', displayName: 'Grok',
+    defaultModel: 'auto', contextWindow: 256_000,
+    models: [
+      { id: 'auto', label: 'grok (default)', hint: 'subscription · Grok CLI / grokbot' },
+      { id: 'grok-code', label: 'grok-code', hint: 'subscription · coding' },
+    ],
   },
 };
 
@@ -168,6 +176,13 @@ export class CliAgentProvider implements Provider {
       args.push(prompt);
       return args;
     }
+    if (this.name === 'grok') {
+      const args = ['-p', prompt, '--output-format', 'streaming-messages-json', '--include-partial-messages', '--no-subagents'];
+      if (model) args.push('-m', model);
+      args.push('--permission-mode', this.options.write === false ? 'plan' : 'acceptEdits');
+      if (resumeId) args.push('--resume', resumeId);
+      return args;
+    }
     const args = ['run', '--format', 'json'];
     if (model) args.push('-m', model);
     if (resumeId) args.push('-s', resumeId);
@@ -180,27 +195,39 @@ export class CliAgentProvider implements Provider {
   private *translate(record: any, state: StreamState): Generator<StreamEvent> {
     if (!record || typeof record !== 'object') return;
 
-    if (this.name === 'claude-code') {
+    if (this.name === 'claude-code' || this.name === 'grok') {
+      if (record.session_id || record.sessionId) state.sessionId = record.session_id || record.sessionId;
       if (record.type === 'system' && record.session_id) state.sessionId = record.session_id;
       if (record.type === 'stream_event') {
         const delta = record.event?.delta;
         if (delta?.type === 'text_delta' && delta.text) { state.text += delta.text; state.sawOutput = true; yield { type: 'text_delta', text: delta.text }; }
         return;
       }
+      if (record.type === 'content_block_delta') {
+        const text = typeof record.delta?.text === 'string' ? record.delta.text
+          : record.delta?.type === 'text_delta' && typeof record.delta?.text === 'string' ? record.delta.text : '';
+        if (text) { state.text += text; state.sawOutput = true; yield { type: 'text_delta', text }; }
+        return;
+      }
       if (record.type === 'assistant') {
         for (const block of record.message?.content || []) {
+          if (block.type === 'text' && block.text && !state.sawOutput) {
+            state.text += block.text; state.sawOutput = true; yield { type: 'text_delta', text: block.text };
+          }
           if (block.type === 'tool_use') yield { type: 'text_delta', text: `\n· ${block.name}${toolHint(block.input)}\n` };
         }
         return;
       }
-      if (record.type === 'result') {
+      if (record.type === 'result' || record.type === 'message_stop') {
         if (record.session_id) state.sessionId = record.session_id;
         if (!state.sawOutput && record.result) yield { type: 'text_delta', text: String(record.result) };
         const usage = record.usage || {};
-        yield { type: 'usage', input_tokens: (usage.input_tokens || 0) + (usage.cache_read_input_tokens || 0),
-          output_tokens: usage.output_tokens || 0, cache_read_tokens: usage.cache_read_input_tokens,
-          cost_usd: record.total_cost_usd };
-        if (record.is_error) yield { type: 'error', error: String(record.result || 'Claude Code reported an error') };
+        if (usage.input_tokens || usage.output_tokens || record.total_cost_usd) {
+          yield { type: 'usage', input_tokens: (usage.input_tokens || 0) + (usage.cache_read_input_tokens || 0),
+            output_tokens: usage.output_tokens || 0, cache_read_tokens: usage.cache_read_input_tokens,
+            cost_usd: record.total_cost_usd };
+        }
+        if (record.is_error) yield { type: 'error', error: String(record.result || `${this.definition.displayName} reported an error`) };
       }
       return;
     }
@@ -236,6 +263,9 @@ export class CliAgentProvider implements Provider {
     // one already carries them, and re-sending would duplicate every turn.
     if (this.name === 'claude-code' && !resumeId && system.trim()) {
       args.push('--append-system-prompt', system.slice(0, 8_000));
+    }
+    if (this.name === 'grok' && !resumeId && system.trim()) {
+      args.push('--rules', system.slice(0, 8_000));
     }
 
     let child: ChildProcessByStdio<null, Readable, Readable>;

@@ -8,3 +8,4 @@ export * from "./claude-code.js";
 export * from "./codex.js";
 export * from './opencode.js';
 export * from './hermes.js';
+export * from './grok.js';

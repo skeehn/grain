@@ -31,6 +31,10 @@ describe('versioned agent profiles', () => {
     expect(profiles.find(profile => profile.id === 'driver')?.executor).toBe('codex');
     expect(profiles.find(profile => profile.id === 'driver')?.isolation).toBe('worktree');
     expect(profiles.some(profile => profile.id === 'default')).toBe(true);
+    expect(profiles.find(profile => profile.id === 'grok')?.executor).toBe('grok');
+    expect(profiles.find(profile => profile.id === 'openrouter')?.executor).toBe('grain-native');
+    expect(profiles.find(profile => profile.id === 'xai')?.provider).toBe('xai');
+    expect(profiles.find(profile => profile.id === 'claude-code')?.executor).toBe('claude-code');
   });
 
   test('stdio profiles require an explicit binary', () => {

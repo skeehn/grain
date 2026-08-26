@@ -3,7 +3,7 @@ import { existsSync, statSync } from 'fs';
 import { resolve } from 'path';
 import { agentLoop, type AgentUi, type AgentWorkspaceEvent } from '../agent/loop.js';
 import { changedFileCount, undoLast } from '../agent/checkpoint.js';
-import { loadConfig, saveConfig, type GrainConfig } from '../config.js';
+import { loadConfig, saveConfig, normalizeProvider, CLI_AGENT_PROVIDERS, type GrainConfig } from '../config.js';
 import { listRuns, readRunEvents, RunEngine, RunJournal, RunService } from '../kernel/index.js';
 import { TaskGraphStore } from '../orchestration/store.js';
 import { AgentScheduler } from '../orchestration/scheduler.js';
@@ -17,6 +17,7 @@ import { executeWorkspaceScan } from '../tools/workspace.js';
 import { WikiEngine } from '../wiki/index.js';
 import { parseComposerInput, type WorkspaceMode } from '../workspace/app.js';
 import { resolveWorkspace } from '../workspace/root.js';
+import { getWorkspaceFS } from '../workspace/index.js';
 import { detectTerminalCapabilities } from './capabilities.js';
 import { DifferentialRenderer } from './differential.js';
 import { blankFrame, putText } from './frame.js';
@@ -63,6 +64,9 @@ export function classifyTuiTaskError(message: string): { status: 'cancelled' | '
 
 /** Panel text is plain strings; infer just enough structure to style it. */
 export function panelLineKind(text: string): LineKind {
+  if (/^(APPLY  |@@ |diff --git )/u.test(text) || text === 'PENDING APPLY') return 'heading';
+  if (text.startsWith('+') && !text.startsWith('+++')) return 'success';
+  if (text.startsWith('-') && !text.startsWith('---')) return 'error';
   if (/^[A-Z][A-Z0-9 ·/-]+$/u.test(text.trim()) && text.trim().length > 2) return 'heading';
   if (/^\s*(×|error|failed)/i.test(text)) return 'error';
   if (/^\s*(✓|◆)/.test(text)) return 'success';
@@ -73,10 +77,9 @@ export function panelLineKind(text: string): LineKind {
 
 export const HELP_LINES = [
   'MODELS',
-  '  /model                       pick from every model you can actually run',
-  '  /model claude-code:opus      Claude through your subscription (no API credit)',
-  '  /model codex                 OpenAI Codex through your subscription',
-  '  /model openrouter:MODEL_ID   any OpenRouter model · /model ollama:MODEL local',
+  '  /model                       pick subscriptions, APIs, and local models',
+  '  /model grok|codex|claude-code  child CLI (own tools) · grokbot = grok',
+  '  /model xai:MODEL · openrouter:MODEL  Grain-native tools, diffs, /undo',
   '  /effort low|medium|high      reasoning effort where the model supports it',
   'WORK',
   '  type a task · /open PATH project · /attach PATH · /mode ask|plan|execute',
@@ -90,12 +93,12 @@ export const HELP_LINES = [
   '  /diff changes · /tools activity · /context explain · /files tree',
   '  /memory [status|search QUERY|inspect ID] · /history · /wiki ACTION',
   'ORCHESTRATE',
-  '  /agent [NAME] · /agents MODE TASK · /workflow MODE TASK · /loop TASK',
-  '  /jobs [add|run|remove] …',
+  '  /agent [NAME]                Grain-native main, or a subscription sub-agent',
+  '  /agents MODE TASK · /workflow MODE TASK · /loop TASK · /jobs …',
   'MEMORY ADMIN',
   '  /memory edit ID CONTENT · /memory forget ID · /memory export|rebuild',
   'KEYS',
-  '  Tab views · PgUp/PgDn scroll · Ctrl+L clear · Ctrl+C cancel, then quit',
+  '  Tab views · @file Tab attach · PgUp/PgDn scroll · Ctrl+C cancel, then quit',
 ];
 
 /** Transcript lines carry their role so the renderer can style them. */
@@ -205,6 +208,7 @@ async function runWorkspaceTui(options: TuiAppOptions): Promise<void> {
   let overlay: OverlayState<unknown> | undefined;
   let spinnerTick = 0;
   const steeringQueue: string[] = [];
+  const applyDiffLog: string[] = [];
   const pendingAttachments: string[] = [...(options.attachments || [])];
   let activeProfile: AgentProfileV1 | undefined;
   const SPINNER = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
@@ -284,10 +288,12 @@ async function runWorkspaceTui(options: TuiAppOptions): Promise<void> {
   /** `↑12.4k ↓3.1k · 18.2%/200k · $0.04` — only the parts that are known. */
   const sessionAccounting = (): string => {
     const stats = getSessionStats();
-    if (!stats.upTokens && !stats.downTokens) return '';
-    const parts = [`↑${fmtTokens(stats.upTokens)} ↓${fmtTokens(stats.downTokens)}`];
+    if (!stats.upTokens && !stats.downTokens && !stats.childTools) return '';
+    const parts: string[] = [];
+    if (stats.upTokens || stats.downTokens) parts.push(`↑${fmtTokens(stats.upTokens)} ↓${fmtTokens(stats.downTokens)}`);
     if (stats.contextWindow) parts.push(`${Math.min(100, (stats.lastInputTokens / stats.contextWindow) * 100).toFixed(0)}%/${fmtTokens(stats.contextWindow)}`);
     if (stats.costUsd) parts.push(`$${stats.costUsd.toFixed(2)}`);
+    if (stats.childTools) parts.push('child tools');
     return parts.join(' · ');
   };
 
@@ -316,7 +322,15 @@ async function runWorkspaceTui(options: TuiAppOptions): Promise<void> {
     tool: (name, _input) => { status = `tool · ${name}`; add('tool', name); },
     result: (output, isError) => add(isError ? 'error' : 'result', output),
     success: message => add('success', message), newLine: () => add('dim', ''), clearLine: () => {},
-    warn: message => add('warn', message), error: message => add('error', message), info: message => add('info', message), dim: message => add('dim', message),
+    warn: message => add('warn', message), error: message => add('error', message), info: message => add('info', message),
+    dim: message => {
+      const text = typeof message === 'string' ? message : JSON.stringify(message);
+      if (/\n--- |\n@@ |^APPLY  /m.test(text)) {
+        for (const line of text.split('\n')) add(panelLineKind(line), line);
+        return;
+      }
+      add('dim', message);
+    },
     retryNotice: (attempt, max, seconds) => add('info', `retrying ${attempt}/${max} in ${seconds}s`),
     spinner: label => { status = label || 'thinking'; render(); return { stop: () => { status = 'working'; render(); } }; },
     userPrompt: label => new Promise(resolvePrompt => {
@@ -328,9 +342,10 @@ async function runWorkspaceTui(options: TuiAppOptions): Promise<void> {
     view = target; const root = workspace.root;
     try {
       if (target === 'diff') {
-        if (!root) panels.set(target, ['No project is open. Use /open PATH first.']);
+        const pending = applyDiffLog.length ? ['PENDING APPLY', ...applyDiffLog, ''] : [];
+        if (!root) panels.set(target, pending.length ? pending : ['No project is open. Use /open PATH first.']);
         else {
-          panels.set(target, collectWorkingTreeDiff(root).split('\n').slice(0, 500));
+          panels.set(target, [...pending, ...collectWorkingTreeDiff(root).split('\n')].slice(0, 500));
         }
       } else if (target === 'tools') {
         const recent = currentRunId ? readRunEvents(currentRunId).filter(event => event.type === 'tool_started' || event.type === 'tool_completed').slice(-20)
@@ -375,6 +390,7 @@ async function runWorkspaceTui(options: TuiAppOptions): Promise<void> {
       }
       add('info', 'Queued for the next safe turn boundary.'); return;
     }
+    applyDiffLog.length = 0;
     busy = true; status = 'starting'; view = 'chat'; add('user', prompt);
     activeController = new AbortController();
     const root = job?.workspace || workspace.root; const previous = process.cwd();
@@ -413,6 +429,10 @@ async function runWorkspaceTui(options: TuiAppOptions): Promise<void> {
           if (event.type === 'run') currentRunId = event.runId;
           if (event.type === 'status') status = event.detail || event.status;
           if (event.type === 'tool') status = `tool · ${event.name}`;
+          if (event.type === 'apply_diff') {
+            applyDiffLog.push(...event.unified.split('\n'));
+            if (applyDiffLog.length > 800) applyDiffLog.splice(0, applyDiffLog.length - 800);
+          }
           render();
         } });
       status = 'ready';
@@ -438,22 +458,42 @@ async function runWorkspaceTui(options: TuiAppOptions): Promise<void> {
   };
 
   /** Open a modal list and resolve when the user picks or dismisses it. */
-  const pick = <T,>(title: string, items: OverlayItem<T>[]): Promise<{ value: T | null; item?: OverlayItem<T> }> =>
+  const pick = <T,>(title: string, items: OverlayItem<T>[], filter = ''): Promise<{ value: T | null; item?: OverlayItem<T> }> =>
     new Promise(resolvePick => {
-      const current = Math.max(0, items.findIndex(item => item.current));
+      const filtered = filter ? items.filter(item => `${item.label} ${item.hint ?? ''}`.toLowerCase().includes(filter.toLowerCase())) : items;
+      const current = Math.max(0, (filtered.length ? filtered : items).findIndex(item => item.current));
       overlay = {
-        title, items: items as OverlayItem<unknown>[], filter: '', index: current,
+        title, items: items as OverlayItem<unknown>[], filter, index: current,
         resolve: (value, item) => { overlay = undefined; render(); resolvePick({ value: value as T | null, item: item as OverlayItem<T> | undefined }); },
       } as OverlayState<unknown>;
       render();
     });
 
+  const openFileMention = async () => {
+    const mention = editor.mention();
+    if (!mention || !workspace.root) return false;
+    setToolCwd(workspace.root);
+    let files: string[] = [];
+    try { files = getWorkspaceFS().list('.', 5).filter(path => path && !path.endsWith('/')).slice(0, 400); }
+    catch { files = []; }
+    if (!files.length) { add('warn', 'No project files to attach.'); return true; }
+    const chosen = await pick('Attach a file  (@path)', files.map(path => ({ label: path, value: path })), mention.query);
+    if (chosen.value) editor.replaceMention(chosen.value);
+    return true;
+  };
+
   const applyModelSelection = (provider: string, model: string) => {
+    const resolved = normalizeProvider(provider);
     const config = loadConfig();
-    saveConfig({ ...config, provider, model });
-    options.provider = provider; options.model = model;
-    const stats = getSessionStats(); stats.provider = provider; stats.model = model;
-    add('success', `Model: ${provider} · ${model}`);
+    saveConfig({ ...config, provider: resolved, model });
+    options.provider = resolved; options.model = model;
+    const stats = getSessionStats(); stats.provider = resolved; stats.model = model;
+    add('success', `Model: ${resolved} · ${model}`);
+    if ((CLI_AGENT_PROVIDERS as readonly string[]).includes(resolved)) {
+      add('info', 'This agent runs with its own tools and login. Grain-native tools, diffs, and /undo follow the working tree.');
+    } else {
+      add('info', 'Grain-native: this model uses Grain tools. Delegate claude-code, codex, or grok as sub-agents when useful.');
+    }
   };
 
   const openModelPicker = async () => {
@@ -487,9 +527,28 @@ async function runWorkspaceTui(options: TuiAppOptions): Promise<void> {
       return;
     }
     applyModelSelection(entry.provider, entry.model);
-    if (entry.kind === 'subscription') {
-      add('info', 'This agent runs with its own tools and its own login — no API credit is used.');
+  };
+
+  const applyAgentProfile = (selected: AgentProfileV1) => {
+    activeProfile = selected.id === 'default' ? undefined : selected;
+    add('success', `Agent: ${selected.id} · ${selected.executor} · ${selected.provider || 'inherited'}/${selected.model || 'auto'}`);
+    if (selected.executor === 'grain-native' || selected.executor === 'direct-api') {
+      add('info', 'Main agent is Grain-native. Subscriptions (claude-code, codex, grok) are available as sub-agents via delegate.');
+    } else {
+      add('info', 'This profile runs a subscription CLI as the session agent. /model still selects Grain-native models when you switch back with /agent default.');
     }
+  };
+
+  const openAgentPicker = async () => {
+    const profiles = loadAgentProfiles(workspace.root);
+    const items: OverlayItem<AgentProfileV1>[] = profiles.map(profile => ({
+      label: profile.id,
+      hint: `${profile.executor} · ${profile.provider || 'inherited'}/${profile.model || 'auto'}`,
+      value: profile,
+      current: (activeProfile?.id || 'default') === profile.id,
+    }));
+    const chosen = await pick('Choose an agent — Grain-native main, or a subscription CLI', items);
+    if (chosen.value) applyAgentProfile(chosen.value);
   };
 
   const handleCommand = async (value: string) => {
@@ -536,12 +595,11 @@ async function runWorkspaceTui(options: TuiAppOptions): Promise<void> {
     }
     if (command === 'agent') {
       const profiles = loadAgentProfiles(workspace.root);
-      if (!arg) { add('info', ['AGENT PROFILES', ...profiles.map(profile =>
-        `  ${profile.id}${activeProfile?.id === profile.id ? '  [active]' : ''} · ${profile.executor} · ${profile.provider || 'inherited'}/${profile.model || 'auto'}`), '',
-        'Select with /agent NAME'].join('\n')); return; }
-      const selected = profiles.find(profile => profile.id === arg);
-      if (!selected) { add('warn', `Unknown agent profile: ${arg}`); return; }
-      activeProfile = selected; add('success', `Agent: ${selected.id} · ${selected.executor} · ${selected.provider || 'inherited'}/${selected.model || 'auto'}`); return;
+      if (!arg) { await openAgentPicker(); return; }
+      const wanted = normalizeProvider(arg);
+      const selected = profiles.find(profile => profile.id === wanted || profile.id === arg);
+      if (!selected) { add('warn', `Unknown agent profile: ${arg}. Try grok, codex, claude-code, openrouter, xai, or default.`); return; }
+      applyAgentProfile(selected); return;
     }
     if (command === 'workflow' || command === 'loop') {
       const [requestedMode, ...words] = command === 'loop' ? ['repair-loop', ...arg.split(/\s+/u)] : arg.split(/\s+/u);
@@ -682,7 +740,10 @@ async function runWorkspaceTui(options: TuiAppOptions): Promise<void> {
         render(); continue;
       }
       if (action === 'clear') { transcript.splice(0); scrollOffset = 0; }
-      if (action === 'tab' && !promptResolver) { const index = VIEWS.indexOf(view); scrollOffset = 0; void refreshView(VIEWS[(index + 1) % VIEWS.length]); continue; }
+      if (action === 'tab' && !promptResolver) {
+        if (editor.mention() && workspace.root) { void openFileMention(); continue; }
+        const index = VIEWS.indexOf(view); scrollOffset = 0; void refreshView(VIEWS[(index + 1) % VIEWS.length]); continue;
+      }
       if (action === 'submit') { void submit(); continue; }
     }
     render();

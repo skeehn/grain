@@ -115,6 +115,56 @@ describe('OpenRouter streaming', () => {
     expect(events.filter(e => e.type === 'tool_use_end')).toHaveLength(2);
   });
 
+  test('preserves an explicitly empty apiKey instead of falling back to the env', async () => {
+    process.env.OPENROUTER_API_KEY = 'env-secret';
+    let requestHeaders: HeadersInit | undefined;
+    globalThis.fetch = (async (_input, init) => {
+      requestHeaders = init?.headers;
+      return responseFrom([{ choices: [{ delta: {}, finish_reason: 'stop' }] }]);
+    }) as typeof fetch;
+
+    for await (const _ of new OpenRouterProvider('test-model', {
+      name: 'openrouter',
+      apiKeyEnv: 'OPENROUTER_API_KEY',
+      baseUrl: 'https://example.test/v1/chat/completions',
+      defaultModel: 'test-model',
+      displayName: 'OpenRouter',
+      apiKey: '',
+      allowEmptyApiKey: true,
+    }).stream([], 'system', [])) { /* consume */ }
+
+    expect(new Headers(requestHeaders).has('Authorization')).toBe(false);
+  });
+
+  test('refuses to call the API without a key', async () => {
+    delete process.env.OPENROUTER_API_KEY;
+    let called = false;
+    globalThis.fetch = (async () => { called = true; return responseFrom([]); }) as typeof fetch;
+    const events: StreamEvent[] = [];
+    for await (const event of new OpenRouterProvider().stream([], 'system', [])) events.push(event);
+    expect(called).toBe(false);
+    expect(events).toContainEqual({
+      type: 'error',
+      error: 'OPENROUTER_API_KEY is not set. Run: grain config set key OPENROUTER_API_KEY <key>',
+    });
+  });
+
+  test('yields reasoning tokens so the harness is not idle while the model thinks', async () => {
+    globalThis.fetch = (async () => responseFrom([
+      { choices: [{ delta: { reasoning: 'plan the edit' } }] },
+      { choices: [{ delta: { content: 'done' }, finish_reason: 'stop' }] },
+    ])) as typeof fetch;
+    const events: StreamEvent[] = [];
+    for await (const event of new OpenRouterProvider().stream([], 'system', [])) events.push(event);
+    expect(events).toContainEqual({ type: 'reasoning_delta', text: 'plan the edit' });
+    expect(events).toContainEqual({ type: 'text_delta', text: 'done' });
+    const reasoningIndex = events.findIndex(event => event.type === 'reasoning_delta');
+    const textIndex = events.findIndex(event => event.type === 'text_delta');
+    expect(reasoningIndex).toBeGreaterThanOrEqual(0);
+    expect(textIndex).toBeGreaterThanOrEqual(0);
+    expect(reasoningIndex).toBeLessThan(textIndex);
+  });
+
   test('surfaces malformed stream data instead of silently dropping it', async () => {
     globalThis.fetch = (async () => responseFrom(['{bad json'])) as typeof fetch;
     const events: StreamEvent[] = [];

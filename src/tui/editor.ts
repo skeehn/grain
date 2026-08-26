@@ -1,5 +1,15 @@
 export type EditorAction = 'submit' | 'cancel' | 'tab' | 'clear' | 'changed' | 'none';
 
+/** `@path` token immediately before the cursor, if the user is attaching a file. */
+export function mentionAtCursor(value: string, cursor: number): { start: number; query: string } | null {
+  const chars = Array.from(value);
+  const before = chars.slice(0, Math.max(0, Math.min(cursor, chars.length)));
+  const text = before.join('');
+  const match = /(?:^|[\s])@([^\s]*)$/u.exec(text);
+  if (!match) return null;
+  return { start: before.lastIndexOf('@'), query: match[1] };
+}
+
 /** Unicode-aware terminal composer with history and bracketed-paste support. */
 export class LineEditor {
   private chars: string[] = [];
@@ -9,7 +19,17 @@ export class LineEditor {
   private pendingInput = '';
 
   value(): string { return this.chars.join(''); }
+  cursorIndex(): number { return this.cursor; }
   cursorColumn(): number { return this.chars.slice(0, this.cursor).join('').replace(/\n/g, '↵').length; }
+  mention(): { start: number; query: string } | null { return mentionAtCursor(this.value(), this.cursor); }
+  replaceMention(path: string): void {
+    const mention = this.mention();
+    if (!mention) return;
+    const token = `@${path.replace(/^@/, '')} `;
+    const chars = Array.from(token);
+    this.chars.splice(mention.start, this.cursor - mention.start, ...chars);
+    this.cursor = mention.start + chars.length;
+  }
   displayValue(): string { return this.value().replace(/\n/g, '↵'); }
   setValue(value: string): void { this.chars = Array.from(value); this.cursor = this.chars.length; }
   clear(): void { this.chars = []; this.cursor = 0; }

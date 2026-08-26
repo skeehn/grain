@@ -4,6 +4,7 @@ import { GRAIN_LOGO_HEIGHT, GRAIN_LOGO_WIDTH, grainLogoColor, grainLogoFrame, gr
 describe('Grain rice logo', () => {
   test('maps durable run states to logo states', () => {
     expect(grainLogoState('running')).toBe('thinking');
+    expect(grainLogoState('thinking')).toBe('thinking');
     expect(grainLogoState('executing_tool')).toBe('working');
     expect(grainLogoState('waiting_approval')).toBe('approval');
     expect(grainLogoState('verifying')).toBe('verifying');

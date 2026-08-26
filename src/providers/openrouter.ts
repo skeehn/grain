@@ -46,6 +46,10 @@ export interface OpenAICompatibleOptions {
   displayName: string;
   headers?: Record<string, string>;
   maxTokens?: number;
+  /** Explicit key; otherwise read from `apiKeyEnv`. Local servers may omit both. */
+  apiKey?: string;
+  /** Local OpenAI-compatible servers (vLLM) often have no key. Paid APIs must not set this. */
+  allowEmptyApiKey?: boolean;
 }
 
 const OPENROUTER_OPTIONS: OpenAICompatibleOptions = {
@@ -55,6 +59,19 @@ const OPENROUTER_OPTIONS: OpenAICompatibleOptions = {
 };
 
 type ToolState = { id: string; name: string; started: boolean; ended: boolean };
+
+/** OpenAI-compatible reasoning tokens arrive under several field names. */
+export function reasoningDeltaText(delta: unknown): string {
+  if (!delta || typeof delta !== 'object') return '';
+  const record = delta as Record<string, unknown>;
+  if (typeof record.reasoning === 'string') return record.reasoning;
+  if (typeof record.reasoning_content === 'string') return record.reasoning_content;
+  if (record.reasoning && typeof record.reasoning === 'object') {
+    const nested = (record.reasoning as Record<string, unknown>).content;
+    if (typeof nested === 'string') return nested;
+  }
+  return '';
+}
 
 export class OpenRouterProvider implements Provider {
   name: string;
@@ -66,7 +83,7 @@ export class OpenRouterProvider implements Provider {
     this.options = options;
     this.name = options.name;
     this.model = model || options.defaultModel;
-    this.apiKey = process.env[options.apiKeyEnv] || '';
+    this.apiKey = options.apiKey ?? process.env[options.apiKeyEnv] ?? '';
   }
 
   private convertMessages(messages: Message[]): unknown[] {
@@ -95,7 +112,7 @@ export class OpenRouterProvider implements Provider {
   }
 
   async *stream(messages: Message[], system: string, tools: Tool[], options?: ProviderStreamOptions): AsyncIterable<StreamEvent> {
-    if (!this.apiKey) {
+    if (!this.apiKey && !this.options.allowEmptyApiKey) {
       yield { type: 'error', error: `${this.options.apiKeyEnv} is not set. Run: grain config set key ${this.options.apiKeyEnv} <key>` };
       return;
     }
@@ -174,13 +191,14 @@ export class OpenRouterProvider implements Provider {
       let response: Response;
       for (let attempt = 0; ; attempt++) {
         refreshTimeout();
+        const headers: Record<string, string> = {
+          'Content-Type': 'application/json',
+          ...this.options.headers,
+        };
+        if (this.apiKey) headers.Authorization = `Bearer ${this.apiKey}`;
         response = await fetch(this.options.baseUrl, {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${this.apiKey}`,
-            ...this.options.headers,
-          },
+          headers,
           body: JSON.stringify(body),
           signal: controller.signal,
         });
@@ -262,6 +280,8 @@ export class OpenRouterProvider implements Provider {
 
           const choice = parsed.choices?.[0];
           const delta = choice?.delta;
+          const thinking = reasoningDeltaText(delta);
+          if (thinking) yield { type: 'reasoning_delta', text: thinking };
           if (typeof delta?.content === 'string' && delta.content) yield { type: 'text_delta', text: delta.content };
           for (const call of delta?.tool_calls || []) {
             const index = Number.isInteger(call.index) ? call.index : 0;

@@ -16,4 +16,11 @@ describe('Harbor benchmark isolation', () => {
     expect(prompt).toContain('Platform: linux');
     expect(prompt).not.toContain(process.cwd());
   });
+
+  test('hides Grain-native sub-agent routing when a CLI agent owns tools', () => {
+    const native = getSystemPrompt(true, 'task', { cwd: '/app', platform: 'linux', shell: '/bin/bash' });
+    expect(native).toContain('provider grok');
+    const child = getSystemPrompt(true, 'task', { cwd: '/app', platform: 'linux', shell: '/bin/bash', agentRouting: false });
+    expect(child).not.toContain('## Agents');
+  });
 });

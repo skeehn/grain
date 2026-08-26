@@ -2,6 +2,7 @@
 import type { ToolResult } from '../providers/types.js';
 import { getWorkspaceFS } from '../workspace/index.js';
 import { WorkspaceTransactionManager } from '../workspace/index.js';
+import { unifiedDiff } from '../workspace/diff.js';
 import { randomUUID } from 'node:crypto';
 
 export const multiEditTool = {
@@ -44,40 +45,7 @@ interface Backup {
 }
 
 function generateDiff(path: string, oldContent: string, newContent: string): string {
-  const oldLines = oldContent.split('\n');
-  const newLines = newContent.split('\n');
-  
-  let diff = `\n--- ${path}\n+++ ${path}\n`;
-  
-  // Simple line-by-line diff
-  const maxLen = Math.max(oldLines.length, newLines.length);
-  let contextLines = 0;
-  
-  for (let i = 0; i < maxLen; i++) {
-    const oldLine = oldLines[i];
-    const newLine = newLines[i];
-    
-    if (oldLine !== newLine) {
-      if (contextLines > 0) {
-        diff += `@@ -${i - contextLines + 1},${contextLines} +${i - contextLines + 1},${contextLines} @@\n`;
-        contextLines = 0;
-      }
-      
-      if (oldLine !== undefined) {
-        diff += `-${oldLine}\n`;
-      }
-      if (newLine !== undefined) {
-        diff += `+${newLine}\n`;
-      }
-    } else if (contextLines < 3) {
-      contextLines++;
-      if (oldLine !== undefined) {
-        diff += ` ${oldLine}\n`;
-      }
-    }
-  }
-  
-  return diff;
+  return unifiedDiff(path, oldContent, newContent);
 }
 
 export async function executeMultiEdit(input: { edits: Edit[]; preview?: boolean }): Promise<ToolResult> {

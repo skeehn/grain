@@ -1,5 +1,5 @@
 import type { Message, Provider, ProviderStreamOptions, StreamEvent, Tool } from './types.js';
-import { loadConfig } from '../config.js';
+import { loadConfig, normalizeProvider } from '../config.js';
 import { CLI_AGENTS } from './cli-agent.js';
 
 type ProviderLoader = (model?: string) => Promise<Provider>;
@@ -14,12 +14,14 @@ const defaultModels: Record<string, string> = {
   'claude-code': CLI_AGENTS['claude-code'].defaultModel,
   codex: CLI_AGENTS.codex.defaultModel,
   opencode: CLI_AGENTS.opencode.defaultModel,
+  grok: CLI_AGENTS.grok.defaultModel,
 };
 
 const loaders: Record<string, ProviderLoader> = {
   'claude-code': async model => new (await import('./cli-agent.js')).CliAgentProvider('claude-code', model),
   codex: async model => new (await import('./cli-agent.js')).CliAgentProvider('codex', model),
   opencode: async model => new (await import('./cli-agent.js')).CliAgentProvider('opencode', model),
+  grok: async model => new (await import('./cli-agent.js')).CliAgentProvider('grok', model),
   bedrock: async model => new (await import('./bedrock.js')).BedrockProvider(model),
   anthropic: async model => new (await import('./anthropic.js')).AnthropicProvider(model),
   openrouter: async model => new (await import('./openrouter.js')).OpenRouterProvider(model),
@@ -55,7 +57,7 @@ export function getProvider(name: string, model?: string): Provider {
   // `claude-code` and `codex` used to alias onto the Anthropic/OpenRouter APIs,
   // which silently swapped a user's subscription for API billing they may not
   // have. They are now their own providers, backed by the installed CLI.
-  const normalizedName = name;
+  const normalizedName = normalizeProvider(name);
   let loader = loaders[normalizedName];
   let configuredDefault: string | undefined;
   if (!loader) {

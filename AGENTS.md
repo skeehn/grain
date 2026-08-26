@@ -103,7 +103,7 @@ first-class; none is a fallback for another.
 
 | Kind | Providers | Credential |
 |---|---|---|
-| Subscription CLI | `claude-code`, `codex`, `opencode` | the CLI's own login |
+| Subscription CLI | `claude-code`, `codex`, `opencode`, `grok` | the CLI's own login |
 | Direct API | `anthropic`, `openrouter`, `groq`, `xai`, `bedrock` | env key / AWS |
 | Local | `ollama`, `vllm` | none |
 
