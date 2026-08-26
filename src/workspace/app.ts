@@ -141,8 +141,7 @@ async function handleCommand(command: ComposerInput, state: WorkspaceState): Pro
       const config = loadConfig(); saveConfig({ ...config, tui: { ...config.tui!, theme, schemaVersion: 2 } }); renderer.success(`Theme: ${theme}.`); return 'continue';
     }
     case 'files':
-      if (!state.root) { renderer.info('No project is open. Use /open <path>.'); return 'continue'; }
-      renderer.info((await executeWorkspaceScan({ path: '.', max_depth: 2 })).content); return 'continue';
+      renderer.info((await executeWorkspaceScan({ path: '.', max_depth: state.root ? 2 : 1 })).content); return 'continue';
     case 'diff': {
       if (!state.root) { renderer.info('No project is open. Use /open <path>.'); return 'continue'; }
       const status = await executeGit({ action: 'status' });
@@ -153,10 +152,12 @@ async function handleCommand(command: ComposerInput, state: WorkspaceState): Pro
       renderer.info(sessions.length ? sessions.slice(0, 8).map(session => `${session.id.slice(0, 8)}  ${session.title || 'conversation'}  ${session.updated_at}`).join('\n') : 'No previous conversations in this repository.'); return 'continue';
     }
     case 'settings': { const config = loadConfig(); renderer.info(`Provider: ${config.provider}\nModel: ${config.model || 'auto'}\nTheme: ${config.tui?.theme || 'field'}\nWorkspace: ${state.root || 'general chat'}`); return 'continue'; }
-    case 'open': {
-      const path = resolve(command.argument || '.'); const opened = resolveWorkspace(path);
-      if (!opened.root) { renderer.info(`${path} has no project marker; remaining in general chat.`); return 'continue'; }
-      process.chdir(opened.root); state.root = opened.root; setToolCwd(opened.root); renderer.success(`Opened ${opened.root}`); return 'continue';
+    case 'open':
+    case 'cd': {
+      const path = resolve(command.argument || '.');
+      process.chdir(path); const opened = resolveWorkspace(path);
+      state.root = opened.root; setToolCwd(opened.root || path);
+      renderer.success(opened.root ? `Opened ${opened.root}` : `Working in ${path} (folder — git optional)`); return 'continue';
     }
     case 'effort': {
       const val = command.argument as 'low' | 'medium' | 'high';
@@ -222,7 +223,9 @@ export async function runWorkspace(options: WorkspaceOptions = {}): Promise<void
     try {
       await agentLoop({ prompt: composer.argument, resume: true, oneShot: true, provider: options.provider, model: state.model,
         autoApprove: options.autoApprove || state.mode === 'execute', concise: options.concise, maxTurns: options.maxTurns,
-        attachments, workspaceKey: state.root ? workspaceKey(state.root) : 'general', workspaceRoot: state.root, generalChat: !state.root,
+        attachments, workspaceKey: state.root ? workspaceKey(state.root) : `folder:${workspaceKey(process.cwd())}`,
+        workspaceRoot: state.root, cwd: process.cwd(), allowWrites: Boolean(state.root),
+        generalChat: !state.root,
         mode: state.mode, approvedRisks: state.approvedRisks, onEvent: event });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);

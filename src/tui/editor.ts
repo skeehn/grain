@@ -56,8 +56,9 @@ export class LineEditor {
     if (data === '\x1b[F' || data === '\x05') { this.cursor = this.chars.length; return 'changed'; }
     if (data === '\x1b[3~') { if (this.cursor < this.chars.length) this.chars.splice(this.cursor, 1); return 'changed'; }
     if (data === '\x7f' || data === '\b') { if (this.cursor > 0) this.chars.splice(--this.cursor, 1); return 'changed'; }
-    if (data === '\r') return 'submit';
-    if (data === '\n') { this.insert('\n'); return 'changed'; }
+    // Enter must always send. Terminals emit CR, LF, or CRLF; only bracketed
+    // paste (handled above) is allowed to insert a real newline.
+    if (data === '\r' || data === '\n') return 'submit';
     if (data === '\x03') return 'cancel';
     if (data === '\x0c') return 'clear';
     if (data === '\t') return 'tab';
@@ -73,6 +74,7 @@ export class LineEditor {
     let input = this.pendingInput + data; this.pendingInput = ''; const actions: EditorAction[] = [];
     const escapes = ['\x1b[200~', '\x1b[201~', '\x1b[A', '\x1b[B', '\x1b[C', '\x1b[D', '\x1b[H', '\x1b[F', '\x1b[3~'];
     while (input) {
+      if (input.startsWith('\r\n')) { actions.push(this.feed('\r')); input = input.slice(2); continue; }
       if (input.startsWith('\x1b[200~')) {
         const end = input.indexOf('\x1b[201~', 6);
         if (end < 0) { this.pendingInput = input; break; }

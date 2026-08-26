@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, test } from 'bun:test';
 import { mkdtempSync, readFileSync, symlinkSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { LocalWorkspaceFS } from '../src/workspace/index.js';
+import { LocalWorkspaceFS, expandUserPath } from '../src/workspace/index.js';
 
 let root: string;
 beforeEach(() => { root = mkdtempSync(join(tmpdir(), 'grain-workspace-')); });
@@ -24,6 +24,15 @@ describe('LocalWorkspaceFS', () => {
     fs.writeAtomic('a.txt', 'second\n', read.hash);
     expect(readFileSync(join(root, 'a.txt'), 'utf8')).toBe('second\n');
     expect(() => fs.writeAtomic('a.txt', 'third', read.hash)).toThrow('changed since read');
+  });
+
+  test('reads an explicit ~/ path outside the project and refuses to write it', () => {
+    const home = mkdtempSync(join(tmpdir(), 'grain-home-'));
+    writeFileSync(join(home, 'named.txt'), 'hello from home\n');
+    const fs = new LocalWorkspaceFS(root, { home });
+    expect(expandUserPath('~/named.txt', home)).toBe(join(home, 'named.txt'));
+    expect(fs.readRange('~/named.txt').content).toBe('hello from home\n');
+    expect(() => fs.writeAtomic('~/named.txt', 'nope')).toThrow('escapes workspace');
   });
 
   test('skips ignored and binary files during search', () => {

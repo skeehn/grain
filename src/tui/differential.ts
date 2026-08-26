@@ -1,3 +1,4 @@
+import { blankFrame } from './frame.js';
 import type { CellStyle, TerminalCapabilities, TuiFrame } from './types.js';
 
 const sameStyle = (a: CellStyle, b: CellStyle) => a.foreground === b.foreground && a.background === b.background && a.bold === b.bold && a.dim === b.dim;
@@ -59,6 +60,16 @@ export function diffFrames(previous: TuiFrame | undefined, next: TuiFrame, capab
 export class DifferentialRenderer {
   private previous?: TuiFrame;
   constructor(private readonly capabilities: TerminalCapabilities, private readonly write: (value: string) => void = value => process.stdout.write(value)) {}
-  render(frame: TuiFrame): string { const patch = diffFrames(this.previous, frame, this.capabilities); this.write(patch); this.previous = frame; return patch; }
+  render(frame: TuiFrame): string {
+    if (!this.previous) {
+      const fill = frame.cells[0]?.style || {};
+      this.write(`\x1b[H\x1b[2J${styleAnsi(fill, this.capabilities)}`);
+      this.previous = blankFrame(frame.width, frame.height, fill);
+    }
+    const patch = diffFrames(this.previous, frame, this.capabilities);
+    this.write(patch);
+    this.previous = frame;
+    return patch;
+  }
   invalidate(): void { this.previous = undefined; }
 }

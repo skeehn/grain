@@ -32,11 +32,11 @@ describe('full-screen TUI PTY wiring', () => {
   test('honors --no-alt-screen through the workspace orchestrator', async () => {
     if (process.platform === 'win32' || !Bun.which('python3')) return;
     const { exitCode, text, stderr } = await runPty([
-      { wait: 'describe a task', send: '/help\r' },
+      { wait: 'enter sends', send: '/help\r' },
       { wait: 'MEMORY ADMIN', send: '/quit\r' },
     ]);
     expect(exitCode, `PTY child stderr:\n${stderr}\nPTY output:\n${text}`).toBe(0);
-    expect(text).toContain('grain');
+    expect(text).toContain('GRAIN');
     expect(text).toContain('MODELS');
     expect(text).toContain('INSPECT');
     expect(text).toContain('ORCHESTRATE');
@@ -47,7 +47,7 @@ describe('full-screen TUI PTY wiring', () => {
   test('executes daily-driver commands and durable workflow creation in one session', async () => {
     if (process.platform === 'win32' || !Bun.which('python3')) return;
     const { exitCode, text, stderr } = await runPty([
-      { wait: 'describe a task', send: '/settings\r' },
+      { wait: 'enter sends', send: '/settings\r' },
       { wait: 'Provider:', send: '/mode plan\r' },
       { wait: 'Mode: plan', send: '/budget turns 3\r' },
       { wait: 'Turn budget: 3', send: '/workflow pair audit the harness\r' },

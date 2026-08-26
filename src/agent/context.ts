@@ -346,10 +346,24 @@ export function compactWithRecord(messages: Message[], entryIds: string[] = [], 
   } };
 }
 
+function engramMiss(result: { content: unknown; is_error?: boolean }): boolean {
+  return Boolean(result.is_error) || /^No results|engram not available/iu.test(String(result.content));
+}
+
+export const ENGRAM_UNAVAILABLE = '__ENGRAM_UNAVAILABLE__';
+
 export async function engramRetrieve(query: string, project?: string): Promise<string> {
-  const result = await executeEngram({ action: 'search', query, top_k: 5, project });
-  if (result.is_error || /^No results|engram not available/iu.test(String(result.content))) return '';
-  return String(result.content);
+  const unscoped = await executeEngram({ action: 'search', query, top_k: 5 });
+  const scoped = project
+    ? await executeEngram({ action: 'search', query, top_k: 5, project })
+    : { content: '', is_error: false as boolean | undefined };
+  if (/engram not available/iu.test(String(unscoped.content)) || (unscoped.is_error && /unavailable|ECONNREFUSED/i.test(String(unscoped.content)))) {
+    return ENGRAM_UNAVAILABLE;
+  }
+  const parts = [unscoped, scoped]
+    .filter(result => !engramMiss(result) && String(result.content).trim())
+    .map(result => String(result.content));
+  return [...new Set(parts)].join('\n\n');
 }
 
 export async function engramStore(fact: string, tags: string[] = ['grain-auto'], project?: string): Promise<void> {

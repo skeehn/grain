@@ -10,7 +10,7 @@ import { spawn, type ChildProcessByStdio } from 'child_process';
 import type { Readable } from 'stream';
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'fs';
 import { homedir } from 'os';
-import { join } from 'path';
+import { join, resolve } from 'path';
 import { createHash } from 'crypto';
 import type { Message, Provider, ProviderStreamOptions, StreamEvent, Tool } from './types.js';
 
@@ -135,9 +135,49 @@ export function buildAgentPrompt(messages: Message[], resuming: boolean): string
 
 /** Subscription credentials live in the CLI's own login, never in Grain's env. */
 function subscriptionEnv(agent: CliAgentId): NodeJS.ProcessEnv {
-  const env = { ...process.env };
+  const env: NodeJS.ProcessEnv = { ...process.env, CI: '1', TERM: 'dumb', NO_COLOR: '1' };
   if (agent === 'claude-code') { delete env.ANTHROPIC_API_KEY; delete env.ANTHROPIC_AUTH_TOKEN; }
   return env;
+}
+
+/** argv for a child coding-agent CLI. Exported so tests can lock the flags. */
+export function buildCliAgentArgv(
+  name: CliAgentId,
+  prompt: string,
+  resumeId: string | undefined,
+  options: { model?: string; write?: boolean } = {},
+): string[] {
+  const model = options.model && options.model !== 'auto' && options.model !== 'default' ? options.model : undefined;
+  const write = options.write !== false;
+  if (name === 'claude-code') {
+    const args = ['-p', prompt, '--output-format', 'stream-json', '--verbose', '--include-partial-messages'];
+    if (model) args.push('--model', model);
+    args.push('--permission-mode', write ? 'acceptEdits' : 'plan');
+    if (resumeId) args.push('--resume', resumeId);
+    return args;
+  }
+  if (name === 'codex') {
+    const args = ['exec'];
+    if (resumeId) args.push('resume', resumeId);
+    args.push('--json', '--skip-git-repo-check', '--color', 'never');
+    if (model) args.push('-m', model);
+    args.push('-s', write ? 'workspace-write' : 'read-only');
+    if (write) args.push('--approve-for-me');
+    args.push(prompt);
+    return args;
+  }
+  if (name === 'grok') {
+    const args = ['-p', prompt, '--output-format', 'streaming-messages-json', '--include-partial-messages', '--no-subagents'];
+    if (model) args.push('-m', model);
+    args.push('--permission-mode', write ? 'acceptEdits' : 'plan');
+    if (resumeId) args.push('--resume', resumeId);
+    return args;
+  }
+  const args = ['run', '--format', 'json'];
+  if (model) args.push('-m', model);
+  if (resumeId) args.push('-s', resumeId);
+  args.push(prompt);
+  return args;
 }
 
 // ─── Provider ─────────────────────────────────────────────────────────────────
@@ -159,35 +199,8 @@ export class CliAgentProvider implements Provider {
     this.model = model && model !== 'default' ? model : this.definition.defaultModel;
   }
 
-  private argv(prompt: string, resumeId: string | undefined): string[] {
-    const model = this.model && this.model !== 'auto' ? this.model : undefined;
-    if (this.name === 'claude-code') {
-      const args = ['-p', prompt, '--output-format', 'stream-json', '--verbose', '--include-partial-messages'];
-      if (model) args.push('--model', model);
-      args.push('--permission-mode', this.options.write === false ? 'plan' : 'acceptEdits');
-      if (resumeId) args.push('--resume', resumeId);
-      return args;
-    }
-    if (this.name === 'codex') {
-      const args = ['exec', '--json', '--skip-git-repo-check'];
-      if (model) args.push('-m', model);
-      args.push('-s', this.options.write === false ? 'read-only' : 'workspace-write');
-      if (resumeId) return ['exec', 'resume', resumeId, '--json', ...(model ? ['-m', model] : []), prompt];
-      args.push(prompt);
-      return args;
-    }
-    if (this.name === 'grok') {
-      const args = ['-p', prompt, '--output-format', 'streaming-messages-json', '--include-partial-messages', '--no-subagents'];
-      if (model) args.push('-m', model);
-      args.push('--permission-mode', this.options.write === false ? 'plan' : 'acceptEdits');
-      if (resumeId) args.push('--resume', resumeId);
-      return args;
-    }
-    const args = ['run', '--format', 'json'];
-    if (model) args.push('-m', model);
-    if (resumeId) args.push('-s', resumeId);
-    args.push(prompt);
-    return args;
+  private argv(prompt: string, resumeId: string | undefined, write: boolean): string[] {
+    return buildCliAgentArgv(this.name, prompt, resumeId, { model: this.model, write });
   }
 
   /** Translate one CLI event into stream events. Narration keeps the outer
@@ -238,8 +251,14 @@ export class CliAgentProvider implements Provider {
       if (message.type === 'session_configured' && message.session_id) state.sessionId = message.session_id;
       if (message.type === 'agent_message_delta' && message.delta) { state.text += message.delta; state.sawOutput = true; yield { type: 'text_delta', text: message.delta }; }
       else if (message.type === 'agent_message' && !state.sawOutput && message.message) { state.sawOutput = true; yield { type: 'text_delta', text: String(message.message) }; }
-      else if (message.type === 'exec_command_begin') yield { type: 'text_delta', text: `\n· ${Array.isArray(message.command) ? message.command.join(' ') : message.command}\n` };
-      else if (message.type === 'token_count' && message.info) {
+      else if (message.type === 'agent_reasoning_delta' && (message.delta || message.text)) {
+        yield { type: 'reasoning_delta', text: String(message.delta || message.text) };
+      } else if (message.type === 'agent_reasoning' && (message.text || message.message)) {
+        yield { type: 'reasoning_delta', text: String(message.text || message.message) };
+      } else if (message.type === 'exec_command_begin') {
+        state.sawOutput = true;
+        yield { type: 'text_delta', text: `\n· ${Array.isArray(message.command) ? message.command.join(' ') : message.command}\n` };
+      } else if (message.type === 'token_count' && message.info) {
         yield { type: 'usage', input_tokens: message.info.total_token_usage?.input_tokens || 0,
           output_tokens: message.info.total_token_usage?.output_tokens || 0 };
       } else if (message.type === 'error') yield { type: 'error', error: String(message.message || 'Codex reported an error') };
@@ -254,11 +273,16 @@ export class CliAgentProvider implements Provider {
 
   async *stream(messages: Message[], system: string, _tools: Tool[], options?: ProviderStreamOptions): AsyncIterable<StreamEvent> {
     const cwd = this.options.cwd || process.cwd();
+    const atHome = resolve(cwd) === resolve(homedir());
+    const write = this.options.write !== false && !atHome;
     const resumeId = this.options.fresh ? undefined : recallCliSession(this.name, cwd);
-    const prompt = buildAgentPrompt(messages, Boolean(resumeId));
+    let prompt = buildAgentPrompt(messages, Boolean(resumeId));
+    if (atHome && prompt.trim()) {
+      prompt = `General chat — this is not a code repository. Answer the user directly. Do not scan, list, or search ${cwd}.\n\n${prompt}`;
+    }
     if (!prompt.trim()) { yield { type: 'message_end', stop_reason: 'end_turn' }; return; }
 
-    const args = this.argv(prompt, resumeId);
+    const args = this.argv(prompt, resumeId, write);
     // A cold Claude Code session accepts Grain's project instructions; a resumed
     // one already carries them, and re-sending would duplicate every turn.
     if (this.name === 'claude-code' && !resumeId && system.trim()) {
@@ -267,6 +291,8 @@ export class CliAgentProvider implements Provider {
     if (this.name === 'grok' && !resumeId && system.trim()) {
       args.push('--rules', system.slice(0, 8_000));
     }
+
+    yield { type: 'text_delta', text: `Starting ${this.definition.displayName}…\n` };
 
     let child: ChildProcessByStdio<null, Readable, Readable>;
     try {
@@ -277,6 +303,8 @@ export class CliAgentProvider implements Provider {
     }
 
     const state: StreamState = { text: '', sawOutput: false };
+    const startedAt = Date.now();
+    const FIRST_BYTE_MS = 45_000;
     const queue: StreamEvent[] = [];
     let done = false; let failure: string | undefined; let stderr = '';
     let wake: (() => void) | undefined;
@@ -306,8 +334,21 @@ export class CliAgentProvider implements Provider {
 
     try {
       while (!done || queue.length) {
-        if (!queue.length) { await new Promise<void>(resolve => { wake = resolve; setTimeout(resolve, 250); }); continue; }
-        yield queue.shift()!;
+        // Usage-only events must not postpone the first-byte watchdog — Codex
+        // can emit token_count forever while the TUI looks frozen on "hi".
+        if (!state.sawOutput && Date.now() - startedAt > FIRST_BYTE_MS) {
+          failure = `${this.definition.displayName} produced no output in ${Math.round(FIRST_BYTE_MS / 1000)}s.`
+            + (stderr.trim() ? `\n${stderr.trim()}` : ` Is ${this.definition.binary} installed and logged in?`);
+          abort();
+          break;
+        }
+        if (!queue.length) {
+          await new Promise<void>(resolve => { wake = resolve; setTimeout(resolve, 250); });
+          continue;
+        }
+        const event = queue.shift()!;
+        if (event.type === 'text_delta' || event.type === 'reasoning_delta' || event.type === 'error') state.sawOutput = true;
+        yield event;
       }
       if (state.sessionId) rememberCliSession(this.name, cwd, state.sessionId);
       if (failure) { yield { type: 'error', error: failure }; return; }

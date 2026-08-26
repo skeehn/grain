@@ -45,7 +45,8 @@ Two checks that catch what the above cannot:
 stdin does nothing useful and `script(1)` fails on a socket stdin. Drive it with
 `tests/fixtures/pty-driver.py`, or a `python3` `pty.fork()` harness that sends
 keys and replays the ANSI into a screen buffer. `tests/tui-pty.test.ts` is the
-worked example. **Enter is `\r`, not `\n`.**
+worked example. **Enter submits on CR, LF, or CRLF.** Newlines inside a message
+come from bracketed paste, not from Enter.
 
 **A clean clone must build.** This repository once had committed code importing
 files that were never staged, so `git clone && bun run build` failed for

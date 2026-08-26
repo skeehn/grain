@@ -20,13 +20,27 @@ function binary(buffer: Buffer): boolean {
   return sample.length > 0 && controls / sample.length > 0.1;
 }
 
+export function expandUserPath(path: string, home = homedir()): string {
+  if (path === '~') return home;
+  if (path.startsWith('~/') || path.startsWith('~\\')) return join(home, path.slice(2));
+  return path;
+}
+
+function isInside(root: string, path: string): boolean {
+  const rel = relative(root, path);
+  return rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel);
+}
+
 export class LocalWorkspaceFS implements WorkspaceFS {
   readonly root: string;
+  private readonly home: string;
   private readonly ignores: string[];
 
-  constructor(root = process.cwd()) {
+  constructor(root = process.cwd(), options?: { home?: string }) {
     if (!existsSync(root)) throw new Error(`Workspace root does not exist: ${root}`);
     this.root = realpathSync(root);
+    const home = resolve(options?.home ?? homedir());
+    this.home = existsSync(home) ? realpathSync(home) : home;
     this.ignores = this.loadIgnores();
   }
 
@@ -41,15 +55,21 @@ export class LocalWorkspaceFS implements WorkspaceFS {
   }
 
   private assertInside(path: string): void {
-    const rel = relative(this.root, path);
-    if (rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel)) throw new Error(`Path escapes workspace: ${path}`);
+    if (!isInside(this.root, path)) throw new Error(`Path escapes workspace: ${path}`);
   }
 
-  resolve(path: string, mustExist = false): string {
-    const requested = resolve(this.root, path);
+  private assertAllowed(path: string, access: 'read' | 'write'): void {
+    if (isInside(this.root, path)) return;
+    if (access === 'read' && isInside(this.home, path)) return;
+    throw new Error(`Path escapes workspace: ${path}`);
+  }
+
+  resolve(path: string, mustExist = false, access: 'read' | 'write' = 'write'): string {
+    const expanded = expandUserPath(path, this.home);
+    const requested = isAbsolute(expanded) ? resolve(expanded) : resolve(this.root, expanded);
     if (existsSync(requested)) {
       const canonical = realpathSync(requested);
-      this.assertInside(canonical);
+      this.assertAllowed(canonical, access);
       const info = lstatSync(canonical);
       if (info.isSocket() || info.isFIFO() || info.isCharacterDevice() || info.isBlockDevice()) {
         throw new Error(`Unsupported filesystem object: ${path}`);
@@ -60,9 +80,9 @@ export class LocalWorkspaceFS implements WorkspaceFS {
     let parent = dirname(requested);
     while (!existsSync(parent) && parent !== dirname(parent)) parent = dirname(parent);
     const canonicalParent = realpathSync(parent);
-    this.assertInside(canonicalParent);
+    this.assertAllowed(canonicalParent, access);
     const candidate = resolve(canonicalParent, relative(parent, requested));
-    this.assertInside(candidate);
+    this.assertAllowed(candidate, access);
     return candidate;
   }
 
@@ -84,7 +104,7 @@ export class LocalWorkspaceFS implements WorkspaceFS {
   }
 
   stat(path: string): FileSnapshot {
-    const full = this.resolve(path, true);
+    const full = this.resolve(path, true, 'read');
     const info = statSync(full);
     const rel = relative(this.root, full);
     if (!info.isFile()) return { path: rel, existed: true, mode: info.mode, size: info.size };
@@ -97,15 +117,19 @@ export class LocalWorkspaceFS implements WorkspaceFS {
   }
 
   list(path = '.', maxDepth = 8): string[] {
-    const base = this.resolve(path, true);
-    if (statSync(base).isFile()) return [relative(this.root, base)];
+    const base = this.resolve(path, true, 'read');
+    if (statSync(base).isFile()) return [isInside(this.root, base) ? relative(this.root, base) : base];
+    const atHomeRoot = resolve(base) === this.home;
+    const homeWorkspace = this.root === this.home;
+    const depthCap = atHomeRoot ? Math.min(maxDepth, 1) : homeWorkspace ? Math.min(maxDepth, 3) : maxDepth;
     const output: string[] = [];
     const walk = (dir: string, depth: number) => {
-      if (depth > maxDepth) return;
+      if (depth > depthCap || output.length >= (atHomeRoot ? 400 : 8_000)) return;
       for (const entry of readdirSync(dir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
+        if (homeWorkspace && entry.name.startsWith('.')) continue;
         const full = join(dir, entry.name);
-        const rel = relative(this.root, full);
-        if (this.ignored(rel) || entry.isSymbolicLink()) continue;
+        const rel = isInside(this.root, full) ? relative(this.root, full) : full;
+        if ((isInside(this.root, full) && this.ignored(rel)) || entry.isSymbolicLink()) continue;
         if (entry.isDirectory()) walk(full, depth + 1);
         else if (entry.isFile()) output.push(rel);
       }
@@ -115,25 +139,25 @@ export class LocalWorkspaceFS implements WorkspaceFS {
   }
 
   readRange(path: string, offset = 1, limit = 500): ReadRangeResult {
-    const full = this.resolve(path, true);
+    const full = this.resolve(path, true, 'read');
     const content = readFileSync(full);
     if (content.length > MAX_TEXT_BYTES) throw new Error(`File exceeds ${MAX_TEXT_BYTES} byte text limit: ${path}`);
     if (binary(content)) throw new Error(`Binary file cannot be read as text: ${path}`);
     const lines = content.toString('utf8').split('\n');
     const start = Math.max(0, offset - 1);
     const selected = lines.slice(start, start + Math.max(1, limit));
-    return { path: relative(this.root, full), content: selected.join('\n'), start_line: start + 1,
+    return { path: isInside(this.root, full) ? relative(this.root, full) : full, content: selected.join('\n'), start_line: start + 1,
       end_line: start + selected.length, total_lines: lines.length, hash: digest(content) };
   }
 
   search(pattern: string, path = '.', limit = 200): SearchMatch[] {
     const matcher = new RegExp(pattern, 'i');
-    const base = this.resolve(path, true);
-    const files = statSync(base).isFile() ? [relative(this.root, base)] : this.list(path);
+    const base = this.resolve(path, true, 'read');
+    const files = statSync(base).isFile() ? [isInside(this.root, base) ? relative(this.root, base) : base] : this.list(path);
     const matches: SearchMatch[] = [];
     for (const rel of files) {
       if (matches.length >= limit) break;
-      const content = readFileSync(this.resolve(rel, true));
+      const content = readFileSync(this.resolve(rel, true, 'read'));
       if (content.length > MAX_TEXT_BYTES || binary(content)) continue;
       for (const [index, line] of content.toString('utf8').split('\n').entries()) {
         matcher.lastIndex = 0;

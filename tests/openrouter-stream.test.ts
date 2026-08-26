@@ -30,7 +30,7 @@ describe('OpenRouter streaming', () => {
     expect(getProvider('groq').model).toBe('openai/gpt-oss-120b');
   });
 
-  test('adds automatic free fallback after a specifically selected free model', async () => {
+  test('does not reroute a specifically selected free model through the auto-free router', async () => {
     let requestBody: any;
     globalThis.fetch = (async (_input, init) => {
       requestBody = JSON.parse(String(init?.body));
@@ -42,7 +42,7 @@ describe('OpenRouter streaming', () => {
     )) { /* consume */ }
 
     expect(requestBody.model).toBe('qwen/qwen3-coder:free');
-    expect(requestBody.models).toEqual([OPENROUTER_FREE_MODEL]);
+    expect(requestBody.models).toBeUndefined();
   });
 
   test('does not silently replace a selected paid model', async () => {

@@ -8,8 +8,8 @@ export function graphemeWidth(value: string): number {
   return /[\u1100-\u115f\u2329\u232a\u2e80-\ua4cf\uac00-\ud7a3\uf900-\ufaff\ufe10-\ufe19\ufe30-\ufe6f\uff00-\uff60\uffe0-\uffe6]/u.test(value) ? 2 : 1;
 }
 
-export function blankFrame(width: number, height: number): TuiFrame {
-  const cell = (): Cell => ({ grapheme: ' ', width: 1, style: {} });
+export function blankFrame(width: number, height: number, style: CellStyle = {}): TuiFrame {
+  const cell = (): Cell => ({ grapheme: ' ', width: 1, style: { ...style } });
   return { width, height, cells: Array.from({ length: width * height }, cell) };
 }
 
