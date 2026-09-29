@@ -2,7 +2,7 @@
 
 Grain is a local-first coding agent: TypeScript on Bun, a streaming agent loop
 with brokered tools, durable run journals, engram-backed memory, and a
-full-screen terminal workspace.
+scrolling terminal conversation for coding and general work.
 
 This file is the working contract for anyone (human or agent) changing grain.
 Read it before the first edit; it is kept accurate on purpose.
@@ -41,11 +41,13 @@ bun run install:smoke
 
 Two checks that catch what the above cannot:
 
-**The TUI needs a real pty.** It is a full-screen differential renderer; piping
-stdin does nothing useful and `script(1)` fails on a socket stdin. Drive it with
+**The TUI needs a real pty.** It keeps native scrollback and redraws only the
+input line; piping stdin does nothing useful. Drive it with
 `tests/fixtures/pty-driver.py`, or a `python3` `pty.fork()` harness that sends
 keys and replays the ANSI into a screen buffer. `tests/tui-pty.test.ts` is the
-worked example. **Enter submits on CR, LF, or CRLF.** Newlines inside a message
+worked example. `tests/terminal-e2e.test.ts` adds a localhost provider and real
+file/tool/approval/cancellation workflows. Set `GRAIN_E2E_BINARY` to the absolute
+`dist/grain` path to exercise the compiled deliverable. **Enter submits on CR, LF, or CRLF.** Newlines inside a message
 come from bracketed paste, not from Enter.
 
 **A clean clone must build.** This repository once had committed code importing
@@ -78,9 +80,10 @@ src/
     openrouter.ts     base OpenAI-compatible client; groq/xai/vllm extend it
     anthropic.ts bedrock.ts ollama.ts vllm.ts groq.ts xai.ts
   tui/
-    app.ts            the workspace: transcript, panels, commands, key handling
-    overlay.ts        modal pickers (pure state + frame painter)
-    differential.ts   frame diffing → ANSI, with truecolor/256/16 fallbacks
+    app.ts            scrolling conversation, numbered pickers, commands, key handling
+    terminal.ts       ASCII blocks, safe streaming, prompt-only redraw, color fallback
+    overlay.ts        legacy pure picker helpers (not the live UI)
+    differential.ts   legacy frame diffing helpers (not the live UI)
     frame.ts editor.ts theme.ts capabilities.ts status.ts models.ts
   tools/              brokered tools; index.ts registers name → executor
   docs/

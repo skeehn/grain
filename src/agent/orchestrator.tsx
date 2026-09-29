@@ -1,6 +1,5 @@
-// Hybrid orchestrator - use Ink if TTY available, else fallback to simple renderer
+// Interactive invocations share one scrolling terminal; print mode runs once.
 import { agentLoop } from './loop.js';
-import { runWorkspace } from '../workspace/app.js';
 import { runTui } from '../tui/app.js';
 import * as renderer from '../tui/renderer.js';
 import { ensureWorkspaceSetup, openProviderPage } from '../workspace/setup.js';
@@ -24,11 +23,10 @@ export interface OrchestratorOpts {
 
 export async function orchestrate(opts: OrchestratorOpts): Promise<void> {
   if (opts.workspace !== false && process.stdin.isTTY) {
-    if (opts.classic) await runWorkspace(opts);
-    else {
-      await ensureWorkspaceSetup({ prompt: renderer.userPrompt, info: renderer.info, open: openProviderPage });
-      await runTui(opts);
-    }
+    // An explicit selection must not prompt for credentials belonging to the
+    // saved provider. The selected backend will report its own access errors.
+    if (!opts.provider && !opts.model) await ensureWorkspaceSetup({ prompt: renderer.userPrompt, info: renderer.info, open: openProviderPage });
+    await runTui(opts);
     return;
   }
   await agentLoop({

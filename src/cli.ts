@@ -796,7 +796,7 @@ ${bold('MODELS')}  ${dim('one picker for subscriptions, APIs, and local models')
 ${bold('AUTOMATION')}
   grain -p "task" --yes             non-interactive script/CI task
   grain --resume -p "follow up"     continue this repository's latest conversation
-  grain --classic                   line-oriented interactive mode
+  grain --classic                   alias for the default scrolling terminal
   grain jobs run-due               run due jobs (for system cron/launchd)
   grain daemon start|status|stop   supervise scheduled jobs in the background
   --provider <name> --model <id>   one-run override

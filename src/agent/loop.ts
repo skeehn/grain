@@ -706,6 +706,7 @@ export async function agentLoop(opts: AgentOpts): Promise<void> {
       const observeTree = delegatedAgent && workspaceRoot ? watchTree(workspaceRoot) : undefined;
       let reasoningAnnounced = false;
 
+      try {
       for await (const event of withInactivityTimeout(provider.stream(requestMessages, requestSystem, packed.tools, { signal: opts.signal }), STREAM_TIMEOUT, opts.signal)) {
         if (event.type === 'text_delta') {
           if (!spinnerStopped) { spin.stop(); ui.clearLine(); spinnerStopped = true; }
@@ -778,6 +779,9 @@ export async function agentLoop(opts: AgentOpts): Promise<void> {
         }
       }
 
+      } finally {
+      // A failed or cancelled child can still leave edits. Record those too so
+      // the user can inspect and undo partial work instead of losing the trail.
       if (!spinnerStopped) spin.stop();
       if (observeTree) {
         const touched = observeTree();
@@ -786,6 +790,7 @@ export async function agentLoop(opts: AgentOpts): Promise<void> {
           journal.append('tool_completed', { turn: turnCount, name: `${provider.name}:edits`, changed_paths: touched });
           ui.dim(`  ${touched.length} file${touched.length === 1 ? '' : 's'} changed: ${touched.slice(0, 5).join(', ')}${touched.length > 5 ? ` +${touched.length - 5} more` : ''}`);
         }
+      }
       }
       if (!hasToolUse && textBuffer && !delegatedAgent) {
         const extracted = extractTextToolCalls(textBuffer, new Set(availableTools.map(tool => tool.name)));

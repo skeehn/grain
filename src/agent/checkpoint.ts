@@ -5,7 +5,7 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync, rmSync } from 'fs';
 import { dirname } from 'path';
 
-interface Snapshot { path: string; existed: boolean; content: string }
+interface Snapshot { path: string; existed: boolean; content: string | Buffer }
 
 let changeset = new Map<string, Snapshot>();
 
@@ -17,6 +17,11 @@ export function snapshotBeforeEdit(absPath: string): void {
   if (changeset.has(absPath)) return; // keep the ORIGINAL pre-task state
   const existed = existsSync(absPath);
   changeset.set(absPath, { path: absPath, existed, content: existed ? safeRead(absPath) : '' });
+}
+
+/** Store a pre-run snapshot collected before a subscription CLI edited it. */
+export function snapshotExternalEdit(path: string, existed: boolean, content: Buffer): void {
+  if (!changeset.has(path)) changeset.set(path, { path, existed, content });
 }
 
 function safeRead(p: string): string { try { return readFileSync(p, 'utf8'); } catch { return ''; } }

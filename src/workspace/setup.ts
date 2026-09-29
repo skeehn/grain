@@ -44,6 +44,8 @@ export function providerReady(config: GrainConfig, env: NodeJS.ProcessEnv = proc
   if (AGENT_PROVIDERS.some(agent => agent.id === config.provider)) return true;
   if (config.provider === 'bedrock') return Boolean(env.AWS_REGION || env.AWS_PROFILE || env.AWS_ACCESS_KEY_ID);
   if (config.provider === 'ollama') return ollamaDetected;
+  const custom = config.providers?.[config.provider];
+  if (custom) return Boolean(env[custom.apiKeyEnv]);
   const option = PROVIDERS.find(provider => provider.id === config.provider);
   return Boolean(option?.envKey && env[option.envKey]);
 }
@@ -107,7 +109,9 @@ export async function ensureWorkspaceSetup(
     `  ${index + 1}. ${provider.label}${provider.subscription ? ' · signed in, no API key needed' : provider.detected ? ' · ready' : ''}`));
   let selected: ProviderSetup | undefined;
   do {
-    const rawChoice = (await io.prompt(`Provider [1-${providers.length}]`))?.trim() || '';
+    const answer = await io.prompt(`Provider [1-${providers.length}]`);
+    if (answer === null) throw new Error('SIGINT');
+    const rawChoice = answer.trim();
     selected = selectProvider(providers, rawChoice);
     if (!selected) io.info('Invalid provider choice. Enter a listed number or provider name.');
   } while (!selected);

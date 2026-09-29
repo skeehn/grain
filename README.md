@@ -1,6 +1,6 @@
 # grain
 
-Local-first AI coding agent with governed learning and persistent memory.
+Local-first terminal agent for coding, research, writing, and marketing, with governed learning and persistent memory.
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/skeehn/grain/main/install.sh | sh
@@ -10,7 +10,7 @@ curl -fsSL https://raw.githubusercontent.com/skeehn/grain/main/install.sh | sh
 
 ## What it is
 
-grain is a **multi-agent AI coding orchestrator** — it reads your codebase, writes code, runs commands, and coordinates with other AI agents to get work done.
+grain is a **terminal work harness** — it reads your files, creates deliverables, runs commands, and coordinates with other AI agents. A Git repository is optional.
 
 **Key features:**
 - 🤖 **Multi-agent orchestration** — Coordinate Grain-native, Claude Code, Codex, OpenCode, Hermes, or custom agents
@@ -19,7 +19,7 @@ grain is a **multi-agent AI coding orchestrator** — it reads your codebase, wr
 - 🎯 **Smart routing** — Auto-routes tasks to the cheapest capable model
 - 🔌 **MCP support** — Connect to any Model Context Protocol server (Computer Use, GitHub, etc.)
 - 🩺 **Guided setup** — `grain setup` and `grain doctor` validate providers, profiles, executors, Git, and Engram
-- 🌾 **Purpose-built terminal UI** — Ordered Bayer-dither activity, compact tool cards, no-color and reduced-motion support
+- 🌾 **Scrolling terminal UI** — Native scrollback, streaming answers, ASCII mascot and tool blocks, numbered pickers, and no-color/16/256/truecolor support
 - 🧪 **One-command quality gate** — Tests, typecheck, and production build via `bun run check`
 - 🧾 **Replayable runs** — Hash-chained event journals record model, policy, tool, usage, and terminal outcomes
 - 🗂️ **Confined filesystem** — Symlink-safe workspace roots, optimistic hashes, atomic writes, and content-addressed snapshots
@@ -49,7 +49,7 @@ Grain connects a provider in the conversation the first time you run it.
 ## Quick start
 
 ```sh
-# Open the full-screen workspace
+# Open the scrolling terminal conversation
 grain
 
 # Or begin with a task
@@ -69,6 +69,9 @@ grain            # then type /model
 grain --model claude-code:opus "fix and test this project"
 grain --model openrouter:openrouter/free "fix and test this project"
 
+# Work in an ordinary folder, with no Git repository required
+grain "Read brief.md, draft launch.md for independent designers, then review it"
+
 # Update later
 grain update
 ```
@@ -85,7 +88,7 @@ grain setup                   configure providers and workspace defaults
 grain doctor                  preflight config, executors, Git, and Engram
 grain memory status           inspect Engram transport and governance state
 grain skills validate         validate portable Agent Skills packages
-grain --classic               use the line-oriented compatibility UI
+grain --classic               compatibility alias for the default scrolling UI
 
 # Inside the workspace
 /help                         discover controls
@@ -111,8 +114,26 @@ grain learning migrate PATH   resumably import the verified JSONL ledger to v1
 /wiki build|verify            regenerate repo docs; check they still match code
 ```
 
-Outside a detected project Grain starts in safe general-chat mode; repository
-indexing and filesystem tools stay disabled until `/open PATH` selects a project.
+Grain can read files outside a Git project. In an ordinary work folder, writing
+and shell tools remain available under the selected approval mode. Starting in
+your home directory defaults to bounded, read-only general chat; use `/open PATH`
+to select a work folder. Repository indexing is optional.
+
+Enter submits; bracketed paste preserves multiline text. Up/Down recall input,
+Tab completes an `@file` mention, Ctrl+C cancels an active task or picker, and
+Ctrl+D on an empty idle prompt exits. Use your terminal's normal scrollback and
+selection. `/model` and `/agent` use numbered, filterable lists; blank input
+cancels. `--classic` and `--no-alt-screen` are accepted for compatibility: the
+interactive UI no longer takes over the alternate screen.
+
+`/undo` restores Grain-brokered writes in any work folder. Subscription CLI edits
+are observed in Git workspaces, including already-dirty files and partial failed
+turns. Undo is in-memory for the latest task, not a backup; ignored files and
+symlinks are not restored by the child-agent observer. Review `/diff` before undo.
+
+For research and marketing, supply source files or configure appropriate MCP
+tools. Web browsing, image generation, publishing, and account access depend on
+those tools or the selected child agent; Grain does not invent access or sources.
 
 Scheduled jobs use standard five-field cron expressions (plus `@hourly`,
 `@daily`, `@weekly`, and `@monthly`). Automatic execution belongs to the
@@ -154,6 +175,17 @@ conversation alive across invocations, per repository.
 | `claude-code` | Install the `claude` CLI and sign in | Your Claude subscription |
 | `codex`       | Install the `codex` CLI and sign in  | Your ChatGPT subscription |
 | `opencode`    | Install the `opencode` CLI           | Whatever OpenCode is configured with |
+| `grok`        | Install and sign into the `grok` CLI | The CLI's own account/configuration |
+
+Grain does not silently exchange a subscription for a paid API. CLI versions,
+login state, subscription quotas, and model entitlements still apply. `auto`
+means the child CLI's configured default; use `/model provider:model` to override
+it. A present binary or key alone is not proof of usable model access.
+
+Custom OpenAI-compatible providers and stdio agent profiles cover additional
+backends. This is extensibility, not a guarantee that every API, model, or
+subscription speaks a compatible protocol. See [terminal verification](docs/terminal-verification.md)
+for the tested paths and remaining limits.
 
 ### Direct APIs and local runtimes
 
