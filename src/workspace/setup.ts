@@ -44,6 +44,9 @@ export function providerReady(config: GrainConfig, env: NodeJS.ProcessEnv = proc
   if (AGENT_PROVIDERS.some(agent => agent.id === config.provider)) return true;
   if (config.provider === 'bedrock') return Boolean(env.AWS_REGION || env.AWS_PROFILE || env.AWS_ACCESS_KEY_ID);
   if (config.provider === 'ollama') return ollamaDetected;
+  // vLLM may be keyless; connection errors belong to the configured backend,
+  // not the first-run API-key wizard.
+  if (config.provider === 'vllm') return true;
   const custom = config.providers?.[config.provider];
   if (custom) return Boolean(env[custom.apiKeyEnv]);
   const option = PROVIDERS.find(provider => provider.id === config.provider);
