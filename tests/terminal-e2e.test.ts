@@ -10,10 +10,15 @@ const sse = (delta: unknown) => `data: ${JSON.stringify({ choices: [{ index: 0, 
 const answer = (text: string) => new Response(sse({ content: text }) + 'data: [DONE]\n\n', { headers: { 'content-type': 'text/event-stream' } });
 const call = (name: string, input: unknown, id = name) => new Response(sse({ tool_calls: [{ index: 0, id, type: 'function', function: { name, arguments: JSON.stringify(input) } }] }) + 'data: [DONE]\n\n', { headers: { 'content-type': 'text/event-stream' } });
 
-async function scenario(respond: (body: any) => Response, steps: Step[], cliScript?: string) {
+async function scenario(respond: (body: any) => Response, steps: Step[], cliScript?: string, extensions = false) {
   const dir = mkdtempSync(join(tmpdir(), 'grain-terminal-e2e-'));
   const home = join(dir, 'state'); const folder = join(dir, 'project');
   mkdirSync(home); mkdirSync(folder);
+  if (extensions) {
+    mkdirSync(join(home, 'skills/launch-copy'), { recursive: true });
+    writeFileSync(join(home, 'skills/launch-copy/SKILL.md'), '---\nname: launch-copy\ndescription: Use for launch copy marketing tasks.\n---\nSKILL_E2E_MARKER: Never invent product prices.\n');
+    writeFileSync(join(home, 'mcp.json'), JSON.stringify({ servers: { fixture: { command: process.execPath, args: [join(repo, 'tests/fixtures/mcp-server.ts')], trust: { enabled: true, allowTools: ['echo'] } } } }));
+  }
   writeFileSync(join(folder, 'sum.cjs'), 'module.exports = (a, b) => a - b;\n');
   writeFileSync(join(folder, 'brief.md'), '# Launch brief\nAudience: independent designers.\nProduct: offline mood boards.\nPrice: not yet decided.\n');
   if (cliScript) {
@@ -47,6 +52,25 @@ async function scenario(respond: (body: any) => Response, steps: Step[], cliScri
 }
 
 describe('real terminal, HTTP provider, and filesystem end to end', () => {
+  test('bare grain loads a portable skill and brokers an approved MCP tool on its first turn', async () => {
+    let turn = 0;
+    const result = await scenario(body => {
+      if (turn++ === 0) {
+        return call('mcp__fixture__echo', { value: 'MCP_E2E_MARKER' });
+      }
+      return answer('MCP_AND_SKILL_COMPLETE');
+    }, [
+      { wait: 'grain>', send: 'Use launch-copy skill and the MCP echo tool for this marketing task.\r' },
+      { wait: '[N]o', send: 'y\r' },
+      { wait: 'MCP_AND_SKILL_COMPLETE', send: '' },
+      { wait: 'grain>', send: '/quit\r' },
+    ], undefined, true);
+    expect(result.requests[0].messages[0].content).toContain('SKILL_E2E_MARKER');
+    expect(result.requests[0].tools.map((tool: any) => tool.function.name)).toContain('mcp__fixture__echo');
+    expect(result.requests[0].tools.map((tool: any) => tool.function.name)).not.toContain('mcp__fixture__blocked');
+    expect(result.requests[1].messages.at(-1).content).toContain('MCP_E2E_MARKER');
+    expect(result.journals).toContain('mcp__fixture__echo'); expect(result.journals).toContain('succeeded');
+  }, 30_000);
   test('failed subscription subprocess edits remain undoable', async () => {
     const result = await scenario(() => answer('unused'), [
       { wait: 'grain>', send: 'Edit sum.cjs\r' },

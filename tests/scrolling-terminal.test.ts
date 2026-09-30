@@ -2,7 +2,7 @@ import { expect, test } from 'bun:test';
 import { ScrollingTerminal, asciiBlock, terminalText } from '../src/tui/terminal.js';
 import { LineEditor } from '../src/tui/editor.js';
 import { parseComposerInput } from '../src/workspace/app.js';
-import { mkdtempSync, readFileSync, writeFileSync, rmSync, existsSync, symlinkSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync, rmSync, existsSync, symlinkSync, mkdirSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -33,6 +33,25 @@ test('child undo never deletes a tracked symlink replaced with a regular file', 
 test('preserves code formatting and quoted attachment paths', () => {
   expect(parseComposerInput('Explain:\n  x =  2\n  y = 3').argument).toBe('Explain:\n  x =  2\n  y = 3');
   expect(parseComposerInput('read @"my notes.md" please')).toEqual({ argument: 'read please', attachments: ['my notes.md'] });
+  expect(parseComposerInput('compare @a.md @"b notes.md" now')).toEqual({ argument: 'compare now', attachments: ['a.md', 'b notes.md'] });
+});
+
+test('child edits in nested projects use workspace-relative paths and ignore siblings', () => {
+  const root = mkdtempSync(join(tmpdir(), 'grain-nested-'));
+  const git = (...args: string[]) => execFileSync('git', args, { cwd: root });
+  try {
+    const project = join(root, 'pkg'); mkdirSync(join(project, 'pkg'), { recursive: true });
+    writeFileSync(join(project, 'a.txt'), 'original');
+    writeFileSync(join(project, 'pkg/a.txt'), 'unrelated duplicate');
+    writeFileSync(join(root, 'sibling.txt'), 'sibling');
+    git('init', '-q'); git('add', '.'); git('-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', 'commit', '-qm', 'baseline');
+    newChangeset(); const done = watchTree(project);
+    writeFileSync(join(project, 'a.txt'), 'changed'); writeFileSync(join(root, 'sibling.txt'), 'outside change');
+    expect(done()).toEqual(['a.txt']); undoLast();
+    expect(readFileSync(join(project, 'a.txt'), 'utf8')).toBe('original');
+    expect(readFileSync(join(project, 'pkg/a.txt'), 'utf8')).toBe('unrelated duplicate');
+    expect(readFileSync(join(root, 'sibling.txt'), 'utf8')).toBe('outside change');
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
 test('streaming is incremental and cannot operate the terminal across chunks', () => {

@@ -1,7 +1,7 @@
 // Agent loop - fluid execution with streaming, error recovery, and quality control
 import type { Message, ContentBlock } from '../providers/types.js';
 import { getProvider, isCliAgentProvider, normalizeProviderError } from '../providers/index.js';
-import { TOOLS, setToolCwd, destroyShell, registerDynamicTool, setQuestionJournal, setQuestionPrompt, setBashOutputSink } from '../tools/index.js';
+import { TOOLS, setToolCwd, destroyShell, registerDynamicTool, clearMcpTools, setQuestionJournal, setQuestionPrompt, setBashOutputSink } from '../tools/index.js';
 import { closeMcpClients, discoverMcpTools } from '../mcp/index.js';
 import { classifyTaskComplexity, routeModel, explainRouting, resolveModelForProvider } from '../router/index.js';
 import { trackToolCall, getContextSummary } from './context-tracker.js';
@@ -291,6 +291,12 @@ async function runReflection(
 }
 
 export async function agentLoop(opts: AgentOpts): Promise<void> {
+  clearMcpTools();
+  try { await runAgentLoop(opts); }
+  finally { await closeMcpClients(); clearMcpTools(); }
+}
+
+async function runAgentLoop(opts: AgentOpts): Promise<void> {
   const ui = opts.ui || renderer;
   const discovered = resolveWorkspace(process.cwd());
   const workspaceRoot = opts.workspaceRoot || discovered.root;
@@ -703,7 +709,7 @@ export async function agentLoop(opts: AgentOpts): Promise<void> {
 
       // A delegated CLI agent edits the tree directly instead of calling Grain's
       // tools, so watch the working tree to learn what it touched.
-      const observeTree = delegatedAgent && workspaceRoot ? watchTree(workspaceRoot) : undefined;
+      const observeTree = delegatedAgent && workspaceRoot ? watchTree(workspaceRoot, message => ui.warn(message)) : undefined;
       let reasoningAnnounced = false;
 
       try {
@@ -826,7 +832,7 @@ export async function agentLoop(opts: AgentOpts): Promise<void> {
         // path too — otherwise those runs leave no trace.
         await recordWork(textBuffer);
 
-        if (opts.oneShot) { journal.transition('succeeded'); closeMcpClients(); return; }
+        if (opts.oneShot) { journal.transition('succeeded'); await closeMcpClients(); return; }
 
         // Interactive: wait for next input
         // If stdin is not a TTY (e.g. subprocess/CI), treat as one-shot and exit
@@ -1068,7 +1074,7 @@ export async function agentLoop(opts: AgentOpts): Promise<void> {
       // without polluting engram/journal with a bogus provider_error.
       if (err?.message === 'SIGINT') {
         destroyShell();
-        closeMcpClients();
+        await closeMcpClients();
         journal.transition('cancelled');
         ui.newLine();
         ui.info('Cancelled.');

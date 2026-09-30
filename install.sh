@@ -46,25 +46,50 @@ detect_platform() {
 # ── Get latest release ───────────────────────────────────────────────────────
 get_latest_version() {
   local version
-  version=$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest" \
+  version=$(curl -fsSL --connect-timeout 10 --max-time 60 "https://api.github.com/repos/${REPO}/releases/latest" \
     | grep '"tag_name"' | sed 's/.*"tag_name": *"\(.*\)".*/\1/' | head -1)
   if [ -z "$version" ]; then
     fail "Could not fetch latest release from GitHub. Check your internet connection."
   fi
+  case "$version" in *[!v0-9.]*|v|v.|v..*) fail "Invalid release version returned by GitHub." ;; esac
   echo "$version"
 }
 
 # ── Download binary ──────────────────────────────────────────────────────────
-download_binary() {
+download_binary() (
   local name="$1" version="$2" dest="$3"
   local url="https://github.com/${REPO}/releases/download/${version}/${name}"
 
-  if ! curl -fsSL --progress-bar "$url" -o "$dest"; then
-    return 1
+  # Download alongside the destination so the final rename is atomic. Never
+  # stream a partial download over the user's working executable.
+  local stage expected actual backup
+  stage=$(mktemp -d "${INSTALL_DIR}/.grain-install-XXXXXX") || exit 1
+  trap 'rm -rf "$stage"' EXIT
+  trap 'exit 1' HUP INT TERM
+  curl -fsSL --connect-timeout 10 --max-time 120 "$url" -o "$stage/$name" || exit 1
+  curl -fsSL --connect-timeout 10 --max-time 60 "https://github.com/${REPO}/releases/download/${version}/SHA256SUMS" -o "$stage/SHA256SUMS" || exit 1
+  expected=$(awk -v name="$name" '$2 == name || $2 == "*" name {print $1}' "$stage/SHA256SUMS")
+  if command -v sha256sum >/dev/null 2>&1; then
+    actual=$(sha256sum "$stage/$name" | awk '{print $1}')
+  elif command -v shasum >/dev/null 2>&1; then
+    actual=$(shasum -a 256 "$stage/$name" | awk '{print $1}')
+  else
+    warn "Install sha256sum or shasum to verify the release."; exit 1
   fi
-  chmod +x "$dest"
-  return 0
-}
+  [ -n "$expected" ] && [ "$actual" = "$expected" ] || { warn "Checksum failed for $name; existing installation untouched."; exit 1; }
+  chmod 755 "$stage/$name" || exit 1
+  if [ "$name" = "grain-$(detect_platform)" ]; then
+    [ "$("$stage/$name" --version)" = "grain ${version}" ] || { warn "Release executable failed version check."; exit 1; }
+  fi
+  [ ! -L "$dest" ] || { warn "Refusing to replace symlink $dest; update using its package manager."; exit 1; }
+  if [ -e "$dest" ]; then
+    [ -f "$dest" ] || exit 1
+    backup="${dest}.backup-$(basename "$stage")"
+    cp -p "$dest" "$backup" || exit 1
+    ok "Previous binary saved to $backup"
+  fi
+  mv -f "$stage/$name" "$dest" || exit 1
+)
 
 # ── Add to PATH hint ─────────────────────────────────────────────────────────
 path_hint() {

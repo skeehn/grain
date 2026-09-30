@@ -609,7 +609,9 @@ async function runWorkspaceTui(options: TuiAppOptions): Promise<void> {
     }
     if (command === 'undo') {
       if (!changedFileCount()) { add('info', 'Nothing to undo from the latest task.'); return; }
-      const undone = undoLast(); add('success', `Undid ${undone.restored.length} modified and ${undone.deleted.length} new files.`); await refreshView('diff'); return;
+      const undone = undoLast(); add('success', `Undid ${undone.restored.length} modified and ${undone.deleted.length} new files.`);
+      if (undone.skipped.length) add('error', `Not restored (snapshots retained):\n${undone.skipped.join('\n')}`);
+      await refreshView('diff'); return;
     }
     if (command === 'context' && arg === 'explain') { await refreshView('context'); return; }
     if (command === 'memory' && arg) {

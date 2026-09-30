@@ -1,6 +1,6 @@
 import { describe, test, expect, afterAll } from 'bun:test';
 import { newChangeset, snapshotBeforeEdit, undoLast, changedFileCount } from '../src/agent/checkpoint.js';
-import { mkdtempSync, writeFileSync, readFileSync, existsSync, rmSync } from 'fs';
+import { mkdtempSync, writeFileSync, readFileSync, existsSync, rmSync, symlinkSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 
@@ -8,6 +8,15 @@ const root = mkdtempSync(join(tmpdir(), 'grain-ckpt-'));
 afterAll(() => rmSync(root, { recursive: true, force: true }));
 
 describe('edit checkpoint / undo', () => {
+  test('rejects a symlink introduced after snapshot and retains it for retry', () => {
+    const f = join(root, 'link.txt'); const target = join(root, 'untouched.txt');
+    writeFileSync(f, 'original'); writeFileSync(target, 'do not overwrite');
+    newChangeset(); snapshotBeforeEdit(f); rmSync(f); symlinkSync(target, f);
+    expect(undoLast().restored).toEqual([]);
+    expect(readFileSync(target, 'utf8')).toBe('do not overwrite');
+    expect(changedFileCount()).toBe(1);
+    rmSync(f); undoLast(); expect(readFileSync(f, 'utf8')).toBe('original');
+  });
   test('restores a modified file to its pre-task content', () => {
     const f = join(root, 'a.txt');
     writeFileSync(f, 'original');

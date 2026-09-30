@@ -27,6 +27,11 @@ paid API call. They test the harness, not a model's reasoning quality.
 | Input and layout | Multiline paste, CR/LF submission, batched input, 42-column resize, no alternate screen |
 | Child CLI protocol | Codex cold/resume argv, current JSONL, UTF-8 chunk boundaries, final record without newline |
 | Undo safety | Existing dirty edits preserved; pre-deleted files remain deleted; symlinks not treated as new files |
+| Nested workspaces | Git-top-level paths normalized to the selected project; sibling files untouched by undo |
+| Skills | CLI add/list/view/validate/delete; real-terminal creation; portable skill body reaches the model |
+| MCP | CLI list/validate/tools; real stdio tool approval/execution; HTTP initialization, session IDs and SSE response matching |
+| Commands | Every documented command's help exits without launching a model/service; safe commands and invalid invocations exercised |
+| Installation/update | Offline npm installation; staged shell installation; corrupt/partial download rejection; checksums, executable verification and backup |
 
 The rest of the suite covers provider selection, custom endpoints, MCP trust,
 tool policy, model capabilities, durable sessions, and orchestration contracts.
@@ -46,6 +51,8 @@ Passing fixtures does **not** certify every current third-party model or CLI.
 - Grain-native writes support undo in ordinary folders. Child CLI undo requires
   a Git workspace; ignored paths, symlinks, submodules, file metadata, and Git
   index changes are outside that snapshot contract. Undo lasts one task/session.
+  Unavailable Git blob snapshots (including the 16MB capture limit) emit warnings;
+  undo-time symlinks/failures are reported and their snapshots retained for retry.
 - Research needs provided sources or configured tools with web access. Publishing
   or sending is a separate action, not an automatic consequence of drafting.
 
@@ -61,3 +68,9 @@ this change does not claim universal superiority, feature parity, or “10x” s
 
 Live provider qualification is separate from deterministic CI. Do not describe
 fixture success as a live Claude/Codex/Ollama account test.
+
+The MCP handshake/transport checks follow the
+[2025-03-26 transport specification](https://modelcontextprotocol.io/specification/2025-03-26/basic/transports).
+They do not certify every MCP extension, remote server, OAuth flow, or subscription
+CLI's independent MCP configuration. Command tests do not run destructive agent
+merges, publish releases, or use live paid providers.

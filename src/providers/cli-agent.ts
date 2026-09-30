@@ -355,7 +355,8 @@ export class CliAgentProvider implements Provider {
     };
     child.stdout.on('data', (chunk: Buffer) => consume(decoder.write(chunk)));
     child.stdout.on('end', () => consume(decoder.end(), true));
-    child.stderr.on('data', (chunk: Buffer) => { stderr = (stderr + chunk.toString()).slice(-4_000); });
+    child.stderr.setEncoding('utf8');
+    child.stderr.on('data', (chunk: string) => { stderr = (stderr + chunk).slice(-4_000); });
     child.on('error', error => { failure = `${this.definition.binary}: ${error.message}`; finish(); });
     child.on('close', code => {
       if (code !== 0) failure = cliFailureMessage(this.name, stderr, code);

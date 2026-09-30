@@ -11,7 +11,10 @@ export async function discoverMcpTools(): Promise<Array<{ tool: Tool; execute(in
   for (const [serverName, server] of Object.entries(config.servers)) {
     if (!server.trust.enabled) continue;
     const client: McpClient = server.transport === 'http' ? new McpHttpClient(serverName, server) : new McpStdioClient(serverName, server);
-    await client.connect(); clients.set(serverName, client);
+    await clients.get(serverName)?.close();
+    clients.set(serverName, client);
+    try { await client.connect(); }
+    catch (error) { await client.close(); clients.delete(serverName); throw error; }
     for (const remote of await client.listTools()) {
       if (!server.trust.allowTools.includes(remote.name)) continue;
       const name = `mcp__${serverName}__${remote.name}`;
@@ -34,4 +37,7 @@ export async function discoverMcpTools(): Promise<Array<{ tool: Tool; execute(in
   return discovered;
 }
 
-export function closeMcpClients(): void { for (const client of clients.values()) void client.close(); clients.clear(); }
+export async function closeMcpClients(): Promise<void> {
+  const closing = [...clients.values()]; clients.clear();
+  await Promise.allSettled(closing.map(client => client.close()));
+}

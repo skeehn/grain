@@ -19,6 +19,8 @@ function hashFile(path: string): string {
 /** `git status --porcelain` paths, or null when this is not a usable git tree. */
 export function gitTreeState(root: string): Map<string, string> | null {
   try {
+    const prefix = execFileSync('git', ['rev-parse', '--show-prefix'], { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).replace(/\n$/, '');
+    const localPath = (path: string) => path.startsWith(prefix) ? path.slice(prefix.length) : '';
     const output = execFileSync('git', ['status', '--porcelain=v1', '-z', '--untracked-files=all'], {
       cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], maxBuffer: 8_000_000,
     });
@@ -27,11 +29,11 @@ export function gitTreeState(root: string): Map<string, string> | null {
     for (let index = 0; index < records.length; index++) {
       const line = records[index];
       if (line.length < 4) continue;
-      const path = line.slice(3); const code = line.slice(0, 2);
+      const path = localPath(line.slice(3)); const code = line.slice(0, 2);
       if (path) state.set(path, `${code}:${hashFile(resolve(root, path))}`);
       // With -z a rename is destination NUL source. Both paths need undo.
       if (/[RC]/u.test(code)) {
-        const source = records[++index];
+        const source = localPath(records[++index] || '');
         if (source && /R/u.test(code)) state.set(source, ` D:${hashFile(resolve(root, source))}`);
       }
     }
@@ -54,7 +56,7 @@ export function diffTreeState(before: Map<string, string> | null, after: Map<str
 }
 
 /** Snapshot helper: returns a function that reports what changed since the call. */
-export function watchTree(root: string): () => string[] {
+export function watchTree(root: string, warn: (message: string) => void = () => {}): () => string[] {
   const before = gitTreeState(root);
   if (!before) return () => [];
   const dirty = new Map<string, Buffer>();
@@ -83,7 +85,7 @@ export function watchTree(root: string): () => string[] {
         current = resolve(current, part);
         try { if (lstatSync(current).isSymbolicLink()) unsafe = true; } catch { /* missing file/parent can be restored */ }
       }
-      if (unsafe || unsupported.has(path) || before.get(path)?.endsWith('not-file')) continue;
+      if (unsafe || unsupported.has(path) || before.get(path)?.endsWith('not-file')) { warn(`Undo unavailable for ${path}: symlink or unsupported file type.`); continue; }
       if (dirty.has(path)) { snapshotExternalEdit(absolute, true, dirty.get(path)!); continue; }
       // A file deleted by the user before this task must stay deleted on undo.
       if (before.get(path)?.endsWith('missing')) { snapshotExternalEdit(absolute, false, Buffer.alloc(0)); continue; }
@@ -92,7 +94,7 @@ export function watchTree(root: string): () => string[] {
         try {
           const content = execFileSync('git', ['cat-file', 'blob', blob], { cwd: root, maxBuffer: 16_000_000 });
           snapshotExternalEdit(absolute, true, content);
-        } catch { /* if the snapshot is unavailable, never mark an existing file as new */ }
+        } catch { warn(`Undo unavailable for ${path}: original Git content could not be read (16MB snapshot limit).`); }
       } else if (!before.has(path)) snapshotExternalEdit(absolute, false, Buffer.alloc(0));
     }
     return changed;

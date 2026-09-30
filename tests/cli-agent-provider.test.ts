@@ -12,6 +12,19 @@ import { getModelCapabilities } from '../src/context/capabilities.js';
 const message = (role: 'user' | 'assistant', text: string) => ({ role, content: [{ type: 'text' as const, text }] });
 
 describe('CLI-agent providers', () => {
+  test('failure diagnostics preserve stderr UTF-8 split across chunks', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'grain-cli-stderr-'));
+    try {
+      const script = join(root, 'agent.cjs');
+      writeFileSync(script, `const b = Buffer.from('caf\u00e9 failed'); const i=b.indexOf(Buffer.from('\u00e9'));
+process.stderr.write(b.subarray(0,i+1)); setTimeout(()=>{process.stderr.end(b.subarray(i+1)); process.exitCode=1;},30);`);
+      const provider = new CliAgentProvider('codex', undefined, { cwd: root, fresh: true }) as any;
+      provider.definition = { ...CLI_AGENTS.codex, binary: process.execPath }; provider.argv = () => [script];
+      const events: any[] = [];
+      for await (const event of provider.stream([message('user', 'hello')], '', [])) events.push(event);
+      expect(JSON.stringify(events)).toContain('caf\u00e9 failed'); expect(JSON.stringify(events)).not.toContain('\ufffd');
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
   test('subprocess output preserves split UTF-8 and the final JSON record without a newline', async () => {
     const root = mkdtempSync(join(tmpdir(), 'grain-cli-wire-'));
     try {

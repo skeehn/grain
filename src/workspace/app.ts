@@ -9,9 +9,9 @@ export function parseComposerInput(value: string): ComposerInput {
     return { command: command.toLowerCase(), argument: rest.join(' '), attachments: [] };
   }
   const attachments: string[] = [];
-  const text = value.replace(/(^|[ \t]+)@("[^"\n]+"|[^\s]+)([ \t]*)/gm, (_match, before: string, path: string, after: string) => {
+  const text = value.replace(/(?<=^|[ \t])@("[^"\n]+"|[^\s]+)[ \t]*/gm, (_match, path: string) => {
     attachments.push(path.replace(/^"|"$/g, ''));
-    return before && after ? ' ' : '';
+    return '';
   }).trim();
   return { argument: text, attachments };
 }

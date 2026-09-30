@@ -3,6 +3,22 @@ import { writeFileSync, mkdirSync, rmSync } from 'fs';
 import { join } from 'path';
 import { loadMcpConfig } from '../src/mcp/config.ts';
 
+test('rejects malformed trust, unknown transports, and non-HTTP loopback URLs', () => {
+  const old = process.env.GRAIN_HOME;
+  try {
+    withTempDir('tmp-mcp-validation', dir => {
+      process.env.GRAIN_HOME = dir;
+      for (const server of [null, { transport: 'ftp', command: 'server' }, { url: 'ftp://localhost/a' },
+        { command: 'server', trust: { enabled: 'yes' } }, { command: 'server', trust: { enabled: true, allowTools: 'all' } }]) {
+        writeFileSync(join(dir, 'mcp.json'), JSON.stringify({ servers: { invalid: server } }));
+        expect(() => loadMcpConfig()).toThrow();
+      }
+      writeFileSync(join(dir, 'mcp.json'), JSON.stringify({ servers: { local: { url: 'http://[::1]:1234' } } }));
+      expect(loadMcpConfig().servers.local.trust.enabled).toBe(false);
+    });
+  } finally { if (old === undefined) delete process.env.GRAIN_HOME; else process.env.GRAIN_HOME = old; }
+});
+
 // Helper to create and clean a temp dir
 function withTempDir(name: string, fn: (dir: string) => void) {
   const tmp = join(process.cwd(), name);

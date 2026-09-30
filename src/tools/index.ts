@@ -171,17 +171,26 @@ export function registerDynamicTool(tool: Tool, executor: (input: any) => Promis
   executors[tool.name] = executor;
 }
 
+/** MCP authorization is reloaded per task; a revoked tool must not linger. */
+export function clearMcpTools(): void {
+  for (let index = TOOLS.length - 1; index >= 0; index--) {
+    if (TOOLS[index].name.startsWith('mcp__')) { delete executors[TOOLS[index].name]; TOOLS.splice(index, 1); }
+  }
+}
+
 export async function executeTool(name: string, input: any): Promise<ToolResult> {
   const executor = executors[name];
   if (!executor) {
     return { content: `Unknown tool: ${name}`, is_error: true };
   }
   // Snapshot a file's pre-edit state so a whole task can be reverted with /undo.
-  if (name === 'write' || name === 'patch') {
-    if (input?.path) snapshotBeforeEdit(resolvePath(input.path));
-  } else if (name === 'multi_edit' && Array.isArray(input?.edits)) {
-    for (const edit of input.edits) if (edit?.path) snapshotBeforeEdit(resolvePath(edit.path));
-  }
+  try {
+    if (name === 'write' || name === 'patch') {
+      if (input?.path) snapshotBeforeEdit(resolvePath(input.path));
+    } else if (name === 'multi_edit' && Array.isArray(input?.edits)) {
+      for (const edit of input.edits) if (edit?.path) snapshotBeforeEdit(resolvePath(edit.path));
+    }
+  } catch (error: any) { return { content: `Could not safely capture undo snapshot: ${error.message}`, is_error: true }; }
   return executor(input);
 }
 
