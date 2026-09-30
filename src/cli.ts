@@ -5,12 +5,15 @@ import {
   loadGrainEnv, saveKeyToEnv, listEnvKeys, GRAIN_VERSION, VALID_PROVIDERS, normalizeProvider,
 } from './config.js';
 import * as renderer from './tui/renderer.js';
-import { chmodSync, copyFileSync, existsSync, renameSync, writeFileSync } from 'fs';
-import { basename, join } from 'path';
-import { homedir, platform } from 'os';
+import { existsSync } from 'fs';
+import { join } from 'path';
+import { homedir } from 'os';
 import * as readline from 'readline';
 import { spawn, execSync } from 'child_process';
 import { handleConfigShow } from './commands/config.js';
+import { COMMAND_HELP } from './commands/help.js';
+import { handleMcpCommand } from './commands/mcp.js';
+import { handleUpdate } from './commands/update.js';
 import { discoverPlugins } from './plugins/discovery.js';
 import { handleWikiCommand } from './commands/wiki.js';
 import { handleRunsCommand } from './commands/runs.js';
@@ -50,11 +53,11 @@ const bold = (s: string) => `${c.bold}${s}${c.reset}`;
 // ─── Arg parser ───────────────────────────────────────────────────────────────
 
 interface ParsedArgs {
-  command?: 'init' | 'update' | 'config' | 'status' | 'doctor' | 'serve' | 'help' | 'version' | 'skills' | 'engram' | 'wiki' | 'runs' | 'learning' | 'agents' | 'jobs' | 'daemon' | 'tui' | 'lab' | 'note' | 'worklog' | 'recall';
+  command?: 'init' | 'update' | 'config' | 'status' | 'doctor' | 'serve' | 'help' | 'version' | 'skills' | 'mcp' | 'engram' | 'wiki' | 'runs' | 'learning' | 'agents' | 'jobs' | 'daemon' | 'tui' | 'lab' | 'note' | 'worklog' | 'recall';
   configSubcmd?: 'set' | 'reset' | 'show';
   configKey?: string;
   configValue?: string;
-  skillsSubcmd?: 'list' | 'view' | 'add' | 'delete';
+  skillsSubcmd?: 'list' | 'validate' | 'view' | 'add' | 'delete';
   skillsName?: string;
   engramSubcmd?: 'status' | 'stats' | 'search' | 'list' | 'add' | 'get' | 'edit' | 'delete' | 'export' | 'rebuild';
   engramArg?: string;
@@ -94,8 +97,12 @@ export function parseArgs(argv: string[]): ParsedArgs {
     // Commands are only recognized before any positional prompt text —
     // once prompt words start, bare words like "config" belong to the prompt.
     if (promptParts.length === 0 && !result.prompt) {
+      const commandArgs = args.slice(i + 1); const literal = commandArgs.indexOf('--');
+      if (COMMAND_HELP[arg] && commandArgs.slice(0, literal < 0 ? undefined : literal).some(value => value === '--help' || value === '-h')) {
+        result.command = 'help'; result.utilityArg = arg; break;
+      }
       if (arg === 'init' || arg === 'setup')                { result.command = 'init'; break; }
-      if (arg === 'update')                                 { result.command = 'update'; break; }
+      if (arg === 'update')                                 { result.command = 'update'; result.utilityArgs = args.slice(i + 1); break; }
       if (arg === 'status')                                 { result.command = 'status'; break; }
       if (arg === 'doctor')                                 { result.command = 'doctor'; break; }
       if (arg === 'serve')                                  { result.command = 'serve'; break; }
@@ -103,6 +110,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
         result.command = 'tui';
         const subcommand = args[i + 1];
         if (subcommand === '--run' || subcommand === '--resume') {
+          if (!args[i + 2] || args[i + 2].startsWith('-')) throw new Error('Usage: grain tui [--run|--resume <run-id>]');
           result.utilitySubcmd = subcommand; result.utilityArg = args[i + 2]; i += 3;
         } else i += 1;
         continue;
@@ -115,7 +123,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
         }
         break;
       }
-      if (arg === '--help' || arg === '-h' || arg === 'help') { result.command = 'help'; break; }
+      if (arg === '--help' || arg === '-h' || arg === 'help') { result.command = 'help'; result.utilityArg = args[i + 1]; break; }
       if (arg === '--version' || arg === '-v' || arg === 'version') { result.command = 'version'; break; }
 
       if (arg === 'config') {
@@ -127,9 +135,9 @@ export function parseArgs(argv: string[]): ParsedArgs {
           result.configValue  = args[i + 3];
         } else if (sub === 'reset') {
           result.configSubcmd = 'reset';
-        } else {
+        } else if (!sub || sub === 'show') {
           result.configSubcmd = 'show';
-        }
+        } else throw new Error(`Unknown config command: ${sub}. Run grain config --help.`);
         break;
       }
 
@@ -142,9 +150,12 @@ export function parseArgs(argv: string[]): ParsedArgs {
         } else if (sub === 'add') {
           result.skillsSubcmd = 'add';
           result.skillsName = args[i + 2];
-        } else {
-          result.skillsSubcmd = 'list';
-        }
+        } else if (!sub || sub === 'list' || sub === 'validate') result.skillsSubcmd = sub === 'validate' ? 'validate' : 'list';
+        else throw new Error(`Unknown skills command: ${sub}. Run grain skills --help.`);
+        break;
+      }
+      if (arg === 'mcp') {
+        result.command = 'mcp'; result.utilitySubcmd = args[i + 1]; result.utilityArg = args[i + 2];
         break;
       }
 
@@ -165,9 +176,9 @@ export function parseArgs(argv: string[]): ParsedArgs {
           result.engramSubcmd = sub; result.engramArg = args[i + 2];
         } else if (sub === 'status' || sub === 'export' || sub === 'rebuild') {
           result.engramSubcmd = sub;
-        } else {
+        } else if (!sub || sub === 'stats') {
           result.engramSubcmd = 'stats';
-        }
+        } else throw new Error(`Unknown memory command: ${sub}. Run grain memory --help.`);
         break;
       }
       if (arg === 'agents') {
@@ -298,96 +309,6 @@ export async function ensureEngramRunning(): Promise<void> {
 
 // ─── grain update ─────────────────────────────────────────────────────────────
 
-function grainInstallPath(): string {
-  if (basename(process.execPath) === 'grain') return process.execPath;
-  const argv1 = process.argv[1] || '';
-  if (basename(argv1) === 'grain') return argv1;
-  return join(homedir(), 'bin', 'grain');
-}
-
-function grainSourceDir(): string | null {
-  const candidates = [process.env.GRAIN_SRC, join(homedir(), 'conductor/repos/grain'), join(homedir(), 'grain')].filter(Boolean) as string[];
-  return candidates.find(dir => existsSync(join(dir, 'scripts/build.ts')) && existsSync(join(dir, 'src/cli.ts'))) || null;
-}
-
-function installGrainBinary(sourcePath: string, dest: string): void {
-  const tmp = `${dest}.new`;
-  copyFileSync(sourcePath, tmp);
-  chmodSync(tmp, 0o755);
-  renameSync(tmp, dest);
-}
-
-async function handleUpdate(): Promise<void> {
-  console.log(`\n${bold('grain update')}\n`);
-  console.log(`Current version: ${c.cyan}v${GRAIN_VERSION}${c.reset}`);
-
-  const src = grainSourceDir();
-  if (src) {
-    console.log(`Rebuilding from ${src}`);
-    try {
-      execSync('bun run build', { cwd: src, stdio: 'inherit' });
-      const built = join(src, 'dist/grain');
-      if (!existsSync(built)) throw new Error('build did not produce dist/grain');
-      const dest = grainInstallPath();
-      installGrainBinary(built, dest);
-      console.log(`\n${ok} Installed ${dest}`);
-      console.log('Restart grain to use the new binary.\n');
-    } catch (e: any) {
-      console.log(`${err} Source update failed: ${e.message}\n`);
-      process.exitCode = 1;
-    }
-    return;
-  }
-
-  process.stdout.write('Checking GitHub for updates... ');
-
-  try {
-    const res = await fetch('https://api.github.com/repos/skeehn/grain/releases/latest', {
-      headers: { 'Accept': 'application/vnd.github.v3+json', 'User-Agent': `grain/${GRAIN_VERSION}` },
-    });
-    if (!res.ok) throw new Error(`GitHub API ${res.status}`);
-    const release: any = await res.json();
-    const latest = release.tag_name?.replace(/^v/, '') ?? '';
-
-    if (!latest) throw new Error('Could not parse release version');
-
-    if (latest === GRAIN_VERSION) {
-      console.log(`${ok} Already up to date (v${GRAIN_VERSION})\n`);
-      return;
-    }
-
-    console.log(`${ok} New version available: ${c.green}v${latest}${c.reset}\n`);
-
-    const plat = platform();
-    const arch = process.arch;
-    const assetName = `grain-${plat}-${arch}`;
-    const asset = release.assets?.find((a: any) => a.name === assetName || a.name === `${assetName}.js`);
-
-    if (!asset) {
-      console.log(`No pre-built binary for ${plat}-${arch}.`);
-      console.log(`Install manually:\n`);
-      console.log(`  ${c.cyan}curl -fsSL https://raw.githubusercontent.com/skeehn/grain/main/install.sh | sh${c.reset}\n`);
-      return;
-    }
-
-    const confirm = await ask(`Update to v${latest}? [Y/n] `);
-    if (confirm.toLowerCase() === 'n') { console.log('Cancelled.\n'); return; }
-
-    process.stdout.write('Downloading... ');
-    const binRes = await fetch(asset.browser_download_url);
-    if (!binRes.ok) throw new Error(`Download failed: ${binRes.status}`);
-    const buf = await binRes.arrayBuffer();
-    const dest = grainInstallPath();
-    const tmp = `${dest}.new`;
-    writeFileSync(tmp, Buffer.from(buf), { mode: 0o755 });
-    renameSync(tmp, dest);
-    console.log(`${ok} Updated to v${latest}\n`);
-    console.log(`Restart grain to use the new version.\n`);
-  } catch (e: any) {
-    console.log(`${err} Update check failed: ${e.message}`);
-    console.log(`\nUpdate manually:\n  ${c.cyan}curl -fsSL https://raw.githubusercontent.com/skeehn/grain/main/install.sh | sh${c.reset}\n`);
-  }
-}
 
 // ─── grain config ─────────────────────────────────────────────────────────────
 
@@ -766,16 +687,23 @@ async function handleInit(): Promise<void> {
 
 // ─── grain --help ─────────────────────────────────────────────────────────────
 
-function showHelp(): void {
+function showHelp(command?: string): void {
+  if (command) {
+    if (!COMMAND_HELP[command]) throw new Error(`Unknown command: ${command}. Run grain --help.`);
+    console.log(`Usage: ${COMMAND_HELP[command]}`); return;
+  }
   console.log(`
 ${bold(`grain v${GRAIN_VERSION}`)} — your coding workspace
 
   grain                         open your workspace
   grain "do something"           start a workspace with a task
-  grain update                   install the latest release
+  grain update                   update safely (grain update --help for modes)
   grain setup                    configure providers, memory, and workspace defaults
   grain doctor                   verify config, agents, executors, Git, and Engram
   grain memory status            inspect persistent memory without invoking a model
+  grain skills list|validate      discover and check portable skills
+  grain mcp list|validate         inspect and check MCP connections
+  grain help <command>            help without starting a model or service
 
 Your first launch connects a provider in the conversation. Grain remembers the
 current repository, your sessions, theme, and approved tools for the session.
@@ -796,14 +724,14 @@ ${bold('MODELS')}  ${dim('one picker for subscriptions, APIs, and local models')
 ${bold('AUTOMATION')}
   grain -p "task" --yes             non-interactive script/CI task
   grain --resume -p "follow up"     continue this repository's latest conversation
-  grain --classic                   line-oriented interactive mode
+  grain --classic                   alias for the default scrolling terminal
   grain jobs run-due               run due jobs (for system cron/launchd)
   grain daemon start|status|stop   supervise scheduled jobs in the background
   --provider <name> --model <id>   one-run override
   --attach <path>                  attach text/code/image material
 
-Expert commands (${dim('memory, runs, wiki, agents, jobs, lab, config')}) remain available
-for scripts and diagnostics.
+Commands: ${Object.keys(COMMAND_HELP).join(', ')}.
+Use grain <command> --help for usage. NO_COLOR=1 disables color.
 `);
 }
 
@@ -833,9 +761,9 @@ async function testBedrockConnection(): Promise<{ ok: boolean; error?: string }>
 async function handleEngram(subcmd?: string, arg?: string, body?: string): Promise<void> {
   const action = subcmd || 'stats';
   if (['search', 'add', 'get', 'edit', 'delete'].includes(action) && !arg) {
-    console.error(`${err} Usage: grain engram ${action} <${action === 'search' ? 'query' : action === 'add' ? 'fact' : 'id'}>`); return;
+    throw new Error(`Usage: grain engram ${action} <${action === 'search' ? 'query' : action === 'add' ? 'fact' : 'id'}>`);
   }
-  if (action === 'edit' && !body) { console.error(`${err} Usage: grain engram edit <id> <new content>`); return; }
+  if (action === 'edit' && !body) throw new Error('Usage: grain engram edit <id> <new content>');
   const result = await executeEngram({ action, query: ['search', 'get', 'delete'].includes(action) ? arg : undefined,
     body: action === 'add' ? arg : action === 'edit' ? body : undefined, tags: action === 'add' ? ['manual'] : undefined,
     ...(action === 'edit' ? { query: arg } : {}) });
@@ -882,7 +810,7 @@ async function handleSkills(subcmd?: string, name?: string): Promise<void> {
   }
 
   if (subcmd === 'view') {
-    if (!name) { console.error(`${err} Usage: grain skills view <name>`); return; }
+    if (!name) throw new Error('Usage: grain skills view <name>');
     const skill = await mgr.getMarkdownSkill(name);
     if (!skill) { console.error(`${err} Skill not found: ${name}`); process.exitCode = 1; return; }
     console.log(`\n${bold(skill.name)}`);
@@ -910,9 +838,13 @@ async function handleSkills(subcmd?: string, name?: string): Promise<void> {
   }
 
   if (subcmd === 'add') {
-    if (!name) { console.error(`${err} Usage: grain skills add <name>`); return; }
+    if (!name) throw new Error('Usage: grain skills add <name>');
+    if (!process.stdin.isTTY) throw new Error('grain skills add requires a terminal. For scripts, write $GRAIN_HOME/skills/<name>/SKILL.md and run grain skills validate.');
     const iface = readline.createInterface({ input: process.stdin, output: process.stdout });
-    const ask = (q: string): Promise<string> => new Promise(r => iface.question(q, r));
+    const ask = (q: string): Promise<string> => new Promise((resolve, reject) => {
+      const closed = () => reject(new Error('Skill creation cancelled: input closed.'));
+      iface.once('close', closed); iface.question(q, value => { iface.off('close', closed); resolve(value); });
+    });
 
     try {
       // Ask all single-line questions BEFORE consuming the multiline body:
@@ -940,12 +872,13 @@ async function handleSkills(subcmd?: string, name?: string): Promise<void> {
   }
 
   if (subcmd === 'delete') {
-    if (!name) { console.error(`${err} Usage: grain skills delete <name>`); return; }
+    if (!name) throw new Error('Usage: grain skills delete <name>');
     const deleted = await mgr.deleteMarkdownSkill(name);
     if (deleted) {
       console.log(`${ok} Deleted skill: ${name}`);
     } else {
       console.error(`${err} Skill not found: ${name}`);
+      process.exitCode = 1;
     }
     return;
   }
@@ -975,9 +908,9 @@ async function main(): Promise<void> {
   }
 
   // Commands that don't need engram or the agent
-  if (parsed.command === 'help')    { showHelp(); return; }
+  if (parsed.command === 'help')    { showHelp(parsed.utilityArg); return; }
   if (parsed.command === 'version') { console.log(`grain v${GRAIN_VERSION}`); return; }
-  if (parsed.command === 'update')  { await handleUpdate(); return; }
+  if (parsed.command === 'update')  { await handleUpdate(parsed.utilityArgs); return; }
   if (parsed.command === 'init')    { await handleInit(); return; }
   if (parsed.command === 'status')  { await handleStatus(); return; }
   if (parsed.command === 'doctor')  { await handleDoctorCommand(); return; }
@@ -987,6 +920,7 @@ async function main(): Promise<void> {
     return;
   }
   if (parsed.command === 'skills')  { await handleSkills(parsed.skillsSubcmd, parsed.skillsName); return; }
+  if (parsed.command === 'mcp') { await handleMcpCommand(parsed.utilitySubcmd, parsed.utilityArg); return; }
   if (parsed.command === 'engram')  { await handleEngram(parsed.engramSubcmd, parsed.engramArg, parsed.engramBody); return; }
   if (parsed.command === 'wiki') { await handleWikiCommand(parsed.utilitySubcmd, parsed.utilityArg); return; }
   if (parsed.command === 'runs') { handleRunsCommand(parsed.utilitySubcmd, parsed.utilityArg, parsed.utilityOutput); return; }

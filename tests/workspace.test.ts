@@ -4,6 +4,9 @@ import { discoverProviders, providerReady, selectProvider } from '../src/workspa
 import { workspaceKey } from '../src/session/store.js';
 
 describe('unified workspace', () => {
+  test('a configured vLLM endpoint does not require an unrelated API key to open chat', () => {
+    expect(providerReady({ provider: 'vllm', vllm: { baseUrl: 'http://127.0.0.1:8000' } } as any, {})).toBe(true);
+  });
   test('keeps natural-language text while collecting @file attachments', () => {
     expect(parseComposerInput('review @src/auth.ts and @notes.md')).toEqual({ argument: 'review and', attachments: ['src/auth.ts', 'notes.md'] });
   });

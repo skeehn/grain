@@ -1,7 +1,7 @@
 // Agent loop - fluid execution with streaming, error recovery, and quality control
 import type { Message, ContentBlock } from '../providers/types.js';
 import { getProvider, isCliAgentProvider, normalizeProviderError } from '../providers/index.js';
-import { TOOLS, setToolCwd, destroyShell, registerDynamicTool, setQuestionJournal, setQuestionPrompt, setBashOutputSink } from '../tools/index.js';
+import { TOOLS, setToolCwd, destroyShell, registerDynamicTool, clearMcpTools, setQuestionJournal, setQuestionPrompt, setBashOutputSink } from '../tools/index.js';
 import { closeMcpClients, discoverMcpTools } from '../mcp/index.js';
 import { classifyTaskComplexity, routeModel, explainRouting, resolveModelForProvider } from '../router/index.js';
 import { trackToolCall, getContextSummary } from './context-tracker.js';
@@ -291,6 +291,12 @@ async function runReflection(
 }
 
 export async function agentLoop(opts: AgentOpts): Promise<void> {
+  clearMcpTools();
+  try { await runAgentLoop(opts); }
+  finally { await closeMcpClients(); clearMcpTools(); }
+}
+
+async function runAgentLoop(opts: AgentOpts): Promise<void> {
   const ui = opts.ui || renderer;
   const discovered = resolveWorkspace(process.cwd());
   const workspaceRoot = opts.workspaceRoot || discovered.root;
@@ -703,88 +709,93 @@ export async function agentLoop(opts: AgentOpts): Promise<void> {
 
       // A delegated CLI agent edits the tree directly instead of calling Grain's
       // tools, so watch the working tree to learn what it touched.
-      const observeTree = delegatedAgent && workspaceRoot ? watchTree(workspaceRoot) : undefined;
+      const observeTree = delegatedAgent && workspaceRoot ? watchTree(workspaceRoot, message => ui.warn(message)) : undefined;
       let reasoningAnnounced = false;
 
-      for await (const event of withInactivityTimeout(provider.stream(requestMessages, requestSystem, packed.tools, { signal: opts.signal }), STREAM_TIMEOUT, opts.signal)) {
-        if (event.type === 'text_delta') {
-          if (!spinnerStopped) { spin.stop(); ui.clearLine(); spinnerStopped = true; }
-          textBuffer += event.text;
-          ui.stream(event.text);
-        } else if (event.type === 'reasoning_delta') {
-          // Reasoning tokens are activity. Yielding them keeps the inactivity
-          // watchdog alive; they must not land in the durable assistant text.
-          if (!spinnerStopped) { spin.stop(); ui.clearLine(); spinnerStopped = true; }
-          if (!reasoningAnnounced) {
-            reasoningAnnounced = true;
-            ui.dim('thinking…');
-            opts.onEvent?.({ type: 'status', status: 'running', detail: 'thinking' });
-          }
-        } else if (event.type === 'tool_use_start') {
-          hasToolUse = true;
-          currentToolId = event.id;
-          currentToolInputJson = '';
-          toolInputJsonMap.set(event.id, '');
-          assistantBlocks.push({
-            type: 'tool_use',
-            id: event.id,
-            name: event.name,
-            input: {},
-          });
-          if (!spinnerStopped) { spin.stop(); ui.clearLine(); spinnerStopped = true; }
-          ui.tool(event.name, { _streaming: true });
-          opts.onEvent?.({ type: 'tool', name: event.name });
-        } else if (event.type === 'tool_use_delta') {
-          const toolId = event.id || currentToolId;
-          currentToolInputJson = (toolInputJsonMap.get(toolId) || '') + event.input_json;
-          toolInputJsonMap.set(toolId, currentToolInputJson);
-        } else if (event.type === 'tool_use_end') {
-          const toolId = event.id || currentToolId;
-          const jsonStr = toolInputJsonMap.get(toolId) || currentToolInputJson;
-          if (jsonStr) {
-            try {
-              const parsed = JSON.parse(jsonStr);
-              const block = assistantBlocks.find(b => b.type === 'tool_use' && b.id === toolId) as any;
-              if (block) {
-                block.input = parsed;
-                // Overwrite the "⚡ write..." line with full details now that we have input
-                const summary = block.name === 'write' && parsed.path
-                  ? `${parsed.path} (${parsed.content ? Buffer.byteLength(parsed.content, 'utf8') : 0} bytes)`
-                  : block.name === 'bash' ? (parsed.command?.slice(0, 80) || '')
-                  : block.name === 'read' ? (parsed.path || '')
-                  : block.name === 'patch' ? (parsed.path || '')
-                  : '';
-                if (summary) {
-                  ui.dim(`  → ${summary}`);
-                }
-              }
-            } catch (err) {
-              ui.warn(`Failed to parse tool input: ${err}`);
-              malformedToolIds.add(toolId);
+      try {
+        for await (const event of withInactivityTimeout(provider.stream(requestMessages, requestSystem, packed.tools, { signal: opts.signal }), STREAM_TIMEOUT, opts.signal)) {
+          if (event.type === 'text_delta') {
+            if (!spinnerStopped) { spin.stop(); ui.clearLine(); spinnerStopped = true; }
+            textBuffer += event.text;
+            ui.stream(event.text);
+          } else if (event.type === 'reasoning_delta') {
+            // Reasoning tokens are activity. Yielding them keeps the inactivity
+            // watchdog alive; they must not land in the durable assistant text.
+            if (!spinnerStopped) { spin.stop(); ui.clearLine(); spinnerStopped = true; }
+            if (!reasoningAnnounced) {
+              reasoningAnnounced = true;
+              ui.dim('thinking…');
+              opts.onEvent?.({ type: 'status', status: 'running', detail: 'thinking' });
             }
+          } else if (event.type === 'tool_use_start') {
+            hasToolUse = true;
+            currentToolId = event.id;
+            currentToolInputJson = '';
+            toolInputJsonMap.set(event.id, '');
+            assistantBlocks.push({
+              type: 'tool_use',
+              id: event.id,
+              name: event.name,
+              input: {},
+            });
+            if (!spinnerStopped) { spin.stop(); ui.clearLine(); spinnerStopped = true; }
+            ui.tool(event.name, { _streaming: true });
+            opts.onEvent?.({ type: 'tool', name: event.name });
+          } else if (event.type === 'tool_use_delta') {
+            const toolId = event.id || currentToolId;
+            currentToolInputJson = (toolInputJsonMap.get(toolId) || '') + event.input_json;
+            toolInputJsonMap.set(toolId, currentToolInputJson);
+          } else if (event.type === 'tool_use_end') {
+            const toolId = event.id || currentToolId;
+            const jsonStr = toolInputJsonMap.get(toolId) || currentToolInputJson;
+            if (jsonStr) {
+              try {
+                const parsed = JSON.parse(jsonStr);
+                const block = assistantBlocks.find(b => b.type === 'tool_use' && b.id === toolId) as any;
+                if (block) {
+                  block.input = parsed;
+                  // Overwrite the "⚡ write..." line with full details now that we have input
+                  const summary = block.name === 'write' && parsed.path
+                    ? `${parsed.path} (${parsed.content ? Buffer.byteLength(parsed.content, 'utf8') : 0} bytes)`
+                    : block.name === 'bash' ? (parsed.command?.slice(0, 80) || '')
+                    : block.name === 'read' ? (parsed.path || '')
+                    : block.name === 'patch' ? (parsed.path || '')
+                    : '';
+                  if (summary) {
+                    ui.dim(`  → ${summary}`);
+                  }
+                }
+              } catch (err) {
+                ui.warn(`Failed to parse tool input: ${err}`);
+                malformedToolIds.add(toolId);
+              }
+            }
+          } else if (event.type === 'error') {
+            throw normalizeProviderError(provider.name, event.error);
+          } else if (event.type === 'usage') {
+            journal.append('usage_recorded', { turn: turnCount, ...event });
+            recordUsage(getSessionStats(), event);
+          } else if (event.type === 'retry') {
+            if (!spinnerStopped) { spin.stop(); spinnerStopped = true; }
+            ui.retryNotice(event.attempt, event.max, event.seconds);
+          } else if (event.type === 'model_selected') {
+            journal.append('model_stream_started', { turn: turnCount, provider: event.provider,
+              requested_model: event.requested_model, selected_model: event.selected_model, fallback: event.fallback });
+            if (event.fallback) ui.info(`Provider selected fallback model ${event.selected_model}.`);
           }
-        } else if (event.type === 'error') {
-          throw normalizeProviderError(provider.name, event.error);
-        } else if (event.type === 'usage') {
-          journal.append('usage_recorded', { turn: turnCount, ...event });
-          recordUsage(getSessionStats(), event);
-        } else if (event.type === 'retry') {
-          if (!spinnerStopped) { spin.stop(); spinnerStopped = true; }
-          ui.retryNotice(event.attempt, event.max, event.seconds);
-        } else if (event.type === 'model_selected') {
-          journal.append('model_stream_started', { turn: turnCount, provider: event.provider,
-            requested_model: event.requested_model, selected_model: event.selected_model, fallback: event.fallback });
-          if (event.fallback) ui.info(`Provider selected fallback model ${event.selected_model}.`);
         }
-      }
 
-      if (!spinnerStopped) spin.stop();
-      if (observeTree) {
-        const touched = observeTree();
-        if (touched.length) {
-          allFilesChanged.push(...touched);
-          journal.append('tool_completed', { turn: turnCount, name: `${provider.name}:edits`, changed_paths: touched });
-          ui.dim(`  ${touched.length} file${touched.length === 1 ? '' : 's'} changed: ${touched.slice(0, 5).join(', ')}${touched.length > 5 ? ` +${touched.length - 5} more` : ''}`);
+      } finally {
+        // A failed or cancelled child can still leave edits. Record those too so
+        // the user can inspect and undo partial work instead of losing the trail.
+        if (!spinnerStopped) spin.stop();
+        if (observeTree) {
+          const touched = observeTree();
+          if (touched.length) {
+            allFilesChanged.push(...touched);
+            journal.append('tool_completed', { turn: turnCount, name: `${provider.name}:edits`, changed_paths: touched });
+            ui.dim(`  ${touched.length} file${touched.length === 1 ? '' : 's'} changed: ${touched.slice(0, 5).join(', ')}${touched.length > 5 ? ` +${touched.length - 5} more` : ''}`);
+          }
         }
       }
       if (!hasToolUse && textBuffer && !delegatedAgent) {
@@ -821,7 +832,7 @@ export async function agentLoop(opts: AgentOpts): Promise<void> {
         // path too — otherwise those runs leave no trace.
         await recordWork(textBuffer);
 
-        if (opts.oneShot) { journal.transition('succeeded'); closeMcpClients(); return; }
+        if (opts.oneShot) { journal.transition('succeeded'); await closeMcpClients(); return; }
 
         // Interactive: wait for next input
         // If stdin is not a TTY (e.g. subprocess/CI), treat as one-shot and exit
@@ -1063,7 +1074,7 @@ export async function agentLoop(opts: AgentOpts): Promise<void> {
       // without polluting engram/journal with a bogus provider_error.
       if (err?.message === 'SIGINT') {
         destroyShell();
-        closeMcpClients();
+        await closeMcpClients();
         journal.transition('cancelled');
         ui.newLine();
         ui.info('Cancelled.');

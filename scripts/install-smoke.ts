@@ -44,7 +44,16 @@ try {
   if (!skills.includes('smoke')) throw new Error('Installed binary did not discover Markdown skills');
   const skill = await run(grain, ['skills', 'view', 'smoke'], { cwd: sandbox, env });
   if (!skill.includes('Verify installed skill discovery.')) throw new Error('Installed binary did not render skill content');
-  console.log(`Install smoke passed: grain v${packageJson.version}, offline package install, help, and skills.`);
+  mkdirSync(join(home, 'skills', 'portable'), { recursive: true });
+  writeFileSync(join(home, 'skills', 'portable', 'SKILL.md'), '---\nname: portable\ndescription: Test installed portable skills.\n---\nInstalled portable instructions.\n');
+  const validation = await run(grain, ['skills', 'validate'], { cwd: sandbox, env });
+  if (!validation.includes('Validated 1')) throw new Error('Installed skills validation did not run');
+  await run(grain, ['mcp', 'validate'], { cwd: sandbox, env });
+  await run(grain, ['update', '--help'], { cwd: sandbox, env });
+  const update = Bun.spawn([grain, 'update', '--yes'], { cwd: sandbox, env: { ...process.env, ...env }, stdout: 'pipe', stderr: 'pipe' });
+  const [updateCode, updateOut, updateErr] = await Promise.all([update.exited, new Response(update.stdout).text(), new Response(update.stderr).text()]);
+  if (updateCode !== 1 || !(updateOut + updateErr).includes('npm install -g')) throw new Error('npm update guidance failed; must not overwrite its symlink');
+  console.log(`Install smoke passed: grain v${packageJson.version}, offline npm install, help, portable skills, MCP validation, and safe npm update guidance.`);
 } finally {
   rmSync(sandbox, { recursive: true, force: true });
 }

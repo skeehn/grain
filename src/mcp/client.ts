@@ -18,6 +18,9 @@ export class McpStdioClient {
       cwd: this.config.cwd, env: { ...inherited, ...this.config.env }, stdio: ['pipe', 'pipe', 'pipe'], shell: false,
     });
     this.process.stdout.setEncoding('utf8'); this.process.stdout.on('data', chunk => this.consume(chunk));
+    // A verbose server must not deadlock when its stderr pipe fills up.
+    this.process.stderr.resume();
+    this.process.stdin.on('error', error => this.failAll(error));
     this.process.on('exit', (code, signal) => this.failAll(new Error(`MCP server ${this.name} exited (${code ?? signal})`)));
     this.process.on('error', error => this.failAll(error));
     await this.request('initialize', { protocolVersion: '2025-03-26', capabilities: {},
@@ -70,5 +73,5 @@ export class McpStdioClient {
     if (!this.config.trust.allowTools.includes(name)) throw new Error(`MCP tool ${this.name}/${name} is not allowlisted`);
     return this.request('tools/call', { name, arguments: args }, signal);
   }
-  close(): void { this.process?.kill('SIGTERM'); this.process = undefined; }
+  close(): void { this.failAll(new Error(`MCP server ${this.name} closed`)); this.process?.kill('SIGTERM'); this.process = undefined; }
 }

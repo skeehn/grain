@@ -1,12 +1,22 @@
 import { describe, expect, test } from 'bun:test';
 import { execFileSync } from 'child_process';
-import { mkdirSync, writeFileSync } from 'fs';
+import { existsSync, mkdirSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { randomUUID } from 'crypto';
 import { AgentScheduler, executeProfileGraph, TaskGraphStore } from '../src/orchestration/index.js';
 import { readRunEvents } from '../src/kernel/index.js';
 
 describe('profile-selected execution', () => {
+  test('cancelling before execution does not launch any profile task', async () => {
+    const scheduler = new AgentScheduler(); const graph = scheduler.createGraph('solo');
+    scheduler.addTask(graph, { role: 'researcher', objective: 'must not launch', expectedArtifact: 'none', profile: 'nonexistent', executor: 'stdio' });
+    const store = new TaskGraphStore(); store.save(graph);
+    const controller = new AbortController(); controller.abort();
+    const result = await executeProfileGraph(graph, process.cwd(), store, controller.signal);
+    expect(result.graph.tasks[0].state).toBe('cancelled');
+    expect(result.graph.tasks[0].attempts).toBe(0);
+    expect(readRunEvents(result.runId).at(-1)?.payload.status).toBe('cancelled');
+  });
   test('a portable stdio profile runs through the durable scheduler', async () => {
     const root = join(process.env.GRAIN_HOME!, 'stdio-profile-' + randomUUID()); mkdirSync(root, { recursive: true });
     execFileSync('git', ['init', '-q'], { cwd: root }); execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: root });
@@ -28,4 +38,30 @@ describe('profile-selected execution', () => {
     expect(final.tasks[0].result?.evidence).toContain('agent:portable');
     expect(readRunEvents(execution.runId).map(event => event.type)).toContain('child_run_completed');
   });
+
+  test('cancellation reaches a running stdio subprocess and stops dependent work', async () => {
+    const root = join(process.env.GRAIN_HOME!, 'cancel-profile-' + randomUUID()); mkdirSync(root, { recursive: true });
+    execFileSync('git', ['init', '-q'], { cwd: root });
+    const ready = join(process.env.GRAIN_HOME!, 'ready-' + randomUUID());
+    mkdirSync(join(root, '.grain', 'agents'), { recursive: true });
+    const script = `require('fs').writeFileSync(${JSON.stringify(ready)}, 'ready'); process.stdin.resume(); setInterval(()=>{},1000);`;
+    writeFileSync(join(root, '.grain/agents/slow.md'), [
+      '---', 'id: slow', 'executor: stdio',
+      'command: ' + JSON.stringify({ binary: process.execPath, args: ['-e', script], output: 'json' }),
+      'permissions: {"read":"allow","write":"deny"}', '---', 'Wait.',
+    ].join('\n'));
+    const scheduler = new AgentScheduler(); const graph = scheduler.createGraph('solo');
+    const first = scheduler.addTask(graph, { role: 'researcher', objective: 'wait', expectedArtifact: 'none', profile: 'slow', executor: 'stdio' });
+    scheduler.addTask(graph, { role: 'researcher', objective: 'must not launch', expectedArtifact: 'none', profile: 'slow', executor: 'stdio', dependencies: [first.id] });
+    const store = new TaskGraphStore(); store.save(graph); const controller = new AbortController();
+    const pending = executeProfileGraph(graph, root, store, controller.signal);
+    try {
+      for (let attempt = 0; attempt < 100 && !existsSync(ready); attempt++) await Bun.sleep(10);
+      expect(existsSync(ready)).toBe(true);
+    } finally { controller.abort(); }
+    const result = await pending;
+    expect(result.graph.tasks[1].state).toBe('cancelled');
+    expect(result.graph.tasks[1].attempts).toBe(0);
+    expect(readRunEvents(result.runId).at(-1)?.payload.status).toBe('cancelled');
+  }, 3000);
 });

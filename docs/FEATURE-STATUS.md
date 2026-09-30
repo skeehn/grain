@@ -1,12 +1,14 @@
 # Feature Status
 
-Updated: 2026-07-23. This page is authoritative for user-visible claims.
+Updated: 2026-09-30. This page is authoritative for user-visible claims. Dated live-provider evidence below is historical, not a fresh account-access guarantee.
 
 | Feature | Status | Evidence / limitation |
 |---|---|---|
 | Native CLI chat and coding tools | working | full local unit/integration suite |
 | Durable RunService and hash journal | working | replay, tamper, recovery tests |
-| Full-screen TUI | experimental | responsive tabs, grouped one-screen help, word-aware wrapping, editor/render snapshots, and two macOS PTY launch, command, workflow, jobs, and restore flows pass; Linux matrix and soak pending |
+| Scrolling terminal conversation | working in deterministic qualification | one terminal implementation; ASCII blocks, native scrollback, numbered pickers; real PTY coding, marketing, approval, cancellation, provider failure, and skill/MCP workflows; no universal live-provider claim |
+| Command discovery and updates | working in deterministic qualification | all command help routes tested; skill/config/job/note lifecycle tests; offline npm smoke; staged checksum-verified native installs with backups; source update explicitly rebuilds current checkout without pulling |
+| MCP stdio and HTTP | working in deterministic qualification | allowlisted stdio tool calls in a real terminal; HTTP initialized notification, sessions and SSE response correlation; schema checks; no OAuth/elicitation/sampling claim |
 | Transactional filesystem and undo | working | confinement, rollback, worktree tests |
 | OpenRouter free routing | working | live capability-filtered three-model fallback pool plus 2026-07-22 Harbor canary: `poolside/laguna-xs-2.1:free`, 3 tool calls, reward 1.0 |
 | xAI/Grok direct provider | experimental | provider-neutral adapter wired; live key matrix pending |
@@ -25,6 +27,6 @@ Updated: 2026-07-23. This page is authoritative for user-visible claims.
 | Durable work record | working | completed tasks append to `docs/grain/worklog/`, `/note` to `docs/grain/notes/`; entries round-trip through the files, are indexed into engram with file-level graph edges, and are reachable from `grain recall`, the `/work` view, and the `work_recall` tool. Lexical fallback covers engram being down |
 | Generated repository wiki | working | `wiki build` emits architecture and per-subsystem pages from extracted symbols over git-tracked files only, each with source ranges and content hashes; `wiki verify` was shown to detect an edited source and to pass once reverted |
 | Windows | planned | post-1.0 |
-| Local qualification | working | current 417-test suite, typecheck, build, offline install smoke, and a clean-clone build all pass; qualification `d64d50c8-99ee-44b7-a922-d7c76b3a08fd` separately records 50 consecutive earlier 360-test cycles (18,000 executions) and package dry-run on the intentional dirty tree |
+| Local qualification | working | reproduce using `bun run check` plus compiled-binary PTY tests in [terminal verification](terminal-verification.md); historical qualification `d64d50c8-99ee-44b7-a922-d7c76b3a08fd` separately records 50 consecutive earlier 360-test cycles (18,000 executions), not the current revision |
 
 Grain does not currently claim “best” or SOTA status.

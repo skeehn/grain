@@ -25,13 +25,14 @@ export class LineEditor {
   replaceMention(path: string): void {
     const mention = this.mention();
     if (!mention) return;
-    const token = `@${path.replace(/^@/, '')} `;
+    const clean = path.replace(/^@/, '');
+    const token = `@${/\s/u.test(clean) ? JSON.stringify(clean) : clean} `;
     const chars = Array.from(token);
     this.chars.splice(mention.start, this.cursor - mention.start, ...chars);
     this.cursor = mention.start + chars.length;
   }
   displayValue(): string { return this.value().replace(/\n/g, '↵'); }
-  setValue(value: string): void { this.chars = Array.from(value); this.cursor = this.chars.length; }
+  setValue(value: string, cursor = Array.from(value).length): void { this.chars = Array.from(value); this.cursor = Math.min(cursor, this.chars.length); }
   clear(): void { this.chars = []; this.cursor = 0; }
 
   commit(): string {
@@ -70,23 +71,24 @@ export class LineEditor {
   }
 
   /** Decode a terminal data chunk without losing controls batched with text. */
-  feedAll(data: string): EditorAction[] {
+  feedAll(data: string, onAction?: (action: EditorAction) => void): EditorAction[] {
     let input = this.pendingInput + data; this.pendingInput = ''; const actions: EditorAction[] = [];
+    const emit = (action: EditorAction) => { actions.push(action); onAction?.(action); };
     const escapes = ['\x1b[200~', '\x1b[201~', '\x1b[A', '\x1b[B', '\x1b[C', '\x1b[D', '\x1b[H', '\x1b[F', '\x1b[3~'];
     while (input) {
-      if (input.startsWith('\r\n')) { actions.push(this.feed('\r')); input = input.slice(2); continue; }
+      if (input.startsWith('\r\n')) { emit(this.feed('\r')); input = input.slice(2); continue; }
       if (input.startsWith('\x1b[200~')) {
         const end = input.indexOf('\x1b[201~', 6);
         if (end < 0) { this.pendingInput = input; break; }
-        actions.push(this.feed(input.slice(0, end + 6))); input = input.slice(end + 6); continue;
+        emit(this.feed(input.slice(0, end + 6))); input = input.slice(end + 6); continue;
       }
       const escape = escapes.find(sequence => input.startsWith(sequence));
-      if (escape) { actions.push(this.feed(escape)); input = input.slice(escape.length); continue; }
+      if (escape) { emit(this.feed(escape)); input = input.slice(escape.length); continue; }
       if (input.startsWith('\x1b') && escapes.some(sequence => sequence.startsWith(input))) { this.pendingInput = input; break; }
       const control = input.search(/[\r\n\x03\x0c\t\x7f\b\x1b]/u);
-      if (control === 0) { actions.push(this.feed(input[0])); input = input.slice(1); continue; }
+      if (control === 0) { emit(this.feed(input[0])); input = input.slice(1); continue; }
       const length = control < 0 ? input.length : control;
-      actions.push(this.feed(input.slice(0, length))); input = input.slice(length);
+      emit(this.feed(input.slice(0, length))); input = input.slice(length);
     }
     return actions.filter(action => action !== 'none');
   }

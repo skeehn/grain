@@ -4,7 +4,7 @@ import { resolve } from 'path';
 import { agentLoop, type AgentUi, type AgentWorkspaceEvent } from '../agent/loop.js';
 import { changedFileCount, undoLast } from '../agent/checkpoint.js';
 import { loadConfig, saveConfig, normalizeProvider, CLI_AGENT_PROVIDERS, type GrainConfig } from '../config.js';
-import { listRuns, readRunEvents, RunEngine, RunJournal, RunService } from '../kernel/index.js';
+import { listRuns, readRunEvents, RunService } from '../kernel/index.js';
 import { TaskGraphStore } from '../orchestration/store.js';
 import { AgentScheduler } from '../orchestration/scheduler.js';
 import { executeProfileGraph } from '../orchestration/profile-executor.js';
@@ -19,18 +19,15 @@ import { parseComposerInput, type WorkspaceMode } from '../workspace/app.js';
 import { openWorkspace, type WorkspaceState } from '../workspace/root.js';
 import { homedir } from 'os';
 import { getWorkspaceFS } from '../workspace/index.js';
-import { detectTerminalCapabilities } from './capabilities.js';
-import { DifferentialRenderer } from './differential.js';
-import { blankFrame, putText } from './frame.js';
-import { layoutRun } from './layout.js';
+import { ScrollingTerminal, WELCOME } from './terminal.js';
+import { StringDecoder } from 'node:string_decoder';
 import { projectRun } from './projector.js';
-import { resolveTheme, type GrainThemeName } from './theme.js';
-import { mascotFrame } from './mascot.js';
+import { type GrainThemeName } from './theme.js';
 import { LineEditor } from './editor.js';
 import { MODEL_CATALOG, resolveModelSelection } from './models.js';
 import { buildModelRegistry, invalidateModelRegistry, type ModelEntry } from '../providers/index.js';
-import { applyOverlayKey, paintOverlay, type OverlayItem, type OverlayState } from './overlay.js';
-import { fmtTokens, getSessionStats, statusLineText } from './status.js';
+import { filterItems, type OverlayItem } from './overlay.js';
+import { getSessionStats, statusLineText } from './status.js';
 import { addNote, listWork, recallWork } from '../commands/work.js';
 import { loadAgentProfiles } from '../orchestration/profiles.js';
 import type { AgentProfileV1 } from '../orchestration/types.js';
@@ -47,12 +44,18 @@ export interface TuiAppOptions {
   concise?: boolean;
   maxTurns?: number;
   attachments?: string[];
+  allowDestructive?: boolean;
+  reflect?: boolean;
 }
 
 const VIEWS: TuiView[] = ['chat', 'diff', 'tools', 'context', 'memory', 'work', 'history', 'agents', 'jobs'];
 
 export function resolveTuiConnection(options: Pick<TuiAppOptions, 'provider' | 'model'>, config: GrainConfig): { provider: string; model: string } {
-  return { provider: options.provider || config.provider, model: options.model || config.model || 'auto' };
+  const provider = options.provider || config.provider;
+  if (options.model && (options.model.includes(':') || (CLI_AGENT_PROVIDERS as readonly string[]).includes(options.model))) {
+    return resolveModelSelection(options.model, provider);
+  }
+  return { provider, model: options.model || (options.provider && options.provider !== config.provider ? 'auto' : config.model) || 'auto' };
 }
 
 export function transcriptOutputView(): TuiView { return 'chat'; }
@@ -100,7 +103,8 @@ export const HELP_LINES = [
   'MEMORY ADMIN',
   '  /memory edit ID CONTENT · /memory forget ID · /memory export|rebuild',
   'KEYS',
-  '  Tab views · @file Tab attach · PgUp/PgDn scroll · Ctrl+C cancel, then quit',
+  '  @file Tab attach · Up/Down history · terminal scrollback · Ctrl+C cancel',
+  '  Ctrl+D quit · bracketed paste for multiline input · /quit exit',
 ];
 
 /** Transcript lines carry their role so the renderer can style them. */
@@ -109,8 +113,8 @@ export type LineKind = 'user' | 'assistant' | 'tool' | 'result' | 'success' | 'w
 export interface TranscriptLine { kind: LineKind; text: string }
 
 const GUTTER: Record<LineKind, string> = {
-  user: '❯ ', assistant: '  ', tool: '· ', result: '  ', success: '✓ ',
-  warn: '! ', error: '× ', info: '· ', dim: '  ', heading: '',
+  user: '> ', assistant: '', tool: '+ ', result: '| ', success: '[ok] ',
+  warn: '[!] ', error: '[error] ', info: '* ', dim: '  ', heading: '',
 };
 
 export function lineStyleRole(kind: LineKind): 'accent' | 'text' | 'muted' | 'success' | 'warning' | 'danger' | 'evidence' {
@@ -193,154 +197,79 @@ export function collectWorkingTreeDiff(root: string): string {
 }
 
 async function runWorkspaceTui(options: TuiAppOptions): Promise<void> {
-  let capabilities = detectTerminalCapabilities();
-  let renderer = new DifferentialRenderer(capabilities);
-  let theme = resolveTheme(loadConfig().tui?.theme);
+  if (options.model) options = { ...options, ...resolveTuiConnection(options, loadConfig()) };
+  const terminal = new ScrollingTerminal();
+  terminal.setTheme(loadConfig().tui?.theme);
   let view: TuiView = 'chat'; const editor = new LineEditor(); let busy = false; let closed = false;
   let status = 'ready'; let currentRunId: string | undefined; let mode: WorkspaceMode = 'ask';
   let workspace: WorkspaceState = openWorkspace(process.cwd());
   setToolCwd(workspace.projectRoot || workspace.cwd);
-  const transcript: TranscriptLine[] = [
-    { kind: 'info', text: 'Grain is ready. Type a task, /model to choose a model, or /help for controls.' },
-  ];
+  let lastPanel: string[] | undefined;
+  let lastView = 'chat';
+  let commandBusy = false;
+  let taskPromise: Promise<void> | undefined;
   const panels = new Map<TuiView, string[]>(); panels.set('help', HELP_LINES);
   const approvedRisks = new Set<string>();
-  let promptResolver: ((answer: string | null) => void) | undefined; let promptLabel = '';
+  let promptResolver: ((answer: string | null) => void) | undefined;
+  let promptRejecter: ((error: Error) => void) | undefined;
   let activeController: AbortController | undefined;
-  let streamLine = -1;
-  let scrollOffset = 0;          // lines scrolled up from the bottom; 0 follows the tail
-  let overlay: OverlayState<unknown> | undefined;
-  let spinnerTick = 0;
   const steeringQueue: string[] = [];
   const applyDiffLog: string[] = [];
   const pendingAttachments: string[] = [...(options.attachments || [])];
   let activeProfile: AgentProfileV1 | undefined;
-  const SPINNER = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
-
   const render = () => {
     if (closed) return;
-    capabilities = detectTerminalCapabilities();
-    const frame = blankFrame(capabilities.columns, capabilities.rows, { background: theme.canvas, foreground: theme.text });
-    const width = frame.width; const height = frame.height;
-    const connection = resolveTuiConnection(options, loadConfig());
-    const runStatus = busy ? (status.startsWith('tool') ? 'executing_tool' : 'running') : promptResolver ? 'waiting_input' : 'succeeded';
-    const rice = mascotFrame(runStatus, spinnerTick, capabilities.reducedMotion);
-
-    // ── Header: field-instrument chrome (gold Grain + companion + connection).
-    putText(frame, 0, 0, ' '.repeat(width), { background: theme.panel });
-    let cursor = putText(frame, 0, 1, 'GRAIN', { foreground: theme.accent, background: theme.panel, bold: true });
-    cursor = putText(frame, 0, cursor + 1, rice, { foreground: theme.accent, background: theme.panel });
-    const place = projectName(workspace);
-    cursor = putText(frame, 0, cursor + 2, clip(place, Math.floor(width / 3)), { foreground: theme.text, background: theme.panel, bold: true });
-    if (activeProfile) cursor = putText(frame, 0, cursor + 2, clip(`@${activeProfile.id}`, 18), { foreground: theme.evidence, background: theme.panel });
-    const connectionLabel = `${connection.provider} · ${connection.model}`;
-    if (width > 52) {
-      putText(frame, 0, Math.max(cursor + 2, width - connectionLabel.length - 2), clip(connectionLabel, width - cursor - 3),
-        { foreground: theme.evidence, background: theme.panel });
+    if (view !== 'chat') {
+      const lines = panels.get(view);
+      if (lines && (lines !== lastPanel || view !== lastView)) terminal.block(view.toUpperCase(), lines.join('\n'));
+      lastPanel = lines;
     }
-
-    const tabs = formatViewTabs(view, width - 2);
-    putText(frame, 1, 1, clip(tabs, width - 2), { foreground: theme.muted, background: theme.canvas });
-    putText(frame, 2, 0, '─'.repeat(width), { foreground: theme.line, background: theme.canvas });
-
-    // ── Body.
-    const bodyHeight = Math.max(1, height - 6); const bodyWidth = Math.max(8, width - 4);
-    const source: TranscriptLine[] = view === 'chat' ? transcript
-      : (panels.get(view) || [`/${view} to refresh this view`]).map(text => ({ kind: panelLineKind(text), text }));
-    const lines = source.flatMap(line => wrapTuiText(line.text, bodyWidth).map(text => ({ kind: line.kind, text })));
-    const maxScroll = Math.max(0, lines.length - bodyHeight);
-    if (scrollOffset > maxScroll) scrollOffset = maxScroll;
-    const end = lines.length - scrollOffset;
-    lines.slice(Math.max(0, end - bodyHeight), end).forEach((line, index) => {
-      const role = lineStyleRole(line.kind);
-      putText(frame, 3 + index, 2, clip(line.text, bodyWidth),
-        { foreground: theme[role], background: theme.canvas, bold: line.kind === 'user' || line.kind === 'heading' });
-    });
-    if (scrollOffset > 0) {
-      const marker = `↑ ${scrollOffset} more · PgDn to follow`;
-      putText(frame, 3 + bodyHeight - 1, Math.max(2, width - marker.length - 2), marker, { foreground: theme.warning, background: theme.canvas });
-    }
-
-    // ── Status: work state on the left, session accounting on the right.
-    putText(frame, height - 3, 0, '─'.repeat(width), { foreground: theme.line });
-    putText(frame, height - 2, 0, ' '.repeat(width), { background: theme.panel });
-    const state = busy ? status : promptResolver ? promptLabel : status;
-    const badge = busy ? `${SPINNER[spinnerTick % SPINNER.length]} ` : promptResolver ? '? ' : '● ';
-    let statusCursor = putText(frame, height - 2, 1, badge, { foreground: busy ? theme.warning : promptResolver ? theme.accent : theme.success, background: theme.panel });
-    statusCursor = putText(frame, height - 2, statusCursor, clip(`${mode.toUpperCase()}  ${state}`, Math.floor(width * 0.55)),
-      { foreground: busy ? theme.warning : theme.muted, background: theme.panel, bold: busy });
-    const accounting = sessionAccounting();
-    if (accounting && width > 60) {
-      putText(frame, height - 2, Math.max(statusCursor + 2, width - accounting.length - 2), clip(accounting, width - statusCursor - 3),
-        { foreground: theme.muted, background: theme.panel });
-    }
-
-    // ── Composer.
-    const prefix = promptResolver ? '? ' : '› ';
-    putText(frame, height - 1, 0, ' '.repeat(width), { background: theme.panel });
-    putText(frame, height - 1, 0, prefix, { foreground: theme.accent, background: theme.panel, bold: true });
-    const composer = editor.displayValue();
-    putText(frame, height - 1, prefix.length, clip(composer, width - prefix.length), { foreground: theme.text, background: theme.panel });
-    if (!composer && !promptResolver) {
-      putText(frame, height - 1, prefix.length, clip('type a task · enter sends · /help', width - prefix.length - 1),
-        { foreground: theme.muted, background: theme.panel });
-    }
-    frame.cursor = { row: height - 1, column: Math.min(width - 1, prefix.length + editor.cursorColumn()), visible: true };
-
-    if (overlay) paintOverlay(frame, overlay, theme);
-    renderer.render(frame);
-  };
-
-  /** `↑12.4k ↓3.1k · 18.2%/200k · $0.04` — only the parts that are known. */
-  const sessionAccounting = (): string => {
-    const stats = getSessionStats();
-    if (!stats.upTokens && !stats.downTokens && !stats.childTools) return '';
-    const parts: string[] = [];
-    if (stats.upTokens || stats.downTokens) parts.push(`↑${fmtTokens(stats.upTokens)} ↓${fmtTokens(stats.downTokens)}`);
-    if (stats.contextWindow) parts.push(`${Math.min(100, (stats.lastInputTokens / stats.contextWindow) * 100).toFixed(0)}%/${fmtTokens(stats.contextWindow)}`);
-    if (stats.costUsd) parts.push(`$${stats.costUsd.toFixed(2)}`);
-    if (stats.childTools) parts.push('child tools');
-    return parts.join(' · ');
+    lastView = view;
+    if (promptResolver) terminal.prompt('? ', editor.value(), editor.cursorIndex());
+    else if (!busy && !commandBusy) terminal.prompt('grain> ', editor.value(), editor.cursorIndex());
   };
 
   const add = (kind: LineKind, message: unknown) => {
-    view = transcriptOutputView();
-    streamLine = -1;
-    scrollOffset = 0;
+    if (closed) return;
+    view = 'chat';
     const text = typeof message === 'string' ? message : JSON.stringify(message, null, 2);
-    const gutter = GUTTER[kind];
-    transcript.push(...text.split('\n').map((line, index) => ({
-      kind, text: `${index === 0 ? gutter : ' '.repeat(gutter.length)}${line}`,
-    })));
-    if (transcript.length > 2000) transcript.splice(0, transcript.length - 2000);
+    terminal.line(GUTTER[kind] + text, lineStyleRole(kind));
     render();
   };
 
+  let toolStarted = 0;
+  let streamedLines = 0;
   const ui: AgentUi = {
-    stream: text => {
-      scrollOffset = 0;
-      if (streamLine < 0) { transcript.push({ kind: 'assistant', text: '  ' }); streamLine = transcript.length - 1; }
-      const chunks = text.replace(/\r/g, '').split('\n'); transcript[streamLine].text += chunks.shift() || '';
-      for (const chunk of chunks) { transcript.push({ kind: 'assistant', text: `  ${chunk}` }); streamLine = transcript.length - 1; }
-      render();
+    stream: text => { if (!closed) terminal.stream(text); },
+    streamToolLine: line => {
+      if (closed) return;
+      if (streamedLines++ < 200) terminal.line('| ' + line);
+      else if (streamedLines === 201) terminal.line('| ... further output saved in run journal');
     },
-    streamToolLine: line => add('result', line),
-    tool: (name, _input) => { status = `tool · ${name}`; add('tool', name); },
-    result: (output, isError) => add(isError ? 'error' : 'result', output),
-    success: message => add('success', message), newLine: () => add('dim', ''), clearLine: () => {},
-    warn: message => add('warn', message), error: message => add('error', message), info: message => add('info', message),
-    dim: message => {
-      const text = typeof message === 'string' ? message : JSON.stringify(message);
-      if (/\n--- |\n@@ |^APPLY  /m.test(text)) {
-        for (const line of text.split('\n')) add(panelLineKind(line), line);
-        return;
+    tool: (name, input) => {
+      toolStarted = Date.now(); streamedLines = 0;
+      status = 'tool: ' + name;
+      const pending = input && typeof input === 'object' && '_streaming' in input;
+      terminal.block(name, pending ? 'Preparing tool call...' : JSON.stringify(input, null, 2)?.slice(0, 1000) || '');
+    },
+    result: (output, isError) => {
+      if (!streamedLines) {
+        const text = typeof output === 'string' ? output : JSON.stringify(output, null, 2);
+        const lines = text.split('\n');
+        terminal.line(lines.slice(0, 20).map(line => '| ' + line).join('\n'));
+        if (lines.length > 20) terminal.line('| ... ' + (lines.length - 20) + ' more lines saved in run journal');
       }
-      add('dim', message);
+      terminal.line('+-- ' + (isError ? 'failed' : 'done') + ' (' + ((Date.now() - toolStarted) / 1000).toFixed(1) + 's)', isError ? 'danger' : 'success');
     },
-    retryNotice: (attempt, max, seconds) => add('info', `retrying ${attempt}/${max} in ${seconds}s`),
-    spinner: label => { status = label || 'thinking'; render(); return { stop: () => { status = 'working'; render(); } }; },
-    userPrompt: label => new Promise(resolvePrompt => {
-      promptLabel = label || 'Your answer'; promptResolver = resolvePrompt; editor.clear(); status = 'waiting for input'; render();
+    success: message => add('success', message), newLine: () => terminal.line(), clearLine: () => terminal.clearPrompt(),
+    warn: message => add('warn', message), error: message => add('error', message), info: message => add('info', message),
+    dim: message => add('dim', message),
+    retryNotice: (attempt, max, seconds) => add('info', 'retrying ' + attempt + '/' + max + ' in ' + seconds + 's'),
+    spinner: label => { status = label || 'thinking'; terminal.line('(o.o) ' + status, 'muted'); return { stop() {} }; },
+    userPrompt: label => new Promise((resolvePrompt, rejectPrompt) => {
+      if (closed || activeController?.signal.aborted) { rejectPrompt(new Error('SIGINT')); return; }
+      promptResolver = resolvePrompt; promptRejecter = rejectPrompt;
+      editor.clear(); terminal.line(label || 'Your answer'); render();
     }),
   };
 
@@ -401,8 +330,8 @@ async function runWorkspaceTui(options: TuiAppOptions): Promise<void> {
     activeController = new AbortController();
     const root = job?.workspace || workspace.projectRoot; const previous = process.cwd();
     const folder = workspace.cwd;
-    if (job) process.chdir(job.workspace);
     try {
+      if (job) process.chdir(job.workspace);
       if (activeProfile && !['grain-native', 'direct-api'].includes(activeProfile.executor)) {
         if (!root) throw new Error('Open a Git project before running an external coding-agent profile.');
         const write = activeProfile.permissions.write === 'allow' || activeProfile.permissions.write === 'ask';
@@ -418,7 +347,8 @@ async function runWorkspaceTui(options: TuiAppOptions): Promise<void> {
           expectedArtifact: 'verification verdict with evidence', dependencies: [driver.id], profile: activeProfile.id,
           executor: activeProfile.executor, provider: activeProfile.provider, model: activeProfile.model, budget: activeProfile.budget });
         const graphStore = new TaskGraphStore(); graphStore.save(graph); status = `agent · ${activeProfile.id}`;
-        const execution = await executeProfileGraph(graph, root, graphStore); currentRunId = execution.runId;
+        const execution = await executeProfileGraph(graph, root, graphStore, activeController.signal); currentRunId = execution.runId;
+        if (activeController.signal.aborted) throw new Error('SIGINT');
         const failed = execution.graph.tasks.filter(task => task.state !== 'succeeded');
         if (failed.length) throw new Error(failed.map(task => `${task.role}: ${task.lastError || task.state}`).join(' | '));
         for (const task of execution.graph.tasks) add(task.role === 'verifier' ? 'success' : 'assistant', task.result?.summary || task.state);
@@ -432,6 +362,7 @@ async function runWorkspaceTui(options: TuiAppOptions): Promise<void> {
         attachments, workspaceKey: root ? workspaceKey(root) : `folder:${workspaceKey(folder)}`, mode, approvedRisks, ui,
         workspaceRoot: root, cwd: folder, allowWrites: Boolean(root) || folder !== homedir(),
         generalChat: !root, signal: activeController.signal,
+        allowDestructive: options.allowDestructive, reflect: options.reflect,
         drainSteering: () => steeringQueue.splice(0),
         onEvent: (event: AgentWorkspaceEvent) => {
           if (event.type === 'run') currentRunId = event.runId;
@@ -457,36 +388,59 @@ async function runWorkspaceTui(options: TuiAppOptions): Promise<void> {
         await openModelPicker();
       }
     } finally {
-      if (job) process.chdir(previous); activeController = undefined; busy = false; streamLine = -1; render();
+      if (job) process.chdir(previous); activeController = undefined; busy = false;
+      if (!closed) terminal.line(statusLineText(getSessionStats(), mode, loadConfig().effort), 'muted'); render();
       // A run can finish before it reaches another turn boundary. Preserve the
       // queued instruction by starting it as the next resumable conversation.
       const followUp = takeQueuedFollowUp(steeringQueue);
-      if (followUp && !closed) queueMicrotask(() => { void runTask(followUp); });
+      if (followUp && !closed) queueMicrotask(() => { if (!closed) startTask(followUp); });
     }
   };
 
-  /** Open a modal list and resolve when the user picks or dismisses it. */
-  const pick = <T,>(title: string, items: OverlayItem<T>[], filter = ''): Promise<{ value: T | null; item?: OverlayItem<T> }> =>
-    new Promise(resolvePick => {
-      const filtered = filter ? items.filter(item => `${item.label} ${item.hint ?? ''}`.toLowerCase().includes(filter.toLowerCase())) : items;
-      const current = Math.max(0, (filtered.length ? filtered : items).findIndex(item => item.current));
-      overlay = {
-        title, items: items as OverlayItem<unknown>[], filter, index: current,
-        resolve: (value, item) => { overlay = undefined; render(); resolvePick({ value: value as T | null, item: item as OverlayItem<T> | undefined }); },
-      } as OverlayState<unknown>;
-      render();
-    });
+  const startTask = (prompt: string, attachments: string[] = [], job?: ScheduledJob) => {
+    const alreadyRunning = busy;
+    const promise = runTask(prompt, attachments, job).catch(error => add('error', String(error)));
+    if (!alreadyRunning) taskPromise = promise;
+  };
+
+  /** Numbered lists stay readable in native terminal scrollback. */
+  const pick = async <T,>(title: string, items: OverlayItem<T>[], filter = ''): Promise<{ value: T | null; item?: OverlayItem<T> }> => {
+    let visible = filterItems(items, filter);
+    while (!closed) {
+      terminal.block(title, visible.slice(0, 40).map((item, index) =>
+        String(index + 1).padStart(2) + '. ' + (item.current ? '* ' : '') + item.label + (item.disabled ? ' [unavailable]' : '') + '  ' + (item.fix || item.hint || '')
+      ).join('\n') || 'No matches');
+      if (visible.length > 40) terminal.line('Showing 40 of ' + visible.length + '. Type a name to narrow the list.');
+      const answer = (await ui.userPrompt('Choose a number, or type to filter (blank cancels)'))?.trim();
+      if (!answer) return { value: null };
+      if (/^\d+$/u.test(answer)) {
+        const item = visible[Number(answer) - 1];
+        if (item) return { value: item.value, item };
+        add('warn', 'Choose a listed number.'); continue;
+      }
+      const matches = filterItems(items, answer);
+      if (matches.length === 1) return { value: matches[0].value, item: matches[0] };
+      if (!matches.length) { add('warn', 'No match for "' + answer + '".'); continue; }
+      visible = matches;
+    }
+    return { value: null };
+  };
 
   const openFileMention = async () => {
     const mention = editor.mention();
     if (!mention) return false;
+    const composer = editor.value(); const cursor = editor.cursorIndex();
     setToolCwd(workspace.projectRoot || workspace.cwd);
     let files: string[] = [];
     try { files = getWorkspaceFS().list('.', 5).filter(path => path && !path.endsWith('/')).slice(0, 400); }
     catch { files = []; }
     if (!files.length) { add('warn', 'No project files to attach.'); return true; }
-    const chosen = await pick('Attach a file  (@path)', files.map(path => ({ label: path, value: path })), mention.query);
-    if (chosen.value) editor.replaceMention(chosen.value);
+    try {
+      const chosen = await pick('Attach a file  (@path)', files.map(path => ({ label: path, value: path })), mention.query);
+      editor.setValue(composer, cursor);
+      if (chosen.value) editor.replaceMention(chosen.value);
+    } catch (error) { editor.setValue(composer, cursor); if (!(error instanceof Error && error.message === 'SIGINT')) throw error; }
+    render();
     return true;
   };
 
@@ -562,6 +516,10 @@ async function runWorkspaceTui(options: TuiAppOptions): Promise<void> {
   const handleCommand = async (value: string) => {
     const parsed = parseComposerInput(value); const command = parsed.command || ''; const arg = parsed.argument;
     if (!command) { await refreshView('help'); return; }
+    if (busy && !['help', 'steer', 'tools', 'context', 'settings'].includes(command)) {
+      add('warn', 'A task is running. Ctrl+C cancels it; /steer MESSAGE queues an instruction.'); return;
+    }
+    if (command === 'plan') { mode = 'plan'; add('success', 'Mode: plan'); return; }
     if (command === 'exit' || command === 'quit') { cleanup(); return; }
     if (command === 'help') { await refreshView('help'); return; }
     if (VIEWS.includes(command as TuiView) && !arg) { await refreshView(command as TuiView); return; }
@@ -636,7 +594,7 @@ async function runWorkspaceTui(options: TuiAppOptions): Promise<void> {
     }
     if (command === 'theme') {
       if (!['field', 'studio', 'arcade', 'system'].includes(arg)) { add('warn', 'Usage: /theme field|studio|arcade|system'); return; }
-      const config = loadConfig(); saveConfig({ ...config, tui: { ...config.tui!, theme: arg as GrainThemeName, schemaVersion: 2 } }); theme = resolveTheme(arg as GrainThemeName); render(); return;
+      const config = loadConfig(); saveConfig({ ...config, tui: { ...config.tui!, theme: arg as GrainThemeName, schemaVersion: 2 } }); terminal.setTheme(arg as GrainThemeName); add('success', `Theme: ${arg}`); return;
     }
     if (command === 'effort') {
       if (!['low', 'medium', 'high'].includes(arg)) { add('warn', 'Usage: /effort low|medium|high'); return; }
@@ -651,7 +609,9 @@ async function runWorkspaceTui(options: TuiAppOptions): Promise<void> {
     }
     if (command === 'undo') {
       if (!changedFileCount()) { add('info', 'Nothing to undo from the latest task.'); return; }
-      const undone = undoLast(); add('success', `Undid ${undone.restored.length} modified and ${undone.deleted.length} new files.`); await refreshView('diff'); return;
+      const undone = undoLast(); add('success', `Undid ${undone.restored.length} modified and ${undone.deleted.length} new files.`);
+      if (undone.skipped.length) add('error', `Not restored (snapshots retained):\n${undone.skipped.join('\n')}`);
+      await refreshView('diff'); return;
     }
     if (command === 'context' && arg === 'explain') { await refreshView('context'); return; }
     if (command === 'memory' && arg) {
@@ -708,7 +668,7 @@ async function runWorkspaceTui(options: TuiAppOptions): Promise<void> {
         else if (action === 'disable') store.setEnabled(name, false);
         else if (action === 'run') {
           const job = store.list().find(item => item.name === name || item.id === name); if (!job) throw new Error(`Unknown scheduled job: ${name}`);
-          void runTask(job.prompt, [], job);
+          startTask(job.prompt, [], job);
         }
         await refreshView('jobs');
       } catch (error) { add('error', error instanceof Error ? error.message : String(error)); }
@@ -718,87 +678,106 @@ async function runWorkspaceTui(options: TuiAppOptions): Promise<void> {
   };
 
   const submit = async () => {
-    const value = editor.commit().trim(); render();
-    if (promptResolver) { const resolvePrompt = promptResolver; promptResolver = undefined; promptLabel = ''; resolvePrompt(value); return; }
-    if (!value) return;
-    if (value.startsWith('/')) await handleCommand(value);
-    else { const parsed = parseComposerInput(value); const attachments = [...pendingAttachments.splice(0), ...parsed.attachments]; void runTask(parsed.argument, attachments); }
+    const value = editor.commit().trim();
+    terminal.clearPrompt();
+    if (promptResolver) {
+      const resolvePrompt = promptResolver;
+      promptResolver = undefined; promptRejecter = undefined;
+      terminal.line('> ' + value); resolvePrompt(value); return;
+    }
+    if (!value) { render(); return; }
+    if (value.startsWith('/')) {
+      if (commandBusy) { add('warn', 'Wait for the current command to finish.'); return; }
+      commandBusy = true;
+      terminal.line('> ' + value, 'accent');
+      try { await handleCommand(value); }
+      catch (error) { add('error', error instanceof Error ? error.message : String(error)); }
+      finally { commandBusy = false; render(); }
+    } else {
+      const parsed = parseComposerInput(value);
+      if (!parsed.argument) { pendingAttachments.push(...parsed.attachments); add('info', 'Attached. Add a message describing the task.'); return; }
+      if (busy && (pendingAttachments.length || parsed.attachments.length)) {
+        editor.setValue(value); add('warn', 'Wait for the task to finish before submitting attachments.'); return;
+      }
+      startTask(parsed.argument, [...pendingAttachments.splice(0), ...parsed.attachments]);
+    }
   };
 
-  const bodyHeight = () => Math.max(1, detectTerminalCapabilities().rows - 6);
-
-  const inputHandler = (data: Buffer) => {
-    const raw = data.toString('utf8');
-
-    // A modal owns the keyboard for its lifetime; the composer never sees these.
-    if (overlay) { applyOverlayKey(overlay, raw, Math.max(4, bodyHeight() - 4)); render(); return; }
-
-    // Scrollback: reading back through a long run must not require a mouse.
-    if (raw === '\x1b[5~') { scrollOffset += Math.max(1, bodyHeight() - 2); render(); return; }
-    if (raw === '\x1b[6~') { scrollOffset = Math.max(0, scrollOffset - Math.max(1, bodyHeight() - 2)); render(); return; }
-    if (raw === '\x1b[1;2A') { scrollOffset += 1; render(); return; }   // shift-up
-    if (raw === '\x1b[1;2B') { scrollOffset = Math.max(0, scrollOffset - 1); render(); return; } // shift-down
-
-    const actions = editor.feedAll(raw);
-    for (const action of actions) {
-      if (action === 'cancel') {
-        if (busy) { status = activeController?.signal.aborted ? 'forcing cancellation' : 'cancelling'; activeController?.abort(); destroyShell(); }
-        else if (!promptResolver) cleanup();
-        else status = 'answer the active prompt or press Enter';
-        render(); continue;
-      }
-      if (action === 'clear') { transcript.splice(0); scrollOffset = 0; }
-      if (action === 'tab' && !promptResolver) {
-        if (editor.mention()) { void openFileMention(); continue; }
-        const index = VIEWS.indexOf(view); scrollOffset = 0; void refreshView(VIEWS[(index + 1) % VIEWS.length]); continue;
-      }
-      if (action === 'submit') { void submit(); continue; }
+  const cancel = () => {
+    const answering = Boolean(promptRejecter);
+    if (promptRejecter) {
+      const reject = promptRejecter; promptResolver = undefined; promptRejecter = undefined;
+      reject(new Error('SIGINT'));
     }
+    if (busy) {
+      steeringQueue.length = 0;
+      activeController?.abort(); destroyShell(); add('warn', 'Cancelling...');
+    } else if (!answering) cleanup();
+    else render();
+  };
+  const decoder = new StringDecoder('utf8');
+  const inputHandler = (data: Buffer) => {
+    const raw = decoder.write(data);
+    if (raw === '\x04' && !editor.value()) { cancel(); return; }
+    if (/^\x1b\[(?:5~|6~|1;2A|1;2B)$/.test(raw)) return;
+    editor.feedAll(raw, action => {
+      if (closed) return;
+      if (action === 'cancel') { cancel(); return; }
+      if (action === 'clear') { editor.clear(); return; }
+      if (action === 'tab' && !promptResolver && !commandBusy && !busy) {
+        if (editor.mention()) void openFileMention().catch(error => add('error', String(error)));
+        return;
+      }
+      if (action === 'submit') void submit().catch(error => add('error', String(error)));
+    });
     render();
   };
 
-  const resize = () => { capabilities = detectTerminalCapabilities(); renderer = new DifferentialRenderer(capabilities); process.stdout.write('\x1b[2J'); render(); };
-  const alternate = options.alternateScreen !== false;
-  // Animate the working indicator only while there is work — an idle Grain
-  // should not repaint the screen ten times a second.
-  const animation = setInterval(() => { if (busy && !closed) { spinnerTick++; render(); } }, capabilities.reducedMotion ? 500 : 110);
-  animation.unref?.();
+  const resize = () => render();
+  let resolveClosed: () => void;
+  const done = new Promise<void>(resolve => { resolveClosed = resolve; });
+  const wasRaw = Boolean(process.stdin.isRaw);
   const cleanup = () => {
-    if (closed) return; closed = true; clearInterval(animation); activeController?.abort(); destroyShell(); process.stdout.off('resize', resize); process.stdin.off('data', inputHandler);
-    try { process.stdin.setRawMode(false); } catch {} process.stdin.pause(); process.off('SIGTERM', cleanup); process.off('exit', cleanup);
-    process.stdout.write(`\x1b[?2004l\x1b[0m\x1b[?25h${alternate ? '\x1b[?1049l' : '\n'}`);
+    if (closed) return;
+    closed = true;
+    promptRejecter?.(new Error('SIGINT')); promptResolver = undefined; promptRejecter = undefined;
+    steeringQueue.length = 0;
+    activeController?.abort(); destroyShell();
+    process.stdout.off('resize', resize); process.stdin.off('data', inputHandler); process.stdin.off('end', cleanup);
+    process.off('SIGTERM', cleanup); process.off('SIGINT', cancel); process.off('exit', cleanup);
+    try { process.stdin.setRawMode(wasRaw); } catch {}
+    process.stdin.pause();
+    terminal.close(); process.stdout.write('\x1b[?2004l\x1b[0m\x1b[?25h');
+    resolveClosed();
   };
-  if (alternate) process.stdout.write('\x1b[?1049h'); process.stdout.write('\x1b[?2004h\x1b[2J\x1b[?25h');
-  try { process.stdin.setRawMode(true); } catch { /* stdin already raw or closed */ }
-  process.stdin.resume(); process.stdin.on('data', inputHandler); process.stdout.on('resize', resize); process.on('SIGTERM', cleanup); process.on('exit', cleanup);
-  render();
-  if (options.prompt) void runTask(options.prompt, pendingAttachments.splice(0));
-  try { await new Promise<void>(resolveClosed => { const timer = setInterval(() => { if (closed) { clearInterval(timer); resolveClosed(); } }, 50); }); }
-  finally { cleanup(); }
+  try {
+    process.stdin.setRawMode(true);
+    process.stdout.write('\x1b[?2004h');
+    process.stdin.resume(); process.stdin.on('data', inputHandler); process.stdin.on('end', cleanup);
+    process.stdout.on('resize', resize); process.on('SIGTERM', cleanup);
+    process.on('SIGINT', cancel); process.on('exit', cleanup);
+    terminal.block('hello, friend', WELCOME);
+    const connection = resolveTuiConnection(options, loadConfig());
+    terminal.line(connection.provider + ' / ' + connection.model + '   ' + workspace.cwd);
+    terminal.line('Type a task. Enter sends. /help for commands. Ctrl+C cancels. Ctrl+D exits.');
+    render();
+    if (options.prompt) startTask(options.prompt, pendingAttachments.splice(0));
+    await done;
+    await taskPromise;
+  } finally { cleanup(); }
 }
 
 async function runJournalViewer(options: TuiAppOptions): Promise<void> {
-  const runId = options.runId || listRuns().at(-1); if (!runId) throw new Error('No runs available. Start a task first.');
-  let capabilities = detectTerminalCapabilities(); let renderer = new DifferentialRenderer(capabilities);
-  let theme = resolveTheme(loadConfig().tui?.theme); let tick = 0; let closed = false; let cancelArmed = false;
-  const alternate = options.alternateScreen !== false; const journal = RunJournal.open(runId); const engine = new RunEngine(journal);
-  const render = () => { try { renderer.render(layoutRun(projectRun(readRunEvents(runId)), capabilities, theme, tick++)); } catch {} };
-  const resize = () => { capabilities = detectTerminalCapabilities(); renderer = new DifferentialRenderer(capabilities); process.stdout.write('\x1b[2J'); render(); };
-  const cleanup = () => { if (closed) return; closed = true; clearInterval(timer); process.stdout.off('resize', resize); process.stdin.off('data', input);
-    try { process.stdin.setRawMode(false); } catch {} process.stdin.pause(); process.off('exit', cleanup); process.stdout.write(`\x1b[0m\x1b[?25h${alternate ? '\x1b[?1049l' : '\n'}`); };
-  const input = (data: Buffer) => { const key = data.toString('utf8'); try {
-    if (key === 'q') { cleanup(); return; } const current = engine.state();
-    if (current.status === 'waiting_input' && current.pending_question && /^[1-6]$/.test(key)) { const choice = current.pending_question.choices[Number(key) - 1]; if (choice) engine.dispatch({ type: 'answer', questionId: current.pending_question.id, answer: choice }); }
-    if (key === 'p') engine.dispatch({ type: current.status === 'paused' ? 'resume' : 'pause' });
-    if (key === 't') { const names: GrainThemeName[] = ['field', 'studio', 'arcade', 'system']; theme = resolveTheme(names[(names.indexOf(theme.name) + 1) % names.length]); }
-    if (key === '\u0003') { if (cancelArmed) engine.dispatch({ type: 'cancel', force: true }); else { cancelArmed = true; engine.dispatch({ type: 'cancel' }); } }
-  } catch {} render(); };
-  if (alternate) process.stdout.write('\x1b[?1049h'); process.stdout.write('\x1b[2J\x1b[?25l'); process.stdin.setRawMode(true); process.stdin.resume(); process.stdin.on('data', input); process.stdout.on('resize', resize); process.on('exit', cleanup);
-  const timer = setInterval(render, capabilities.reducedMotion ? 500 : 125); render();
-  try { await new Promise<void>(resolveClosed => { const done = setInterval(() => { if (closed) { clearInterval(done); resolveClosed(); } }, 50); }); } finally { cleanup(); }
+  const runId = options.runId || listRuns().at(-1);
+  if (!runId) throw new Error('No runs available. Start a task first.');
+  const view = projectRun(readRunEvents(runId));
+  const terminal = new ScrollingTerminal();
+  terminal.block('RUN ' + runId, [view.run.task, view.run.provider + ' / ' + view.run.model + ' - ' + view.run.status,
+    ...view.timeline.map(item => item.sequence + '. ' + item.label + ' ' + (item.detail || ''))].join('\n'));
+  terminal.line('Full journal: grain runs events ' + runId);
 }
 
 export async function runTui(options: TuiAppOptions = {}): Promise<void> {
-  if (!process.stdin.isTTY || !process.stdout.isTTY) throw new Error('Full-screen TUI requires an interactive terminal; use --classic for line output');
+  if (!process.stdin.isTTY || !process.stdout.isTTY) throw new Error('Interactive chat requires a terminal; use grain -p "TASK" for line output');
   if (options.runId) await runJournalViewer(options); else await runWorkspaceTui(options);
 }

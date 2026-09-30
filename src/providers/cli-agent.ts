@@ -8,6 +8,7 @@
 // result instead of handing it Grain's tool schemas.
 import { spawn, type ChildProcessByStdio } from 'child_process';
 import type { Readable } from 'stream';
+import { StringDecoder } from 'string_decoder';
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'fs';
 import { homedir } from 'os';
 import { join, resolve } from 'path';
@@ -137,6 +138,7 @@ export function buildAgentPrompt(messages: Message[], resuming: boolean): string
 function subscriptionEnv(agent: CliAgentId): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...process.env, CI: '1', TERM: 'dumb', NO_COLOR: '1' };
   if (agent === 'claude-code') { delete env.ANTHROPIC_API_KEY; delete env.ANTHROPIC_AUTH_TOKEN; }
+  if (agent === 'codex') delete env.OPENAI_API_KEY;
   return env;
 }
 
@@ -158,11 +160,17 @@ export function buildCliAgentArgv(
   }
   if (name === 'codex') {
     const args = ['exec'];
-    if (resumeId) args.push('resume', resumeId);
-    args.push('--json', '--skip-git-repo-check', '--color', 'never');
+    if (resumeId) args.push('resume');
+    args.push('--json', '--skip-git-repo-check');
+    if (!resumeId) args.push('--color', 'never');
     if (model) args.push('-m', model);
-    args.push('-s', write ? 'workspace-write' : 'read-only');
-    if (write) args.push('--approve-for-me');
+    // Auto-review already selects workspace-write and conflicts with --sandbox.
+    // Resume retains the original policy and rejects these top-level flags.
+    if (!resumeId) {
+      if (write) args.push('--approve-for-me');
+      else args.push('-s', 'read-only');
+    }
+    if (resumeId) args.push(resumeId);
     args.push(prompt);
     return args;
   }
@@ -247,6 +255,27 @@ export class CliAgentProvider implements Provider {
 
     if (this.name === 'codex') {
       const message = record.msg || record;
+      if (record.type === 'thread.started' && record.thread_id) state.sessionId = record.thread_id;
+      if (record.type === 'item.started' && record.item?.type === 'command_execution') {
+        state.sawOutput = true;
+        yield { type: 'text_delta', text: `\n· ${String(record.item.command || 'command').replace(/\s+/gu, ' ').slice(0, 240)}\n` };
+        return;
+      }
+      if (record.type === 'item.completed' && record.item?.type === 'agent_message' && record.item.text) {
+        const text = String(record.item.text);
+        state.text += text; state.sawOutput = true;
+        yield { type: 'text_delta', text: text + '\n' };
+        return;
+      }
+      if (record.type === 'turn.completed' && record.usage) {
+        yield { type: 'usage', input_tokens: record.usage.input_tokens || 0,
+          output_tokens: record.usage.output_tokens || 0, cache_read_tokens: record.usage.cached_input_tokens || 0 };
+        return;
+      }
+      if (record.type === 'turn.failed') {
+        yield { type: 'error', error: String(record.error?.message || 'Codex turn failed') };
+        return;
+      }
       if (record.session_id || message.session_id) state.sessionId = record.session_id || message.session_id;
       if (message.type === 'session_configured' && message.session_id) state.sessionId = message.session_id;
       if (message.type === 'agent_message_delta' && message.delta) { state.text += message.delta; state.sawOutput = true; yield { type: 'text_delta', text: message.delta }; }
@@ -312,20 +341,25 @@ export class CliAgentProvider implements Provider {
     const finish = () => { done = true; wake?.(); wake = undefined; };
 
     let buffer = '';
-    child.stdout.on('data', (chunk: Buffer) => {
-      buffer += chunk.toString();
+    const decoder = new StringDecoder('utf8');
+    const consume = (text: string, final = false) => {
+      buffer += text;
       const lines = buffer.split('\n'); buffer = lines.pop() || '';
+      if (final && buffer) { lines.push(buffer); buffer = ''; }
       for (const line of lines) {
         if (!line.trim()) continue;
         let record: any;
         try { record = JSON.parse(line); } catch { continue; }
         for (const event of this.translate(record, state)) push(event);
       }
-    });
-    child.stderr.on('data', (chunk: Buffer) => { stderr = (stderr + chunk.toString()).slice(-4_000); });
+    };
+    child.stdout.on('data', (chunk: Buffer) => consume(decoder.write(chunk)));
+    child.stdout.on('end', () => consume(decoder.end(), true));
+    child.stderr.setEncoding('utf8');
+    child.stderr.on('data', (chunk: string) => { stderr = (stderr + chunk).slice(-4_000); });
     child.on('error', error => { failure = `${this.definition.binary}: ${error.message}`; finish(); });
     child.on('close', code => {
-      if (code !== 0 && !state.sawOutput) failure = cliFailureMessage(this.name, stderr, code);
+      if (code !== 0) failure = cliFailureMessage(this.name, stderr, code);
       finish();
     });
 

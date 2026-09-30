@@ -8,6 +8,7 @@ import { TaskGraphStore } from './store.js';
 import { WorktreeManager } from './worktree.js';
 import { RunService } from '../kernel/service.js';
 import { WorkflowRunner } from './workflows.js';
+import { AgentScheduler } from './scheduler.js';
 import type { TaskGraph } from './types.js';
 
 /** Resolves every profile kind through one durable graph executor boundary. */
@@ -55,7 +56,7 @@ export class ProfileAgentExecutor {
 }
 
 /** Execute a profile graph while mirroring every child into the parent run journal. */
-export async function executeProfileGraph(graph: TaskGraph, repositoryRoot: string, store = new TaskGraphStore()): Promise<{ graph: TaskGraph; runId: string }> {
+export async function executeProfileGraph(graph: TaskGraph, repositoryRoot: string, store = new TaskGraphStore(), parentSignal?: AbortSignal): Promise<{ graph: TaskGraph; runId: string }> {
   const first = graph.tasks[0]; const run = new RunService().create({ task: first?.objective || graph.mode, cwd: repositoryRoot,
     provider: first?.provider || 'profile', model: first?.model || first?.profile || 'auto', policy_profile: 'orchestration' });
   run.journal.transition('running', { graph_id: graph.id, mode: graph.mode });
@@ -64,7 +65,9 @@ export async function executeProfileGraph(graph: TaskGraph, repositoryRoot: stri
     run.journal.append('child_run_created', { graph_id: graph.id, task_id: task.id, parent_task_id: task.parentId,
       profile: task.profile, executor: task.executor, objective: task.objective });
     try {
-      const result = await base(task, signal, () => { heartbeat(); run.journal.append('child_run_heartbeat', { graph_id: graph.id, task_id: task.id }); });
+      const combined = parentSignal ? AbortSignal.any([signal, parentSignal]) : signal;
+      combined.throwIfAborted();
+      const result = await base(task, combined, () => { heartbeat(); run.journal.append('child_run_heartbeat', { graph_id: graph.id, task_id: task.id }); });
       run.journal.append('child_run_completed', { graph_id: graph.id, task_id: task.id, success: true,
         evidence: result.evidence, changed_paths: result.changedPaths, usage: result.usage }); return result;
     } catch (error) {
@@ -72,9 +75,23 @@ export async function executeProfileGraph(graph: TaskGraph, repositoryRoot: stri
         error: error instanceof Error ? error.message : String(error) }); throw error;
     }
   };
-  const final = await new WorkflowRunner(store).executeConcurrent(graph.id, executor, graph.limits.maxConcurrency);
+  const cancel = () => {
+    store.update(graph.id, current => {
+      const scheduler = new AgentScheduler();
+      for (const task of current.tasks) {
+        if (['pending', 'ready', 'waiting', 'running'].includes(task.state)) scheduler.requestCancellation(current, task.id);
+      }
+    });
+  };
+  parentSignal?.addEventListener('abort', cancel, { once: true });
+  let final: TaskGraph;
+  try {
+    if (parentSignal?.aborted) cancel();
+    final = await new WorkflowRunner(store).executeConcurrent(graph.id, executor, graph.limits.maxConcurrency);
+  } finally { parentSignal?.removeEventListener('abort', cancel); }
   const failed = final.tasks.filter(task => task.state !== 'succeeded');
-  if (failed.length) run.journal.transition('failed', { graph_id: graph.id, failed_tasks: failed.map(task => ({ id: task.id, state: task.state, error: task.lastError })) });
+  if (parentSignal?.aborted) run.journal.transition('cancelled', { graph_id: graph.id });
+  else if (failed.length) run.journal.transition('failed', { graph_id: graph.id, failed_tasks: failed.map(task => ({ id: task.id, state: task.state, error: task.lastError })) });
   else {
     run.journal.append('verification_completed', { passed: true, graph_id: graph.id,
       evidence: final.tasks.flatMap(task => task.result?.evidence || []) });

@@ -53,7 +53,7 @@ export async function runDoctor(workspaceRoot = process.cwd(), fetcher: typeof f
     const root = execFileSync('git', ['rev-parse', '--show-toplevel'], { cwd: workspaceRoot, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
     checks.push({ id: 'workspace', status: 'pass', summary: `git workspace ${root}` });
   } catch {
-    checks.push({ id: 'workspace', status: 'warn', summary: 'not inside a git repository', detail: 'Write agents require Git for checkpoints and isolated worktrees.' });
+    checks.push({ id: 'workspace', status: 'warn', summary: 'not inside a git repository', detail: 'Grain-native file tools and undo work here. Child CLI undo and isolated agent worktrees require Git.' });
   }
 
   try {

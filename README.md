@@ -1,6 +1,6 @@
 # grain
 
-Local-first AI coding agent with governed learning and persistent memory.
+Local-first terminal agent for coding, research, writing, and marketing, with governed learning and persistent memory.
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/skeehn/grain/main/install.sh | sh
@@ -10,7 +10,7 @@ curl -fsSL https://raw.githubusercontent.com/skeehn/grain/main/install.sh | sh
 
 ## What it is
 
-grain is a **multi-agent AI coding orchestrator** — it reads your codebase, writes code, runs commands, and coordinates with other AI agents to get work done.
+grain is a **terminal work harness** — it reads your files, creates deliverables, runs commands, and coordinates with other AI agents. A Git repository is optional.
 
 **Key features:**
 - 🤖 **Multi-agent orchestration** — Coordinate Grain-native, Claude Code, Codex, OpenCode, Hermes, or custom agents
@@ -19,7 +19,7 @@ grain is a **multi-agent AI coding orchestrator** — it reads your codebase, wr
 - 🎯 **Smart routing** — Auto-routes tasks to the cheapest capable model
 - 🔌 **MCP support** — Connect to any Model Context Protocol server (Computer Use, GitHub, etc.)
 - 🩺 **Guided setup** — `grain setup` and `grain doctor` validate providers, profiles, executors, Git, and Engram
-- 🌾 **Purpose-built terminal UI** — Ordered Bayer-dither activity, compact tool cards, no-color and reduced-motion support
+- 🌾 **Scrolling terminal UI** — Native scrollback, streaming answers, ASCII mascot and tool blocks, numbered pickers, and no-color/16/256/truecolor support
 - 🧪 **One-command quality gate** — Tests, typecheck, and production build via `bun run check`
 - 🧾 **Replayable runs** — Hash-chained event journals record model, policy, tool, usage, and terminal outcomes
 - 🗂️ **Confined filesystem** — Symlink-safe workspace roots, optimistic hashes, atomic writes, and content-addressed snapshots
@@ -36,7 +36,7 @@ It's your personal software factory that runs locally on your machine.
 curl -fsSL https://raw.githubusercontent.com/skeehn/grain/main/install.sh | sh
 ```
 
-Installs standalone `grain` and `engram` executables to `~/bin/`. No Node.js or Bun runtime is required to run them.
+Installs the standalone `grain` executable to `~/bin/`; Engram is optional and installed only when a verified release asset is available. No Node.js or Bun runtime is required to run Grain. The installer checks SHA-256, stages the download, and preserves an existing binary as a backup. If `~/bin` is not on PATH, follow the printed shell setup instruction.
 
 **Then start Grain:**
 ```sh
@@ -49,7 +49,7 @@ Grain connects a provider in the conversation the first time you run it.
 ## Quick start
 
 ```sh
-# Open the full-screen workspace
+# Open the scrolling terminal conversation
 grain
 
 # Or begin with a task
@@ -69,9 +69,31 @@ grain            # then type /model
 grain --model claude-code:opus "fix and test this project"
 grain --model openrouter:openrouter/free "fix and test this project"
 
+# Work in an ordinary folder, with no Git repository required
+grain "Read brief.md, draft launch.md for independent designers, then review it"
+
 # Update later
 grain update
 ```
+
+### Safe updates
+
+`grain update --check` is read-only. Native release installations use the latest
+GitHub release; `grain update --yes --release` installs without a prompt. Updates
+require the platform's native asset and `SHA256SUMS`, verify the executable's
+version, and keep the old binary at the printed `grain.backup-*` path. Failed
+downloads/checks do not replace the existing installation.
+
+When `GRAIN_SRC`, `~/conductor/repos/grain`, or `~/grain` identifies a source
+checkout, plain `grain update` rebuilds **that checkout**, including its local
+changes. It does not pull, switch branches, or claim to fetch the latest source.
+Use `grain update --source /path/to/grain` to choose explicitly, or `--release`
+to bypass source mode. Source builds need Bun and installed dependencies.
+
+For npm installations, use `npm install -g grain@latest` with the same prefix
+used to install; `grain update` prints this guidance instead of replacing npm's
+managed entry point. No configuration or session migration is performed by the
+binary updater. Run `grain help update` for all options.
 
 ---
 
@@ -85,7 +107,7 @@ grain setup                   configure providers and workspace defaults
 grain doctor                  preflight config, executors, Git, and Engram
 grain memory status           inspect Engram transport and governance state
 grain skills validate         validate portable Agent Skills packages
-grain --classic               use the line-oriented compatibility UI
+grain --classic               compatibility alias for the default scrolling UI
 
 # Inside the workspace
 /help                         discover controls
@@ -111,8 +133,26 @@ grain learning migrate PATH   resumably import the verified JSONL ledger to v1
 /wiki build|verify            regenerate repo docs; check they still match code
 ```
 
-Outside a detected project Grain starts in safe general-chat mode; repository
-indexing and filesystem tools stay disabled until `/open PATH` selects a project.
+Grain can read files outside a Git project. In an ordinary work folder, writing
+and shell tools remain available under the selected approval mode. Starting in
+your home directory defaults to bounded, read-only general chat; use `/open PATH`
+to select a work folder. Repository indexing is optional.
+
+Enter submits; bracketed paste preserves multiline text. Up/Down recall input,
+Tab completes an `@file` mention, Ctrl+C cancels an active task or picker, and
+Ctrl+D on an empty idle prompt exits. Use your terminal's normal scrollback and
+selection. `/model` and `/agent` use numbered, filterable lists; blank input
+cancels. `--classic` and `--no-alt-screen` are accepted for compatibility: the
+interactive UI no longer takes over the alternate screen.
+
+`/undo` restores Grain-brokered writes in any work folder. Subscription CLI edits
+are observed in Git workspaces, including already-dirty files and partial failed
+turns. Undo is in-memory for the latest task, not a backup; ignored files and
+symlinks are not restored by the child-agent observer. Review `/diff` before undo.
+
+For research and marketing, supply source files or configure appropriate MCP
+tools. Web browsing, image generation, publishing, and account access depend on
+those tools or the selected child agent; Grain does not invent access or sources.
 
 Scheduled jobs use standard five-field cron expressions (plus `@hourly`,
 `@daily`, `@weekly`, and `@monthly`). Automatic execution belongs to the
@@ -154,6 +194,17 @@ conversation alive across invocations, per repository.
 | `claude-code` | Install the `claude` CLI and sign in | Your Claude subscription |
 | `codex`       | Install the `codex` CLI and sign in  | Your ChatGPT subscription |
 | `opencode`    | Install the `opencode` CLI           | Whatever OpenCode is configured with |
+| `grok`        | Install and sign into the `grok` CLI | The CLI's own account/configuration |
+
+Grain does not silently exchange a subscription for a paid API. CLI versions,
+login state, subscription quotas, and model entitlements still apply. `auto`
+means the child CLI's configured default; use `/model provider:model` to override
+it. A present binary or key alone is not proof of usable model access.
+
+Custom OpenAI-compatible providers and stdio agent profiles cover additional
+backends. This is extensibility, not a guarantee that every API, model, or
+subscription speaks a compatible protocol. See [terminal verification](docs/terminal-verification.md)
+for the tested paths and remaining limits.
 
 ### Direct APIs and local runtimes
 
@@ -266,7 +317,20 @@ Add to `~/.grain/mcp.json`:
 }
 ```
 
-**2. Use naturally:**
+**2. Validate and inspect before running a task:**
+```sh
+grain mcp list
+grain mcp validate
+grain mcp tools computer-use
+```
+
+List/validate do not start servers. `tools SERVER` connects to that enabled
+server and reports allowed and blocked tools. Tools remain subject to Grain's
+approval policy; enabling a server does not authorize arbitrary side effects.
+HTTP servers use `transport: "http"`, an HTTPS `url` (HTTP is allowed on loopback),
+and optionally `bearerTokenEnv` naming an environment variable, not a token value.
+
+**3. Use naturally:**
 ```sh
 grain "take a screenshot and describe what's on my desktop"
 grain "open Safari and navigate to github.com"
@@ -274,6 +338,34 @@ grain "click the Submit button on this form"
 ```
 
 See [PLUGINS.md](PLUGINS.md) for more MCP servers (GitHub, Filesystem, Git, etc.).
+
+Grain-native providers use these MCP connections. Subscription CLIs own their
+tools and MCP configuration; Grain does not silently copy credentials or server
+configuration into another agent. The HTTP client supports request/response
+JSON and SSE, not OAuth discovery, elicitation, sampling, or every MCP extension.
+
+## Skills
+
+```sh
+grain skills list
+grain skills add launch-copy       # interactive name/description/body workflow
+grain skills validate
+grain skills view launch-copy
+grain skills delete launch-copy    # removes the user-owned skill, not project packages
+```
+
+Portable packages follow the [Agent Skills format](https://agentskills.io/specification):
+put `SKILL.md` with `name` and `description` frontmatter in
+`~/.grain/skills/<name>/`. Project-local `.grain/skills`, `.agents/skills`, and
+`.claude/skills` are also discovered. `GRAIN_HOME` overrides `~/.grain`.
+For scripts, write a package into that directory and run `grain skills validate`;
+interactive `add` intentionally fails fast when stdin is not a terminal.
+
+Relevant skill bodies are loaded into native model context. Claude Code/Grok
+also receive Grain skill context; Codex/OpenCode use their own skill discovery.
+Skills are instructions, not permission grants; review packages before installing.
+See [terminal and command verification](docs/terminal-verification.md) for tested
+paths and provider boundaries.
 
 ---
 

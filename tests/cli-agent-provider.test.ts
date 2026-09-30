@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -12,6 +12,34 @@ import { getModelCapabilities } from '../src/context/capabilities.js';
 const message = (role: 'user' | 'assistant', text: string) => ({ role, content: [{ type: 'text' as const, text }] });
 
 describe('CLI-agent providers', () => {
+  test('failure diagnostics preserve stderr UTF-8 split across chunks', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'grain-cli-stderr-'));
+    try {
+      const script = join(root, 'agent.cjs');
+      writeFileSync(script, `const b = Buffer.from('caf\u00e9 failed'); const i=b.indexOf(Buffer.from('\u00e9'));
+process.stderr.write(b.subarray(0,i+1)); setTimeout(()=>{process.stderr.end(b.subarray(i+1)); process.exitCode=1;},30);`);
+      const provider = new CliAgentProvider('codex', undefined, { cwd: root, fresh: true }) as any;
+      provider.definition = { ...CLI_AGENTS.codex, binary: process.execPath }; provider.argv = () => [script];
+      const events: any[] = [];
+      for await (const event of provider.stream([message('user', 'hello')], '', [])) events.push(event);
+      expect(JSON.stringify(events)).toContain('caf\u00e9 failed'); expect(JSON.stringify(events)).not.toContain('\ufffd');
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
+  test('subprocess output preserves split UTF-8 and the final JSON record without a newline', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'grain-cli-wire-'));
+    try {
+      const script = join(root, 'agent.cjs');
+      writeFileSync(script, `const b = Buffer.from(JSON.stringify({type:'item.completed',item:{type:'agent_message',text:'caf\u00e9'}}));
+const i=b.indexOf(Buffer.from('\u00e9')); process.stdout.write(b.subarray(0,i+1));
+setTimeout(()=>process.stdout.end(b.subarray(i+1)),30);`);
+      const provider = new CliAgentProvider('codex', undefined, { cwd: root, fresh: true }) as any;
+      provider.definition = { ...CLI_AGENTS.codex, binary: process.execPath };
+      provider.argv = () => [script];
+      const events: any[] = [];
+      for await (const event of provider.stream([message('user', 'hello')], '', [])) events.push(event);
+      expect(events.filter(event => event.type === 'text_delta').map(event => event.text).join('')).toContain('caf\u00e9');
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
   test('subscription CLIs resolve to themselves, not to a paid API alias', () => {
     // `claude-code` used to map onto the Anthropic API and `codex` onto
     // OpenRouter — which billed a key the subscription user may not even have.
@@ -92,14 +120,32 @@ describe('CLI-agent providers', () => {
     const args = buildCliAgentArgv('codex', 'hi', undefined, { write: true });
     expect(args.slice(0, 5)).toEqual(['exec', '--json', '--skip-git-repo-check', '--color', 'never']);
     expect(args).toContain('--approve-for-me');
-    expect(args).toContain('workspace-write');
+    expect(args).not.toContain('-s');
     expect(args.at(-1)).toBe('hi');
     const resumed = buildCliAgentArgv('codex', 'hi', 'sess-1', { write: false });
-    expect(resumed.slice(0, 3)).toEqual(['exec', 'resume', 'sess-1']);
+    expect(resumed.slice(0, 2)).toEqual(['exec', 'resume']);
+    expect(resumed.at(-2)).toBe('sess-1');
     expect(resumed).toContain('--skip-git-repo-check');
-    expect(resumed).toContain('never');
-    expect(resumed).toContain('read-only');
+    expect(resumed).not.toContain('--color');
+    expect(resumed).not.toContain('-s');
     expect(resumed).not.toContain('--approve-for-me');
+    expect(buildCliAgentArgv('codex', 'hi', undefined, { write: false })).toContain('read-only');
+  });
+
+  test('current Codex JSONL preserves tool activity, final messages, usage and thread identity', () => {
+    const provider = new CliAgentProvider('codex') as any;
+    const state: any = { text: '', sawOutput: false };
+    const events = [
+      { type: 'thread.started', thread_id: 'thread-1' },
+      { type: 'item.started', item: { type: 'command_execution', command: 'cat a.ts' } },
+      { type: 'item.completed', item: { type: 'agent_message', text: 'Done.' } },
+      { type: 'turn.completed', usage: { input_tokens: 12, cached_input_tokens: 8, output_tokens: 3 } },
+    ].flatMap(record => [...provider.translate(record, state)]);
+    expect(state.sessionId).toBe('thread-1');
+    expect(events[0].text).toContain('cat a.ts');
+    expect(events[1].text).toBe('Done.\n');
+    expect(events[2]).toEqual({ type: 'usage', input_tokens: 12, output_tokens: 3, cache_read_tokens: 8 });
+    expect([...provider.translate({ type: 'turn.failed', error: { message: 'failed' } }, state)][0].type).toBe('error');
   });
 
   test('a missing binary surfaces as a stream error, never an unhandled throw', async () => {
