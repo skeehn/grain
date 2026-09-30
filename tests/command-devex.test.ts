@@ -28,7 +28,7 @@ test('every command has side-effect-free help and bad invocations fail promptly'
       const result = await invoke(...args); expect(result.code, `${args}: ${result.text}`).toBe(0);
     }
     const daemon = await invoke('daemon', 'status'); expect(daemon.code).toBe(1); expect(daemon.text).toContain('stopped');
-    for (const args of [['skills', 'view'], ['skills', 'delete', 'missing'], ['skills', 'add', 'new'], ['mcp', 'tools'], ['mcp', 'typo'], ['update', '--typo'], ['agents', 'typo'], ['jobs', 'typo'], ['runs', 'typo'], ['wiki', 'typo'], ['learning', 'typo']]) {
+    for (const args of [['skills', 'view'], ['skills', 'delete', 'missing'], ['skills', 'add', 'new'], ['mcp', 'tools'], ['mcp', 'typo'], ['update', '--typo'], ['agents', 'typo'], ['jobs', 'typo'], ['runs', 'typo'], ['wiki', 'typo'], ['learning', 'typo'], ['memory', 'get'], ['memory', 'edit', 'id'], ['tui', '--run'], ['tui', '--resume']]) {
       const result = await invoke(...args); expect(result.code, `${args}: ${result.text}`).toBe(1);
     }
   });

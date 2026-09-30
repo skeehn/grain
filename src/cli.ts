@@ -110,6 +110,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
         result.command = 'tui';
         const subcommand = args[i + 1];
         if (subcommand === '--run' || subcommand === '--resume') {
+          if (!args[i + 2] || args[i + 2].startsWith('-')) throw new Error('Usage: grain tui [--run|--resume <run-id>]');
           result.utilitySubcmd = subcommand; result.utilityArg = args[i + 2]; i += 3;
         } else i += 1;
         continue;
@@ -760,9 +761,9 @@ async function testBedrockConnection(): Promise<{ ok: boolean; error?: string }>
 async function handleEngram(subcmd?: string, arg?: string, body?: string): Promise<void> {
   const action = subcmd || 'stats';
   if (['search', 'add', 'get', 'edit', 'delete'].includes(action) && !arg) {
-    console.error(`${err} Usage: grain engram ${action} <${action === 'search' ? 'query' : action === 'add' ? 'fact' : 'id'}>`); return;
+    throw new Error(`Usage: grain engram ${action} <${action === 'search' ? 'query' : action === 'add' ? 'fact' : 'id'}>`);
   }
-  if (action === 'edit' && !body) { console.error(`${err} Usage: grain engram edit <id> <new content>`); return; }
+  if (action === 'edit' && !body) throw new Error('Usage: grain engram edit <id> <new content>');
   const result = await executeEngram({ action, query: ['search', 'get', 'delete'].includes(action) ? arg : undefined,
     body: action === 'add' ? arg : action === 'edit' ? body : undefined, tags: action === 'add' ? ['manual'] : undefined,
     ...(action === 'edit' ? { query: arg } : {}) });
